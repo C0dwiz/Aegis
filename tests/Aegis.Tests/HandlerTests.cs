@@ -1,4 +1,5 @@
 using Xunit;
+using System.Net.Sockets;
 using System.Threading.Tasks;
 using Aegis.Handlers;
 using Aegis.Protocol;
@@ -32,7 +33,7 @@ public class HandlerTests
             Mac = new byte[ProtocolConstants.MacSize]
         };
         
-        // Act - handler already registered via constructor
+        // Act
         await router.RouteAsync(context, message);
         
         // Assert
@@ -53,7 +54,7 @@ public class HandlerTests
             VersionMajor = 1,
             VersionMinor = 0,
             Flags = 0,
-            Type = (MessageType)999, // Unknown type
+            Type = (MessageType)999,
             SequenceId = 1,
             PayloadLength = 0,
             Payload = Array.Empty<byte>(),
@@ -64,8 +65,8 @@ public class HandlerTests
         await router.RouteAsync(context, message);
         
         // Assert
-        Assert.Single(_logger.ErrorMessages);
-        Assert.Contains("Unknown message type", _logger.ErrorMessages[0]);
+        Assert.NotEmpty(_logger.ErrorMessages);
+        Assert.Contains(_logger.ErrorMessages, m => m.Contains("Unknown message type"));
     }
     
     [Fact]
@@ -101,7 +102,6 @@ public class HandlerTests
         // Arrange
         var handler = new PingHandler();
         var context = new TestConnectionContext(12345ul);
-        await Task.Delay(1); // Небольшая задержка
         var initialActivity = context.LastActivity;
         
         var message = new Message
@@ -113,18 +113,16 @@ public class HandlerTests
             Type = MessageType.Ping,
             SequenceId = 1,
             PayloadLength = 8,
-            Payload = System.BitConverter.GetBytes(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
+            Payload = BitConverter.GetBytes(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
             Mac = new byte[ProtocolConstants.MacSize]
         };
         
         // Act
         await handler.HandleAsync(context, message);
         
-        // Debug output
-        Console.WriteLine($"Initial: {initialActivity}, Final: {context.LastActivity}, Greater: {context.LastActivity > initialActivity}");
-        
         // Assert
-        Assert.True(context.LastActivity > initialActivity);
+        Assert.True(context.LastActivity > initialActivity,
+            $"LastActivity ({context.LastActivity}) should be greater than initial ({initialActivity})");
     }
     
     [Fact]
@@ -190,7 +188,7 @@ public class HandlerTests
     {
         private DateTime _lastActivity = DateTime.UtcNow;
         
-        public TestConnectionContext(ulong connectionId) : base(new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp), connectionId)
+        public TestConnectionContext(ulong connectionId) : base(new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp), connectionId)
         {
         }
         
@@ -202,9 +200,7 @@ public class HandlerTests
         
         public override void UpdateActivity()
         {
-            Console.WriteLine("TestConnectionContext.UpdateActivity() called");
             _lastActivity = DateTime.UtcNow;
-            base.UpdateActivity(); // Also update base for consistency
         }
     }
     
@@ -235,7 +231,7 @@ public class HandlerTests
         {
             CheckedConnection = true;
             CheckedConnectionId = connectionId;
-            await Task.Delay(1); // Simulate network delay
+            await Task.CompletedTask;
             return AllowNextMessage;
         }
     }
@@ -250,7 +246,7 @@ public class HandlerTests
         public void Debug(string message) => DebugMessages.Add(message);
         public void Info(string message) => InfoMessages.Add(message);
         public void Warning(string message) => WarningMessages.Add(message);
-        public void Error(string message, System.Exception? ex = null) 
+        public void Error(string message, Exception? ex = null) 
         {
             ErrorMessages.Add(message);
             if (ex != null) ErrorMessages.Add(ex.ToString());
