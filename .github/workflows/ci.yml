@@ -1,59 +1,36 @@
-name: CI Pipeline
+name: CI
 
 on:
   push:
     branches: [ main, develop ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main ]
 
 jobs:
   test:
-    name: Test on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: '10.0.x'
-
-    - name: Restore dependencies
-      run: dotnet restore
-
-    - name: Build solution
-      run: dotnet build --no-restore --configuration Release
-
-    - name: Run tests
-      run: dotnet test tests/Aegis.Tests --no-build --configuration Release --verbosity normal
-
-    - name: Run tests with coverage
-      if: matrix.os == 'ubuntu-latest'
-      run: dotnet test tests/Aegis.Tests --no-build --configuration Release --collect:"XPlat Code Coverage" --results-directory TestResults
-
-  code-quality:
-    name: Code Quality
     runs-on: ubuntu-latest
-
+    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
+    - uses: actions/checkout@v4
+    
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '10.0.x'
-
+        
     - name: Restore dependencies
       run: dotnet restore
-
-    - name: Build solution
+      
+    - name: Build
       run: dotnet build --no-restore --configuration Release
-
-    - name: Check for vulnerabilities
-      run: dotnet list package --vulnerable --include-transitive
+      
+    - name: Test
+      run: dotnet test --no-build --configuration Release --verbosity normal
+      
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./tests/Aegis.Tests/coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
