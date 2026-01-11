@@ -10,5 +10,6 @@
     <ProjectReference Include="..\Aegis.Common\Aegis.Common.csproj" />
     <ProjectReference Include="..\Aegis.Protocol\Aegis.Protocol.csproj" />
     <ProjectReference Include="..\Aegis.Transport\Aegis.Transport.csproj" />
+    <ProjectReference Include="..\Aegis.Crypto\Aegis.Crypto.csproj" />
   </ItemGroup>
 </Project>

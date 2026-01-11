@@ -5,20 +5,43 @@ using Aegis.Handlers;
 using Aegis.Protocol;
 using Aegis.Transport;
 using Aegis.Common.Logging;
+using Aegis.Crypto;
+using Aegis.Common;
 
 namespace Aegis.Tests;
+
+public class TestMessageSender : IMessageSender
+{
+    public List<ulong> SentConnectionIds { get; } = new();
+    public List<byte[]> SentMessages { get; } = new();
+    
+    public Task SendMessageAsync(ulong connectionId, byte[] encryptedMessage)
+    {
+        SentConnectionIds.Add(connectionId);
+        SentMessages.Add(encryptedMessage);
+        return Task.CompletedTask;
+    }
+}
 
 public class HandlerTests
 {
     private readonly TestLogger _logger = new TestLogger();
     private readonly TestAntiSpamClient _antiSpam = new TestAntiSpamClient();
+    private readonly TestMessageSender _messageSender = new TestMessageSender();
+    private readonly AegisCryptoProvider _cryptoProvider = new AegisCryptoProvider();
+    private readonly SessionManager _sessionManager;
+    
+    public HandlerTests()
+    {
+        _sessionManager = new SessionManager(_cryptoProvider, _logger);
+    }
     
     [Fact]
     public async Task MessageRouter_RegisterHandler_ShouldRouteCorrectly()
     {
         // Arrange
         var testHandler = new TestMessageHandler();
-        var router = new MessageRouter(new IMessageHandler[] { testHandler });
+        var router = new MessageRouter(new IMessageHandler[] { testHandler }, _cryptoProvider, _sessionManager, _logger);
         var context = new TestConnectionContext(12345ul);
         var message = new Message
         {
@@ -46,7 +69,7 @@ public class HandlerTests
     public async Task MessageRouter_UnknownMessage_ShouldSendError()
     {
         // Arrange
-        var router = new MessageRouter(Array.Empty<IMessageHandler>(), _logger);
+        var router = new MessageRouter(Array.Empty<IMessageHandler>(), _cryptoProvider, _sessionManager, _logger);
         var context = new TestConnectionContext(12345ul);
         var message = new Message
         {
@@ -73,7 +96,7 @@ public class HandlerTests
     public async Task AuthHandler_ShouldProcessAuthMessages()
     {
         // Arrange
-        var handler = new AuthHandler(_antiSpam);
+        var handler = new AuthHandler(_antiSpam, _messageSender, _cryptoProvider, _logger);
         var context = new TestConnectionContext(12345ul);
         var message = new Message
         {
@@ -129,7 +152,7 @@ public class HandlerTests
     public async Task MessageHandler_AllowedMessage_ShouldSendAck()
     {
         // Arrange
-        var handler = new MessageHandler(_antiSpam);
+        var handler = new MessageHandler(_antiSpam, _messageSender, _cryptoProvider, _logger);
         var context = new TestConnectionContext(12345ul);
         var message = new Message
         {
@@ -159,7 +182,7 @@ public class HandlerTests
     public async Task MessageHandler_RejectedMessage_ShouldSendError()
     {
         // Arrange
-        var handler = new MessageHandler(_antiSpam);
+        var handler = new MessageHandler(_antiSpam, _messageSender, _cryptoProvider, _logger);
         var context = new TestConnectionContext(12345ul);
         var message = new Message
         {

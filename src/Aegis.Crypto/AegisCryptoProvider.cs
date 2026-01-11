@@ -1,10 +1,11 @@
 using System.Security.Cryptography;
 using Aegis.Common.Errors;
 using Aegis.Protocol;
+using Aegis.Common;
 
 namespace Aegis.Crypto;
 
-public class AegisCryptoProvider : ICryptoProvider
+public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
 {
     private const int EncryptionKeySize = 32; // AES-256
     private const int MacKeySize = 32; // HMAC-SHA256
@@ -84,30 +85,130 @@ public class AegisCryptoProvider : ICryptoProvider
         ComputeMac(data, key, computed);
         return CryptographicOperations.FixedTimeEquals(computed, mac);
     }
+    
+    public Memory<byte> GenerateSessionKey()
+    {
+        var key = new byte[EncryptionKeySize];
+        RandomNumberGenerator.Fill(key);
+        return key;
+    }
+    
+    public Memory<byte> GenerateMacKey()
+    {
+        var key = new byte[MacKeySize];
+        RandomNumberGenerator.Fill(key);
+        return key;
+    }
+    
+    public async Task<byte[]> EncryptMessageAsync(Message message, byte[] sessionKey)
+    {
+        return await Task.Run(() =>
+        {
+            // Calculate message size
+            var messageSize = ProtocolConstants.HeaderSize + message.PayloadLength + ProtocolConstants.MacSize;
+            var messageBytes = new byte[messageSize];
+            
+            // Serialize message to bytes
+            MessageEncoder.Encode(message, messageBytes);
+            
+            // Generate nonce
+            var nonce = new byte[NonceSize];
+            RandomNumberGenerator.Fill(nonce);
+            
+            // Encrypt the message (excluding MAC)
+            var payloadSize = messageSize - ProtocolConstants.MacSize;
+            var ciphertext = new byte[payloadSize + TagSize];
+            var encryptedLength = Encrypt(new ReadOnlySpan<byte>(messageBytes, 0, (int)payloadSize), sessionKey, nonce, ciphertext);
+            
+            // Combine nonce + encrypted message
+            var result = new byte[nonce.Length + encryptedLength];
+            Buffer.BlockCopy(nonce, 0, result, 0, nonce.Length);
+            Buffer.BlockCopy(ciphertext, 0, result, nonce.Length, encryptedLength);
+            
+            // Compute MAC over the entire encrypted message
+            var mac = new byte[ProtocolConstants.MacSize];
+            ComputeMac(result, sessionKey, mac);
+            
+            // Final result: nonce + ciphertext + mac
+            var finalResult = new byte[result.Length + mac.Length];
+            Buffer.BlockCopy(result, 0, finalResult, 0, result.Length);
+            Buffer.BlockCopy(mac, 0, finalResult, result.Length, mac.Length);
+            
+            CryptographicOperations.ZeroMemory(ciphertext);
+            CryptographicOperations.ZeroMemory(nonce);
+            
+            return finalResult;
+        });
+    }
 }
 
 internal class Rfc5869DeriveBytes : IDisposable
 {
     private readonly byte[] _prk;
+    private readonly byte[] _info;
+    private int _offset;
+    private byte[] _t;
     private bool _disposed;
+    
     public Rfc5869DeriveBytes(byte[] key, byte[] salt, byte[] info, int outputLength)
     {
-        using var hmac = new HMACSHA256(salt);
+        // Extract phase - HKDF-Extract
+        using var hmac = new HMACSHA256(salt.Length == 0 ? new byte[32] : salt);
         _prk = hmac.ComputeHash(key);
-
-        // TODO: надо сделать правильную версию HKDF с несколькими раундами извлечения и расширения
-        // Простое извлечение-затем-расширение
-        using var expandHmac = new HMACSHA256(_prk);
-        var result = expandHmac.ComputeHash(info);
-        Array.Resize(ref result, outputLength);
+        
+        _info = info;
+        _offset = 0;
+        _t = new byte[32]; // HMAC-SHA256 output size
     }
-    public byte[] GetBytes(int count) => new byte[count];
+    
+    public byte[] GetBytes(int count)
+    {
+        var result = new byte[count];
+        var resultOffset = 0;
+        
+        // Expand phase - HKDF-Expand with multiple rounds
+        while (resultOffset < count)
+        {
+            if (_offset == 0)
+            {
+                // First round: HMAC(PRK, info || 0x01)
+                using var hmac = new HMACSHA256(_prk);
+                var input = new byte[_info.Length + 1];
+                Buffer.BlockCopy(_info, 0, input, 0, _info.Length);
+                input[_info.Length] = 0x01;
+                _t = hmac.ComputeHash(input);
+            }
+            else
+            {
+                // Subsequent rounds: HMAC(PRK, T(previous) || info || counter)
+                using var hmac = new HMACSHA256(_prk);
+                var input = new byte[_t.Length + _info.Length + 1];
+                Buffer.BlockCopy(_t, 0, input, 0, _t.Length);
+                Buffer.BlockCopy(_info, 0, input, _t.Length, _info.Length);
+                input[_t.Length + _info.Length] = (byte)(_offset + 1);
+                _t = hmac.ComputeHash(input);
+            }
+            
+            // Copy bytes to result
+            var bytesToCopy = Math.Min(_t.Length, count - resultOffset);
+            Buffer.BlockCopy(_t, 0, result, resultOffset, bytesToCopy);
+            resultOffset += bytesToCopy;
+            _offset++;
+        }
+        
+        return result;
+    }
 
     public void Dispose()
     {
         if (!_disposed)
         {
             CryptographicOperations.ZeroMemory(_prk);
+            CryptographicOperations.ZeroMemory(_t);
+            if (_info != null)
+            {
+                CryptographicOperations.ZeroMemory(_info);
+            }
             _disposed = true;
         }
     }

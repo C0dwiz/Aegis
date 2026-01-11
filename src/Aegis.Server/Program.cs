@@ -3,6 +3,7 @@ using Aegis.Transport;
 using Aegis.Handlers;
 using Aegis.Crypto;
 using Aegis.Protocol;
+using Aegis.Common;
 
 namespace Aegis.Server;
 
@@ -28,6 +29,7 @@ public static class Program
 {
     private static TcpServer? _server;
     private static CancellationTokenSource _cts = new();
+    private static SessionManager? _sessionManager;
     
     public static async Task Main(string[] args)
     {
@@ -45,16 +47,20 @@ public static class Program
             // Initialize components
             var cryptoProvider = new AegisCryptoProvider();
             var antiSpam = new AntiSpamClient();
+            _sessionManager = new SessionManager((ISessionCryptoProvider)cryptoProvider, logger);
+            
+            // Create message sender for handlers
+            var messageSender = new ServerMessageSender(_server, cryptoProvider, _sessionManager, logger);
             
             // Create handlers
             var handlers = new IMessageHandler[]
             {
-                new AuthHandler(antiSpam),
+                new AuthHandler(antiSpam, messageSender, cryptoProvider, logger),
                 new PingHandler(),
-                new MessageHandler(antiSpam)
+                new MessageHandler(antiSpam, messageSender, cryptoProvider, logger)
             };
             
-            var router = new MessageRouter(handlers, logger);
+            var router = new MessageRouter(handlers, cryptoProvider, _sessionManager, logger);
             
             // Create and start server
             _server = new TcpServer(port, maxConnections, logger: logger);
@@ -102,32 +108,78 @@ public static class Program
             var messageData = data.Slice(0, data.Length - ProtocolConstants.MacSize);
             var receivedMac = data.Slice(data.Length - ProtocolConstants.MacSize, ProtocolConstants.MacSize);
             
-            // TODO: Реализовать правильное управление ключами сессии
-            // Для сейчас мы пропускаем проверку MAC в продакшн
-            // if (!crypto.VerifyMac(messageData.Span, sessionMacKey.Span, receivedMac.Span)) 
-            // {
-            //     logger.Warning($"Invalid MAC for message {message.SequenceId} from connection {context.ConnectionId}");
-            //     return;
-            // }
+            // Реализовать правильное управление ключами сессии
+            var session = _sessionManager?.GetSession(context.ConnectionId);
+            if (session == null)
+            {
+                logger.Warning($"No session found for connection {context.ConnectionId}, creating new session");
+                session = _sessionManager?.CreateSession(context.ConnectionId);
+            }
+            
+            if (session != null && !crypto.VerifyMac(messageData.Span, session.MacKey.Span, receivedMac.Span))
+            {
+                logger.Warning($"Invalid MAC for message {message.SequenceId} from connection {context.ConnectionId}");
+                await SendErrorToClient(context, message.SequenceId, "Invalid MAC", crypto, session);
+                return;
+            }
+            
+            // Update session activity
+            _sessionManager?.UpdateActivity(context.ConnectionId);
             
             await router.RouteAsync(context, message);
         }
         catch (Exception ex)
         {
             logger.Error($"Error processing message from connection {context.ConnectionId}", ex);
-            // TODO: отправка ошибки клиенту
+            await SendErrorToClient(context, 0, "Message processing error", crypto, _sessionManager?.GetSession(context.ConnectionId));
         }
     }
     
     private static void OnClientConnected(ConnectionContext context)
     {
         // Соединение установлено, инициализация сессии
+        _sessionManager?.CreateSession(context.ConnectionId);
         Console.WriteLine($"Client {context.ConnectionId} connected");
     }
     
     private static void OnClientDisconnected(ConnectionContext context)
     {
+        // Удаление сессии при отключении
+        _sessionManager?.RemoveSession(context.ConnectionId);
         Console.WriteLine($"Client {context.ConnectionId} disconnected");
+    }
+    
+    private static async Task SendErrorToClient(
+        ConnectionContext context, 
+        ulong sequenceId, 
+        string error,
+        ICryptoProvider crypto,
+        SessionInfo? session)
+    {
+        try
+        {
+            var errorMessage = new Message
+            {
+                Magic = ProtocolConstants.Magic,
+                VersionMajor = ProtocolConstants.VersionMajor,
+                VersionMinor = ProtocolConstants.VersionMinor,
+                Type = MessageType.Error,
+                SequenceId = sequenceId,
+                PayloadLength = (uint)System.Text.Encoding.UTF8.GetByteCount(error),
+                Payload = System.Text.Encoding.UTF8.GetBytes(error)
+            };
+            
+            // Encrypt and sign the error message
+            if (session != null)
+            {
+                var encryptedMessage = await crypto.EncryptMessageAsync(errorMessage, session.SessionKey.ToArray());
+                await _server?.SendAsync(context, encryptedMessage)!;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error sending error to client {context.ConnectionId}: {ex.Message}");
+        }
     }
     
     private static void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs e)
