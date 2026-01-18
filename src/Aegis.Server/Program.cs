@@ -1,192 +1,224 @@
-using Aegis.Common.Logging;
-using Aegis.Transport;
-using Aegis.Handlers;
-using Aegis.Crypto;
-using Aegis.Protocol;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Serilog;
 using Aegis.Common;
+using Aegis.Common.Configuration;
+using Aegis.Common.Logging;
+using Aegis.Crypto;
+using Aegis.Handlers;
+using Aegis.Protocol;
+using Aegis.Transport;
 
 namespace Aegis.Server;
 
-public class ConsoleLogger : ILogger
-{
-    public void Debug(string message) => 
-        Console.WriteLine($"[DEBUG] {DateTime.Now:HH:mm:ss} {message}");
-    
-    public void Info(string message) => 
-        Console.WriteLine($"[INFO] {DateTime.Now:HH:mm:ss} {message}");
-    
-    public void Warning(string message) => 
-        Console.WriteLine($"[WARN] {DateTime.Now:HH:mm:ss} {message}");
-    
-    public void Error(string message, Exception? ex = null)
-    {
-        Console.WriteLine($"[ERROR] {DateTime.Now:HH:mm:ss} {message}");
-        if (ex != null) Console.WriteLine(ex);
-    }
-}
-
 public static class Program
 {
-    private static TcpServer? _server;
-    private static CancellationTokenSource _cts = new();
-    private static SessionManager? _sessionManager;
-    
     public static async Task Main(string[] args)
     {
-        Console.CancelKeyPress += OnCancelKeyPress;
-        
-        var logger = new ConsoleLogger();
-        logger.Info("Starting Aegis Messenger Server...");
-        
         try
         {
-            // Configuration
-            int port = GetPortFromConfig(args);
-            int maxConnections = 10000;
-            
-            // Initialize components
-            var cryptoProvider = new AegisCryptoProvider();
-            var antiSpam = new AntiSpamClient();
-            _sessionManager = new SessionManager((ISessionCryptoProvider)cryptoProvider, logger);
-            
-            // Create message sender for handlers
-            var messageSender = new ServerMessageSender(_server, cryptoProvider, _sessionManager, logger);
-            
-            // Create handlers
-            var handlers = new IMessageHandler[]
-            {
-                new AuthHandler(antiSpam, messageSender, cryptoProvider, logger),
-                new PingHandler(),
-                new MessageHandler(antiSpam, messageSender, cryptoProvider, logger)
-            };
-            
-            var router = new MessageRouter(handlers, cryptoProvider, _sessionManager, logger);
-            
-            // Create and start server
-            _server = new TcpServer(port, maxConnections, logger: logger);
-            _server.OnClientConnected += OnClientConnected;
-            _server.OnClientDisconnected += OnClientDisconnected;
-            _server.OnMessageReceived += async (context, data) =>
-            {
-                await ProcessMessageAsync(context, data, router, cryptoProvider, logger);
-            };
-            
-            logger.Info($"Server configured on port {port}, max connections: {maxConnections}");
-            logger.Info("Press Ctrl+C to stop the server");
-            
-            await _server.StartAsync();
+            var host = CreateHostBuilder(args).Build();
+            await host.RunAsync();
         }
         catch (Exception ex)
         {
-            logger.Error("Fatal error starting server", ex);
-            Environment.Exit(1);
+            Log.Fatal(ex, "Application terminated unexpectedly");
+        }
+        finally
+        {
+            await Log.CloseAndFlushAsync();
         }
     }
-    
-    private static int GetPortFromConfig(string[] args)
-    {
-        // Порт по умолчанию, может быть переопределен аргументами или файлом конфигурации
-        if (args.Length > 0 && int.TryParse(args[0], out int port))
-            return port;
-        
-        return 8888; // Default port
-    }
-    
-    private static async Task ProcessMessageAsync(
-        ConnectionContext context, 
-        ReadOnlyMemory<byte> data,
+
+    private static IHostBuilder CreateHostBuilder(string[] args) =>
+        Host.CreateDefaultBuilder(args)
+            .ConfigureAppConfiguration((context, config) =>
+            {
+                config
+                    .SetBasePath(Directory.GetCurrentDirectory())
+                    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+                    .AddJsonFile($"appsettings.{context.HostingEnvironment.EnvironmentName}.json", 
+                        optional: true, reloadOnChange: true)
+                    .AddEnvironmentVariables("AEGIS_")
+                    .AddCommandLine(args);
+            })
+            .ConfigureServices((context, services) =>
+            {
+                // Configure options
+                services.Configure<ServerOptions>(
+                    context.Configuration.GetSection(ServerOptions.SectionName));
+                services.Configure<CryptoOptions>(
+                    context.Configuration.GetSection(CryptoOptions.SectionName));
+                services.Configure<RateLimitOptions>(
+                    context.Configuration.GetSection(RateLimitOptions.SectionName));
+                services.Configure<DatabaseOptions>(
+                    context.Configuration.GetSection(DatabaseOptions.SectionName));
+                services.Configure<LoggingOptions>(
+                    context.Configuration.GetSection(LoggingOptions.SectionName));
+
+                // Register core services
+                services.AddSingleton<ICryptoProvider, AegisCryptoProvider>();
+                services.AddSingleton<ISessionCryptoProvider>(sp => 
+                    sp.GetRequiredService<ICryptoProvider>() as AegisCryptoProvider 
+                    ?? throw new InvalidOperationException("AegisCryptoProvider must implement ISessionCryptoProvider"));
+                services.AddSingleton<SessionManager>();
+                services.AddSingleton<IAntiSpamClient, AntiSpamClient>();
+                services.AddSingleton<AcknowledgmentManager>();
+                services.AddSingleton<MessageDeduplicator>();
+                services.AddSingleton<RateLimiter>(sp => 
+                    new RateLimiter(context.Configuration.GetSection(RateLimitOptions.SectionName).Get<RateLimitOptions>() ?? new()));
+                services.AddSingleton<HealthCheckService>();
+                services.AddSingleton<GracefulShutdownManager>();
+
+                // Register transport
+                services.AddSingleton<TcpServer>();
+
+                // Register handlers
+                services.AddSingleton<IMessageHandler, AuthHandler>();
+                services.AddSingleton<IMessageHandler, PingHandler>();
+                services.AddSingleton<IMessageHandler, MessageHandler>();
+                services.AddSingleton<IMessageHandler, AckHandler>();
+                services.AddSingleton<IMessageHandler, NackHandler>();
+                services.AddSingleton<IMessageHandler, RetransmitRequestHandler>();
+                services.AddSingleton<MessageRouter>();
+                services.AddSingleton<IMessageSender, ServerMessageSender>();
+
+                // Register hosted service
+                services.AddHostedService<AegisMessengerService>();
+            })
+            .UseSerilog((context, loggerConfig) =>
+            {
+                var loggingOptions = context.Configuration
+                    .GetSection(LoggingOptions.SectionName)
+                    .Get<LoggingOptions>() ?? new();
+
+                loggerConfig
+                    .MinimumLevel.Information()
+                    .Enrich.FromLogContext()
+                    .Enrich.WithProperty("Application", "AegisMessenger");
+
+                if (loggingOptions.Console)
+                {
+                    loggerConfig.WriteTo.Console(
+                        outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz}] [{Level:u3}] {Message:lj}{NewLine}{Exception}");
+                }
+
+                if (loggingOptions.File)
+                {
+                    loggerConfig.WriteTo.File(
+                        loggingOptions.FilePath,
+                        outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz}] [{Level:u3}] {Message:lj}{NewLine}{Exception}");
+                }
+            });
+}
+
+/// <summary>
+/// Main hosted service for Aegis Messenger Server
+/// </summary>
+public class AegisMessengerService : BackgroundService
+{
+    private readonly TcpServer _server;
+    private readonly MessageRouter _router;
+    private readonly ICryptoProvider _crypto;
+    private readonly SessionManager _sessionManager;
+    private readonly ILogger<AegisMessengerService> _logger;
+    private readonly ServerOptions _serverOptions;
+
+    public AegisMessengerService(
+        TcpServer server,
         MessageRouter router,
         ICryptoProvider crypto,
-        ILogger logger)
+        SessionManager sessionManager,
+        ILogger<AegisMessengerService> logger,
+        Microsoft.Extensions.Options.IOptions<ServerOptions> serverOptions)
+    {
+        _server = server;
+        _router = router;
+        _crypto = crypto;
+        _sessionManager = sessionManager;
+        _logger = logger;
+        _serverOptions = serverOptions.Value;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        _logger.LogInformation("Starting Aegis Messenger Server on port {Port}", _serverOptions.Port);
+
+        _server.OnClientConnected += OnClientConnected;
+        _server.OnClientDisconnected += OnClientDisconnected;
+        _server.OnMessageReceived += async (context, data) =>
+            await ProcessMessageAsync(context, data, stoppingToken);
+
+        try
+        {
+            await _server.StartAsync(_serverOptions.Port);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Fatal error starting server");
+            throw;
+        }
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Shutting down Aegis Messenger Server gracefully");
+        await _server.StopAsync();
+        await base.StopAsync(cancellationToken);
+    }
+
+    private void OnClientConnected(ConnectionContext context)
+    {
+        _sessionManager.CreateSession(context.ConnectionId);
+        _logger.LogInformation("Client {ConnectionId} connected from {RemoteEndPoint}", 
+            context.ConnectionId, context.Socket.RemoteEndPoint);
+    }
+
+    private void OnClientDisconnected(ConnectionContext context)
+    {
+        _sessionManager.RemoveSession(context.ConnectionId);
+        _logger.LogInformation("Client {ConnectionId} disconnected", context.ConnectionId);
+    }
+
+    private async Task ProcessMessageAsync(
+        ConnectionContext context,
+        ReadOnlyMemory<byte> data,
+        CancellationToken cancellationToken)
     {
         try
         {
-            // Дешифруем и проверяем MAC перед обработкой
+            // Decode message
             var message = MessageEncoder.Decode(data.Span);
-            
-            // Проверяем MAC с использованием ключей сессии
+
+            // Verify MAC
             var messageData = data.Slice(0, data.Length - ProtocolConstants.MacSize);
             var receivedMac = data.Slice(data.Length - ProtocolConstants.MacSize, ProtocolConstants.MacSize);
-            
-            // Реализовать правильное управление ключами сессии
-            var session = _sessionManager?.GetSession(context.ConnectionId);
+
+            var session = _sessionManager.GetSession(context.ConnectionId);
             if (session == null)
             {
-                logger.Warning($"No session found for connection {context.ConnectionId}, creating new session");
-                session = _sessionManager?.CreateSession(context.ConnectionId);
+                _logger.LogWarning("No session found for connection {ConnectionId}", context.ConnectionId);
+                session = _sessionManager.CreateSession(context.ConnectionId);
             }
-            
-            if (session != null && !crypto.VerifyMac(messageData.Span, session.MacKey.Span, receivedMac.Span))
+
+            if (!_crypto.VerifyMac(messageData.Span, session.MacKey.Span, receivedMac.Span))
             {
-                logger.Warning($"Invalid MAC for message {message.SequenceId} from connection {context.ConnectionId}");
-                await SendErrorToClient(context, message.SequenceId, "Invalid MAC", crypto, session);
+                _logger.LogWarning("Invalid MAC for message {SequenceId} from connection {ConnectionId}",
+                    message.SequenceId, context.ConnectionId);
                 return;
             }
-            
-            // Update session activity
-            _sessionManager?.UpdateActivity(context.ConnectionId);
-            
-            await router.RouteAsync(context, message);
+
+            _sessionManager.UpdateActivity(context.ConnectionId);
+
+            // Route message
+            await _router.RouteAsync(context, message);
         }
         catch (Exception ex)
         {
-            logger.Error($"Error processing message from connection {context.ConnectionId}", ex);
-            await SendErrorToClient(context, 0, "Message processing error", crypto, _sessionManager?.GetSession(context.ConnectionId));
+            _logger.LogError(ex, "Error processing message from connection {ConnectionId}",
+                context.ConnectionId);
         }
-    }
-    
-    private static void OnClientConnected(ConnectionContext context)
-    {
-        // Соединение установлено, инициализация сессии
-        _sessionManager?.CreateSession(context.ConnectionId);
-        Console.WriteLine($"Client {context.ConnectionId} connected");
-    }
-    
-    private static void OnClientDisconnected(ConnectionContext context)
-    {
-        // Удаление сессии при отключении
-        _sessionManager?.RemoveSession(context.ConnectionId);
-        Console.WriteLine($"Client {context.ConnectionId} disconnected");
-    }
-    
-    private static async Task SendErrorToClient(
-        ConnectionContext context, 
-        ulong sequenceId, 
-        string error,
-        ICryptoProvider crypto,
-        SessionInfo? session)
-    {
-        try
-        {
-            var errorMessage = new Message
-            {
-                Magic = ProtocolConstants.Magic,
-                VersionMajor = ProtocolConstants.VersionMajor,
-                VersionMinor = ProtocolConstants.VersionMinor,
-                Type = MessageType.Error,
-                SequenceId = sequenceId,
-                PayloadLength = (uint)System.Text.Encoding.UTF8.GetByteCount(error),
-                Payload = System.Text.Encoding.UTF8.GetBytes(error)
-            };
-            
-            // Encrypt and sign the error message
-            if (session != null)
-            {
-                var encryptedMessage = await crypto.EncryptMessageAsync(errorMessage, session.SessionKey.ToArray());
-                await _server?.SendAsync(context, encryptedMessage)!;
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error sending error to client {context.ConnectionId}: {ex.Message}");
-        }
-    }
-    
-    private static void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs e)
-    {
-        e.Cancel = true;
-        Console.WriteLine("\nShutting down server...");
-        _cts.Cancel();
-        _server?.StopAsync().Wait();
     }
 }

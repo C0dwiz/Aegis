@@ -8,5 +8,37 @@ public enum MessageType : ushort
     Message = 3,
     Ack = 4,
     Error = 5,
-    Handshake = 6
+    Handshake = 6,
+    Nack = 7,
+    RetransmitRequest = 8,
+    UserPresence = 9,
+    GroupMessage = 10,
+    GroupCreate = 11,
+    GroupLeave = 12
 }
+
+/// <summary>
+/// Message flags for protocol features
+/// </summary>
+[Flags]
+public enum MessageFlags : byte
+{
+    None = 0x00,
+    RequiresAck = 0x01,           // Требует подтверждение доставки
+    IsRetransmit = 0x02,          // Это повторная отправка
+    Compressed = 0x04,            // Полезная нагрузка сжата
+    Encrypted = 0x08,             // Полезная нагрузка зашифрована
+    Priority = 0x10                // Высокий приоритет доставки
+}
+
+/// <summary>
+/// Acknowledgment status codes
+/// </summary>
+public enum AckStatus : byte
+{
+    Ok = 0,                       // Сообщение успешно доставлено
+    Error = 1,                    // Ошибка при обработке
+    Retry = 2,                    // Требуется повтор
+    NotImplemented = 3            // Тип сообщения не поддерживается
+}
+
