@@ -149,6 +149,14 @@ public class TcpServer : IDisposable
         }
     }
     
+    public async Task SendToConnectionAsync(ulong connectionId, ReadOnlyMemory<byte> data)
+    {
+        if (!_connections.TryGetValue(connectionId, out var context))
+            throw new TransportError($"Connection {connectionId} not found");
+        
+        await SendAsync(context, data);
+    }
+    
     public async Task StopAsync()
     {
         _cts.Cancel();

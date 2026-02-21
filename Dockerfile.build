@@ -1,0 +1,48 @@
+# Build stage
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+
+# Copy csproj files and restore dependencies
+COPY ["src/Aegis.Common/Aegis.Common.csproj", "src/Aegis.Common/"]
+COPY ["src/Aegis.Crypto/Aegis.Crypto.csproj", "src/Aegis.Crypto/"]
+COPY ["src/Aegis.Data/Aegis.Data.csproj", "src/Aegis.Data/"]
+COPY ["src/Aegis.Handlers/Aegis.Handlers.csproj", "src/Aegis.Handlers/"]
+COPY ["src/Aegis.Protocol/Aegis.Protocol.csproj", "src/Aegis.Protocol/"]
+COPY ["src/Aegis.Transport/Aegis.Transport.csproj", "src/Aegis.Transport/"]
+COPY ["src/Aegis.Server/Aegis.Server.csproj", "src/Aegis.Server/"]
+
+RUN dotnet restore "src/Aegis.Server/Aegis.Server.csproj"
+
+# Copy all source files
+COPY . .
+
+# Build and publish
+WORKDIR "/src/src/Aegis.Server"
+RUN dotnet build "Aegis.Server.csproj" -c Release -o /app/build
+RUN dotnet publish "Aegis.Server.csproj" -c Release -o /app/publish
+
+# Runtime stage
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
+WORKDIR /app
+
+# Create non-root user
+RUN adduser --disabled-password --gecos '' aegis && chown -R aegis /app
+USER aegis
+
+# Copy published files
+COPY --from=build /app/publish .
+
+# Expose port
+EXPOSE 8888
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8888/health || exit 1
+
+# Set environment variables
+ENV ASPNETCORE_ENVIRONMENT=Production
+ENV AEGIS_PORT=8888
+ENV AEGIS_MAX_CONNECTIONS=10000
+
+# Run the application
+ENTRYPOINT ["dotnet", "Aegis.Server.dll"]

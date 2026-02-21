@@ -1,0 +1,20 @@
+# Simple Dockerfile for Aegis Server
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
+WORKDIR /app
+EXPOSE 8888
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+COPY ["src/Aegis.Server/Aegis.Server.csproj", "src/Aegis.Server/"]
+RUN dotnet restore "src/Aegis.Server/Aegis.Server.csproj"
+COPY . .
+WORKDIR "/src/src/Aegis.Server"
+RUN dotnet build "Aegis.Server.csproj" -c Release -o /app/build
+
+FROM build AS publish
+RUN dotnet publish "Aegis.Server.csproj" -c Release -o /app/publish
+
+FROM base AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
+ENTRYPOINT ["dotnet", "Aegis.Server.dll"]

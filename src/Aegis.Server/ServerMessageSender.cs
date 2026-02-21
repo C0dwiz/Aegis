@@ -29,13 +29,14 @@ public class ServerMessageSender : IMessageSender
     {
         try
         {
-            // TODO: Find actual connection context by ID and send message
-            // For now, just log that we would send the message
-            _logger.Debug($"Message would be sent to connection {connectionId}, size: {encryptedMessage.Length}");
-            
-            // In a real implementation:
-            // var context = _server.GetConnection(connectionId);
-            // await _server.SendAsync(context, encryptedMessage);
+            if (_server == null)
+            {
+                _logger.Warning("TcpServer is null, cannot send message");
+                return;
+            }
+
+            await _server.SendToConnectionAsync(connectionId, encryptedMessage);
+            _logger.Debug($"Message sent to connection {connectionId}, size: {encryptedMessage.Length}");
         }
         catch (Exception ex)
         {

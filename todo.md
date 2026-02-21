@@ -3,6 +3,7 @@
 ## Фаза 2: Database и остающиеся функции
 
 ### Database Integration
+
 - [ ] Добавить регистрацию DbContext в Program.cs
 - [ ] Добавить регистрацию всех Repository в DI контейнер
 - [ ] Создать миграции Entity Framework Core
@@ -10,6 +11,7 @@
 - [ ] Интегрировать UserRepository в AuthHandler
 
 ### Функция 11: IPv6 поддержка
+
 - [ ] Изменить TcpServer для поддержки IPv6
 - [ ] Добавить DualMode сокеты (IPv4 + IPv6)
 - [ ] Обновить конфигурацию ServerOptions
@@ -17,6 +19,7 @@
 - [ ] Документировать в README
 
 ### Функция 12: Typing Indicators
+
 - [ ] Создать TypingIndicatorHandler в Aegis.Handlers
 - [ ] Добавить MessageType.UserTyping
 - [ ] Реализовать хранилище активного набора текста
@@ -25,6 +28,7 @@
 - [ ] Написать тесты
 
 ### Функция 13: Group Chat - GroupMessageHandler
+
 - [ ] Создать GroupMessageHandler в Aegis.Handlers
 - [ ] Добавить MessageType.GroupMessage
 - [ ] Реализовать роутинг сообщения всем членам группы
@@ -33,6 +37,7 @@
 - [ ] Написать тесты
 
 ### Функция 14: Group Chat - GroupCreateHandler
+
 - [ ] Создать GroupCreateHandler в Aegis.Handlers
 - [ ] Добавить MessageType.GroupCreate
 - [ ] Реализовать создание группы в БД
@@ -41,6 +46,7 @@
 - [ ] Написать тесты
 
 ### Функция 15: Group Chat - GroupLeaveHandler
+
 - [ ] Создать GroupLeaveHandler в Aegis.Handlers
 - [ ] Добавить MessageType.GroupLeave
 - [ ] Реализовать удаление пользователя из группы
@@ -49,6 +55,7 @@
 - [ ] Написать тесты
 
 ### Функция 16: Offline Message Queue
+
 - [ ] Создать OfflineMessageService как BackgroundService
 - [ ] Сохранять сообщения для оффлайн пользователей в БД
 - [ ] Реализовать доставку при подключении пользователя
@@ -57,6 +64,7 @@
 - [ ] Написать тесты
 
 ### Функция 17: Media Support - FileUploadHandler
+
 - [ ] Создать FileUploadHandler в Aegis.Handlers
 - [ ] Добавить MessageType.FileTransfer
 - [ ] Реализовать прием файлов с разбиением на чанки
@@ -66,6 +74,7 @@
 - [ ] Написать тесты
 
 ### Функция 18: Media Support - FileDownloadHandler
+
 - [ ] Создать FileDownloadHandler в Aegis.Handlers
 - [ ] Реализовать скачивание файлов по ID
 - [ ] Отправлять файл с разбиением на чанки
@@ -74,6 +83,7 @@
 - [ ] Написать тесты
 
 ### Функция 19: Double Ratchet Algorithm
+
 - [ ] Создать DoubleRatchetAlgorithm.cs в Aegis.Crypto
 - [ ] Реализовать Signal Protocol версию 3
 - [ ] Хранение цепочек ключей в БД
@@ -83,6 +93,7 @@
 - [ ] Интегрировать в MessageHandler
 
 ### Функция 20: Load Balancing
+
 - [ ] Создать ConnectionBalancer.cs
 - [ ] Реализовать распределение нагрузки между инстансами
 - [ ] Connection pooling с эвикцией по возрасту
@@ -92,6 +103,7 @@
 - [ ] Написать тесты
 
 ### Функция 21: Integration Tests
+
 - [ ] Создать ServerIntegrationTests.cs в Aegis.Tests
 - [ ] Тест: Authentication flow
 - [ ] Тест: Message send/receive с acks
@@ -103,6 +115,7 @@
 - [ ] Запустить все тесты и убедиться что проходят
 
 ### Функция 22: API Documentation
+
 - [ ] Создать OpenAPI спецификацию
 - [ ] Документировать все MessageType'ы
 - [ ] Описать структуру каждого сообщения
@@ -111,6 +124,7 @@
 - [ ] Ошибки и коды состояния
 
 ### Функция 23: Client SDK
+
 - [ ] Создать Aegis.Client проект
 - [ ] Реализовать C# client library
 - [ ] Метод Connect для подключения к серверу
@@ -124,6 +138,7 @@
 ## Дополнительные задачи
 
 ### Тестирование
+
 - [ ] Unit тесты для всех новых компонентов
 - [ ] Integration тесты для полного flow
 - [ ] Performance тесты с нагрузкой
@@ -132,6 +147,7 @@
 - [ ] Фаззинг тесты для парсера протокола
 
 ### Документация
+
 - [ ] Обновить README с новыми возможностями
 - [ ] Написать migration guide для v1 -> v2
 - [ ] API документация в Swagger
@@ -140,6 +156,7 @@
 - [ ] Troubleshooting guide
 
 ### Performance
+
 - [ ] Профилирование памяти
 - [ ] Оптимизация CPU usage
 - [ ] Уменьшение latency
@@ -148,6 +165,7 @@
 - [ ] Message encoding оптимизация
 
 ### DevOps
+
 - [ ] Docker контейнеризация
 - [ ] Docker Compose для локальной разработки
 - [ ] CI/CD pipeline (GitHub Actions)
@@ -156,6 +174,7 @@
 - [ ] Мониторинг и alerting
 
 ### Безопасность
+
 - [ ] Security audit кода
 - [ ] Тесты на SQL injection
 - [ ] Тесты на buffer overflow
@@ -184,4 +203,3 @@
 - Load Balancing требует архитектурных изменений
 - Все функции должны иметь unit тесты
 - Integration тесты пишутся после всех компонентов
-
