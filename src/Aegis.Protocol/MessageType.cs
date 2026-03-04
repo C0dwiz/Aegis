@@ -14,7 +14,16 @@ public enum MessageType : ushort
     UserPresence = 9,
     GroupMessage = 10,
     GroupCreate = 11,
-    GroupLeave = 12
+    GroupLeave = 12,
+    ChannelMessage = 13,
+    ChannelCreate = 14,
+    ChannelJoin = 15,
+    ChannelLeave = 16,
+    PrivateChatMessage = 17,
+    UserSearch = 18,
+    UserSearchResult = 19,
+    Register = 20,
+    RegisterResponse = 21
 }
 
 /// <summary>

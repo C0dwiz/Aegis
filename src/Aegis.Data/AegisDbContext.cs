@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Design;
 using Aegis.Data.Entities;
 
 namespace Aegis.Data;
@@ -12,6 +13,11 @@ public class AegisDbContext : DbContext
     {
     }
 
+    // Parameterless constructor for design-time tools
+    public AegisDbContext()
+    {
+    }
+
     public DbSet<User> Users { get; set; }
     public DbSet<Session> Sessions { get; set; }
     public DbSet<Message> Messages { get; set; }
@@ -20,6 +26,19 @@ public class AegisDbContext : DbContext
     public DbSet<GroupMessage> GroupMessages { get; set; }
     public DbSet<PreKey> PreKeys { get; set; }
     public DbSet<Device> Devices { get; set; }
+    public DbSet<Channel> Channels { get; set; }
+    public DbSet<ChannelMember> ChannelMembers { get; set; }
+    public DbSet<ChannelMessage> ChannelMessages { get; set; }
+    public DbSet<PrivateChat> PrivateChats { get; set; }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        if (!optionsBuilder.IsConfigured)
+        {
+            // Default configuration for design-time tools
+            optionsBuilder.UseSqlite("Data Source=aegis.db");
+        }
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -101,8 +120,59 @@ public class AegisDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.DeviceId).IsUnique();
-            entity.HasOne(e => e.User).WithMany().HasForeignKey(e => e.UserId)
+            entity.HasOne(e => e.User).WithMany(u => u.Devices).HasForeignKey(e => e.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+        });
+
+        // Channel configuration
+        modelBuilder.Entity<Channel>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.Name);
+            entity.HasOne(e => e.CreatedByUser).WithMany(u => u.CreatedChannels).HasForeignKey(e => e.CreatedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("GETUTCDATE()");
+        });
+
+        // ChannelMember configuration
+        modelBuilder.Entity<ChannelMember>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.ChannelId, e.UserId }).IsUnique();
+            entity.HasOne(e => e.Channel).WithMany(c => c.Members).HasForeignKey(e => e.ChannelId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.User).WithMany(u => u.ChannelMemberships).HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.Property(e => e.JoinedAt).HasDefaultValueSql("GETUTCDATE()");
+        });
+
+        // ChannelMessage configuration
+        modelBuilder.Entity<ChannelMessage>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.ChannelId, e.CreatedAt });
+            entity.HasOne(e => e.Channel).WithMany(c => c.Messages).HasForeignKey(e => e.ChannelId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.FromUser).WithMany().HasForeignKey(e => e.FromUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.ReplyToMessage).WithMany(m => m.Replies).HasForeignKey(e => e.ReplyToMessageId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+        });
+
+        // PrivateChat configuration
+        modelBuilder.Entity<PrivateChat>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.User1Id, e.User2Id }).IsUnique();
+            entity.HasOne(e => e.User1).WithMany(u => u.PrivateChats1).HasForeignKey(e => e.User1Id)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.User2).WithMany(u => u.PrivateChats2).HasForeignKey(e => e.User2Id)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.LastMessage).WithMany().HasForeignKey(e => e.LastMessageId)
+                .OnDelete(DeleteBehavior.SetNull);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
         });
     }

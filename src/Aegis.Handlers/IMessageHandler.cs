@@ -6,5 +6,5 @@ namespace Aegis.Handlers;
 public interface IMessageHandler
 {
     MessageType Type { get; }
-    ValueTask HandleAsync(ConnectionContext context, Message message);
+    ValueTask HandleAsync(ConnectionContext context, Aegis.Protocol.Message message);
 }

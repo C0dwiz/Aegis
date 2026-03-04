@@ -64,7 +64,7 @@ public class SessionManager
             return false;
         }
         
-        return _cryptoProvider.VerifyMac(data, session.MacKey.Span, receivedMac);
+        return _cryptoProvider.VerifyMac(data.ToArray(), session.MacKey.ToArray(), receivedMac.ToArray());
     }
 }
 

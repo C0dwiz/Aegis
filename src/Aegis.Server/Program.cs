@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.EntityFrameworkCore;
 using Serilog;
 using Aegis.Common;
 using Aegis.Common.Configuration;
@@ -10,6 +11,9 @@ using Aegis.Crypto;
 using Aegis.Handlers;
 using Aegis.Protocol;
 using Aegis.Transport;
+using Aegis.Data;
+using Aegis.Data.Repositories;
+using Aegis.Data.Services;
 
 namespace Aegis.Server;
 
@@ -58,10 +62,28 @@ public static class Program
                 services.Configure<LoggingOptions>(
                     context.Configuration.GetSection(LoggingOptions.SectionName));
 
+                // Register database
+                services.AddDbContext<AegisDbContext>(options =>
+                    options.UseSqlite(context.Configuration.GetConnectionString("DefaultConnection") ?? 
+                                     "Data Source=aegis.db"));
+
+                // Register repositories
+                services.AddScoped<IUserRepository, UserRepository>();
+                services.AddScoped<ISessionRepository, SessionRepository>();
+                services.AddScoped<IMessageRepository, MessageRepository>();
+                services.AddScoped<IChannelRepository, ChannelRepository>();
+                services.AddScoped<IPrivateChatRepository, PrivateChatRepository>();
+
+                // Register services
+                services.AddScoped<IUserRegistrationService, UserRegistrationService>();
+                services.AddScoped<IUserAuthenticationService, UserAuthenticationService>();
+                services.AddScoped<IUserSearchService, UserSearchService>();
+
                 // Register core services
-                services.AddSingleton<ICryptoProvider, AegisCryptoProvider>();
+                services.AddSingleton<Aegis.Crypto.ICryptoProvider, AegisCryptoProvider>();
+                services.AddSingleton<Aegis.Common.ICryptoProvider, CommonCryptoProviderAdapter>();
                 services.AddSingleton<ISessionCryptoProvider>(sp => 
-                    sp.GetRequiredService<ICryptoProvider>() as AegisCryptoProvider 
+                    sp.GetRequiredService<Aegis.Crypto.ICryptoProvider>() as AegisCryptoProvider 
                     ?? throw new InvalidOperationException("AegisCryptoProvider must implement ISessionCryptoProvider"));
                 services.AddSingleton<SessionManager>();
                 services.AddSingleton<IAntiSpamClient, AntiSpamClient>();
@@ -82,6 +104,11 @@ public static class Program
                 services.AddSingleton<IMessageHandler, AckHandler>();
                 services.AddSingleton<IMessageHandler, NackHandler>();
                 services.AddSingleton<IMessageHandler, RetransmitRequestHandler>();
+                services.AddSingleton<IMessageHandler, RegistrationHandler>();
+                services.AddSingleton<IMessageHandler, UserSearchHandler>();
+                services.AddSingleton<IMessageHandler, ChannelMessageHandler>();
+                services.AddSingleton<IMessageHandler, ChannelCreateHandler>();
+                services.AddSingleton<IMessageHandler, PrivateChatMessageHandler>();
                 services.AddSingleton<MessageRouter>();
                 services.AddSingleton<IMessageSender, ServerMessageSender>();
 
@@ -121,7 +148,7 @@ public class AegisMessengerService : BackgroundService
 {
     private readonly TcpServer _server;
     private readonly MessageRouter _router;
-    private readonly ICryptoProvider _crypto;
+    private readonly Aegis.Crypto.ICryptoProvider _crypto;
     private readonly SessionManager _sessionManager;
     private readonly ILogger<AegisMessengerService> _logger;
     private readonly ServerOptions _serverOptions;
@@ -129,7 +156,7 @@ public class AegisMessengerService : BackgroundService
     public AegisMessengerService(
         TcpServer server,
         MessageRouter router,
-        ICryptoProvider crypto,
+        Aegis.Crypto.ICryptoProvider crypto,
         SessionManager sessionManager,
         ILogger<AegisMessengerService> logger,
         Microsoft.Extensions.Options.IOptions<ServerOptions> serverOptions)

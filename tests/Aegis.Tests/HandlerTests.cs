@@ -7,6 +7,12 @@ using Aegis.Transport;
 using Aegis.Common.Logging;
 using Aegis.Crypto;
 using Aegis.Common;
+using Aegis.Data.Services;
+using Aegis.Data.Repositories;
+using Aegis.Data.Entities;
+using Microsoft.Extensions.Logging;
+using Moq;
+using System.Text.Json;
 
 namespace Aegis.Tests;
 
@@ -43,7 +49,7 @@ public class HandlerTests
         var testHandler = new TestMessageHandler();
         var router = new MessageRouter(new IMessageHandler[] { testHandler }, _cryptoProvider, _sessionManager, _logger);
         var context = new TestConnectionContext(12345ul);
-        var message = new Message
+        var message = new Aegis.Protocol.Message
         {
             Magic = ProtocolConstants.Magic,
             VersionMajor = 1,
@@ -71,7 +77,7 @@ public class HandlerTests
         // Arrange
         var router = new MessageRouter(Array.Empty<IMessageHandler>(), _cryptoProvider, _sessionManager, _logger);
         var context = new TestConnectionContext(12345ul);
-        var message = new Message
+        var message = new Aegis.Protocol.Message
         {
             Magic = ProtocolConstants.Magic,
             VersionMajor = 1,
@@ -98,7 +104,7 @@ public class HandlerTests
         // Arrange
         var handler = new AuthHandler(_antiSpam, _messageSender, _cryptoProvider, _logger);
         var context = new TestConnectionContext(12345ul);
-        var message = new Message
+        var message = new Aegis.Protocol.Message
         {
             Magic = ProtocolConstants.Magic,
             VersionMajor = 1,
@@ -127,7 +133,7 @@ public class HandlerTests
         var context = new TestConnectionContext(12345ul);
         var initialActivity = context.LastActivity;
         
-        var message = new Message
+        var message = new Aegis.Protocol.Message
         {
             Magic = ProtocolConstants.Magic,
             VersionMajor = 1,
@@ -154,7 +160,7 @@ public class HandlerTests
         // Arrange
         var handler = new MessageHandler(_antiSpam, _messageSender, _cryptoProvider, _logger);
         var context = new TestConnectionContext(12345ul);
-        var message = new Message
+        var message = new Aegis.Protocol.Message
         {
             Magic = ProtocolConstants.Magic,
             VersionMajor = 1,
@@ -184,7 +190,7 @@ public class HandlerTests
         // Arrange
         var handler = new MessageHandler(_antiSpam, _messageSender, _cryptoProvider, _logger);
         var context = new TestConnectionContext(12345ul);
-        var message = new Message
+        var message = new Aegis.Protocol.Message
         {
             Magic = ProtocolConstants.Magic,
             VersionMajor = 1,
@@ -235,7 +241,7 @@ public class HandlerTests
         public ulong HandledConnectionId { get; private set; }
         public ulong HandledSequenceId { get; private set; }
         
-        public ValueTask HandleAsync(ConnectionContext context, Message message)
+        public ValueTask HandleAsync(ConnectionContext context, Aegis.Protocol.Message message)
         {
             Handled = true;
             HandledConnectionId = context.ConnectionId;
@@ -259,7 +265,7 @@ public class HandlerTests
         }
     }
     
-    private class TestLogger : ILogger
+    private class TestLogger : Aegis.Common.Logging.ILogger
     {
         public List<string> DebugMessages { get; } = new();
         public List<string> InfoMessages { get; } = new();
@@ -274,5 +280,123 @@ public class HandlerTests
             ErrorMessages.Add(message);
             if (ex != null) ErrorMessages.Add(ex.ToString());
         }
+    }
+
+    // New tests for updated handlers
+    [Fact]
+    public async Task MessageRouter_ShouldRouteNewMessageTypes()
+    {
+        // Arrange
+        var mockRegistrationService = new Mock<IUserRegistrationService>();
+        var mockSearchService = new Mock<IUserSearchService>();
+        var mockChannelRepository = new Mock<IChannelRepository>();
+        var mockPrivateChatRepository = new Mock<IPrivateChatRepository>();
+
+        var registrationHandler = new RegistrationHandler(mockRegistrationService.Object, new Mock<ILogger<RegistrationHandler>>().Object);
+        var searchHandler = new UserSearchHandler(mockSearchService.Object, new Mock<ILogger<UserSearchHandler>>().Object);
+        var channelHandler = new ChannelMessageHandler(mockChannelRepository.Object, mockSearchService.Object, new Mock<ILogger<ChannelMessageHandler>>().Object);
+
+        var router = new MessageRouter(new IMessageHandler[] { registrationHandler, searchHandler, channelHandler }, _cryptoProvider, _sessionManager, _logger);
+        var context = new TestConnectionContext(12345ul);
+
+        // Test Registration message routing
+        var registrationRequest = new RegistrationRequest("testuser", "test@example.com", "password123", "public_key");
+        var registrationPayload = JsonSerializer.SerializeToUtf8Bytes(registrationRequest);
+        var registrationMessage = new Aegis.Protocol.Message
+        {
+            Magic = ProtocolConstants.Magic,
+            VersionMajor = 1,
+            VersionMinor = 0,
+            Type = MessageType.Register,
+            SequenceId = 1,
+            PayloadLength = (uint)registrationPayload.Length,
+            Payload = registrationPayload
+        };
+
+        // Act & Assert - Should not throw
+        await router.RouteAsync(context, registrationMessage);
+
+        // Test UserSearch message routing
+        var searchRequest = new UserSearchRequest("test", 10);
+        var searchPayload = JsonSerializer.SerializeToUtf8Bytes(searchRequest);
+        var searchMessage = new Aegis.Protocol.Message
+        {
+            Magic = ProtocolConstants.Magic,
+            VersionMajor = 1,
+            VersionMinor = 0,
+            Type = MessageType.UserSearch,
+            SequenceId = 2,
+            PayloadLength = (uint)searchPayload.Length,
+            Payload = searchPayload
+        };
+
+        // Act & Assert - Should not throw
+        await router.RouteAsync(context, searchMessage);
+
+        // Test ChannelMessage message routing
+        var channelRequest = new ChannelMessageRequest(1, "Hello, channel!", MessageContentType.Text);
+        var channelPayload = JsonSerializer.SerializeToUtf8Bytes(channelRequest);
+        var channelMessage = new Aegis.Protocol.Message
+        {
+            Magic = ProtocolConstants.Magic,
+            VersionMajor = 1,
+            VersionMinor = 0,
+            Type = MessageType.ChannelMessage,
+            SequenceId = 3,
+            PayloadLength = (uint)channelPayload.Length,
+            Payload = channelPayload
+        };
+
+        // Act & Assert - Should not throw
+        await router.RouteAsync(context, channelMessage);
+    }
+
+    [Fact]
+    public void NewHandlers_ShouldHaveCorrectMessageTypes()
+    {
+        // Arrange
+        var mockRegistrationService = new Mock<IUserRegistrationService>();
+        var mockSearchService = new Mock<IUserSearchService>();
+        var mockChannelRepository = new Mock<IChannelRepository>();
+        var mockPrivateChatRepository = new Mock<IPrivateChatRepository>();
+
+        var registrationHandler = new RegistrationHandler(mockRegistrationService.Object, new Mock<ILogger<RegistrationHandler>>().Object);
+        var searchHandler = new UserSearchHandler(mockSearchService.Object, new Mock<ILogger<UserSearchHandler>>().Object);
+        var channelHandler = new ChannelMessageHandler(mockChannelRepository.Object, mockSearchService.Object, new Mock<ILogger<ChannelMessageHandler>>().Object);
+        var channelCreateHandler = new ChannelCreateHandler(mockChannelRepository.Object, mockSearchService.Object, new Mock<ILogger<ChannelCreateHandler>>().Object);
+        var privateChatHandler = new PrivateChatMessageHandler(mockPrivateChatRepository.Object, mockSearchService.Object, new Mock<ILogger<PrivateChatMessageHandler>>().Object);
+
+        // Act & Assert
+        Assert.Equal(MessageType.Register, registrationHandler.Type);
+        Assert.Equal(MessageType.UserSearch, searchHandler.Type);
+        Assert.Equal(MessageType.ChannelMessage, channelHandler.Type);
+        Assert.Equal(MessageType.ChannelCreate, channelCreateHandler.Type);
+        Assert.Equal(MessageType.PrivateChatMessage, privateChatHandler.Type);
+    }
+
+    [Fact]
+    public async Task MessageRouter_ShouldHandleUnknownMessageType()
+    {
+        // Arrange
+        var testHandler = new TestMessageHandler();
+        var router = new MessageRouter(new IMessageHandler[] { testHandler }, _cryptoProvider, _sessionManager, _logger);
+        var context = new TestConnectionContext(12345ul);
+        var message = new Aegis.Protocol.Message
+        {
+            Magic = ProtocolConstants.Magic,
+            VersionMajor = 1,
+            VersionMinor = 0,
+            Type = (MessageType)999, // Unknown type
+            SequenceId = 1,
+            PayloadLength = 0,
+            Payload = Array.Empty<byte>()
+        };
+
+        // Act & Assert - Should not throw, should handle gracefully
+        await router.RouteAsync(context, message);
+        
+        // Should log error about unknown message type
+        Assert.NotEmpty(_logger.ErrorMessages);
+        Assert.Contains("Unknown message type", _logger.ErrorMessages.First());
     }
 }

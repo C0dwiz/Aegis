@@ -7,10 +7,13 @@ Dart клиентская библиотека для протокола Aegis M
 - ✅ Полная реализация бинарного протокола Aegis
 - ✅ TCP транспортный слой с автоматическим переподключением
 - ✅ Поддержка всех типов сообщений (Auth, Ping, Message, Ack, Error, Handshake)
+- ✅ **Новые функции:** Регистрация пользователей, поиск пользователей, каналы, приватные сообщения
+- ✅ **Новые типы сообщений:** Register, UserSearch, ChannelMessage, PrivateChatMessage и др.
 - ✅ Big-endian сериализация для кроссплатформенной совместимости
 - ✅ Встроенное логирование и обработка ошибок
 - ✅ Stream-based API для обработки входящих сообщений
 - ✅ Поддержка Sequence ID для упорядочивания сообщений
+- ✅ JSON-сериализация для сложных payloads
 
 ## Установка
 
@@ -33,11 +36,48 @@ void main() async {
     // Подключение к серверу
     await client.connect('localhost', 8888);
     
+    // Регистрация нового пользователя
+    final registrationResponse = await client.register(
+      'username',
+      'email@example.com',
+      'password',
+      'public_key',
+    );
+    
+    if (registrationResponse.success) {
+      print('User registered: ${registrationResponse.user?.username}');
+    }
+    
     // Аутентификация
     await client.authenticate('your_auth_token');
     
-    // Отправка сообщения
-    await client.sendMessage('Hello from Dart!');
+    // Поиск пользователей
+    final searchResponse = await client.searchUsers('username_pattern');
+    print('Found ${searchResponse.users.length} users');
+    
+    // Создание канала
+    final channelResponse = await client.createChannel(
+      'My Channel',
+      description: 'A test channel',
+      type: ChannelType.public,
+    );
+    
+    if (channelResponse.success) {
+      // Присоединение к каналу
+      await client.joinChannel(channelResponse.channel!.id);
+      
+      // Отправка сообщения в канал
+      await client.sendChannelMessage(
+        channelResponse.channel!.id,
+        'Hello from Dart client!',
+      );
+    }
+    
+    // Отправка приватного сообщения
+    await client.sendPrivateMessage(
+      targetUserId,
+      'Hello! This is a private message.',
+    );
     
     // Прослушивание входящих сообщений
     client.messages.listen((message) {
@@ -59,36 +99,80 @@ void main() async {
 
 Основной класс клиента с методами:
 
+#### Базовые методы:
 - `connect(host, port)` - подключение к серверу
 - `authenticate(token)` - аутентификация
-- `sendMessage(text, toUserId)` - отправка сообщения
+- `sendMessage(text, toUserId)` - отправка сообщения (legacy)
 - `ping()` - отправка ping для поддержания соединения
 - `disconnect()` - отключение от сервера
 
-### Message
+#### Новые методы:
+- `register(username, email, password, publicKey)` - регистрация пользователя
+- `searchUsers(query, limit)` - поиск пользователей
+- `createChannel(name, description, type)` - создание канала
+- `joinChannel(channelId)` - присоединение к каналу
+- `sendChannelMessage(channelId, content, contentType, replyToMessageId)` - отправка сообщения в канал
+- `sendPrivateMessage(toUserId, content, contentType)` - отправка приватного сообщения
 
-Класс сообщения протокола:
+### Message Payloads
 
+Новые классы для работы с payloads:
+
+#### Пользователи и регистрация:
 ```dart
-final message = Message.withType(MessageType.message, utf8.encode('Hello'));
-message.sequenceId = 1;
-message.flags = ProtocolConstants.flagRequiresAck;
+// Регистрация
+final registration = RegistrationRequest(
+  username: 'user',
+  email: 'user@example.com',
+  password: 'password',
+  publicKey: 'public_key',
+);
+
+// Ответ регистрации
+final response = RegistrationResponse.fromBytes(message.payload);
 ```
 
-### MessageEncoder
-
-Сериализация/десериализация сообщений:
-
+#### Поиск пользователей:
 ```dart
-// Кодирование
-final data = MessageEncoder.encode(message);
+// Запрос поиска
+final searchRequest = UserSearchRequest(query: 'user', limit: 10);
 
-// Декодирование
-final decoded = MessageEncoder.decode(data);
+// Ответ поиска
+final searchResponse = UserSearchResponse.fromBytes(message.payload);
+print('Found users: ${searchResponse.users.map((u) => u.username)}');
+```
+
+#### Каналы:
+```dart
+// Создание канала
+final channelRequest = ChannelCreateRequest(
+  name: 'General',
+  description: 'General discussion',
+  type: ChannelType.public,
+);
+
+// Сообщение в канал
+final channelMessage = ChannelMessageRequest(
+  channelId: 123,
+  content: 'Hello everyone!',
+  contentType: MessageContentType.text,
+  replyToMessageId: 456,
+);
+```
+
+#### Приватные сообщения:
+```dart
+// Приватное сообщение
+final privateMessage = PrivateChatMessageRequest(
+  toUserId: 789,
+  content: 'Private conversation',
+  contentType: MessageContentType.text,
+);
 ```
 
 ### Типы сообщений
 
+#### Базовые типы:
 - `MessageType.unknown` - неизвестный тип
 - `MessageType.auth` - аутентификация
 - `MessageType.ping` - keep-alive
@@ -97,7 +181,87 @@ final decoded = MessageEncoder.decode(data);
 - `MessageType.error` - ошибка
 - `MessageType.handshake` - рукопожатие
 
+#### Новые типы:
+- `MessageType.register` - регистрация пользователя
+- `MessageType.registerResponse` - ответ регистрации
+- `MessageType.userSearch` - поиск пользователей
+- `MessageType.userSearchResult` - результат поиска
+- `MessageType.channelMessage` - сообщение в канал
+- `MessageType.channelCreate` - создание канала
+- `MessageType.channelJoin` - присоединение к каналу
+- `MessageType.channelLeave` - выход из канала
+- `MessageType.privateChatMessage` - приватное сообщение
+
+### Типы контента сообщений
+
+```dart
+enum MessageContentType {
+  text,      // Текстовое сообщение
+  image,     // Изображение
+  video,     // Видео
+  audio,     // Аудио
+  file,      // Файл
+  location,  // Геолокация
+}
+```
+
+### Типы каналов
+
+```dart
+enum ChannelType {
+  public,    // Публичный канал
+  private,   // Приватный канал
+  group,     // Групповой чат
+}
+```
+
 ## Продвинутое использование
+
+### Обработка входящих сообщений
+
+```dart
+client.messages.listen((message) {
+  switch (message.type) {
+    case MessageType.channelMessage:
+      final response = ChannelMessageResponse.fromBytes(message.payload);
+      if (response.success) {
+        print('Channel message: ${response.message?.content}');
+      }
+      break;
+      
+    case MessageType.privateChatMessage:
+      final response = PrivateChatMessageResponse.fromBytes(message.payload);
+      if (response.success) {
+        print('Private message: ${response.message?.content}');
+      }
+      break;
+      
+    case MessageType.userSearchResult:
+      final response = UserSearchResponse.fromBytes(message.payload);
+      print('Search results: ${response.users.length} users found');
+      break;
+      
+    case MessageType.registerResponse:
+      final response = RegistrationResponse.fromBytes(message.payload);
+      if (response.success) {
+        print('Registration successful: ${response.user?.username}');
+      }
+      break;
+      
+    case MessageType.ping:
+      final timestamp = _bytesToInt64(message.payload);
+      final latency = DateTime.now().millisecondsSinceEpoch - timestamp;
+      print('Ping: ${latency}ms');
+      break;
+      
+    case MessageType.error:
+      final errorCode = _bytesToUint16(message.payload.sublist(0, 2));
+      final errorText = String.fromCharCodes(message.payload.sublist(4));
+      print('Error $errorCode: $errorText');
+      break;
+  }
+});
+```
 
 ### Автоматическое переподключение
 
@@ -131,40 +295,67 @@ class RobustClient {
 }
 ```
 
-### Обработка входящих сообщений
+### Работа с каналами
 
 ```dart
-client.messages.listen((message) {
-  switch (message.type) {
-    case MessageType.message:
-      final text = String.fromCharCodes(message.payload.sublist(21));
-      print('Message: $text');
-      break;
-      
-    case MessageType.ping:
-      final timestamp = _bytesToInt64(message.payload);
-      final latency = DateTime.now().millisecondsSinceEpoch - timestamp;
-      print('Ping: ${latency}ms');
-      break;
-      
-    case MessageType.error:
-      final errorCode = _bytesToUint16(message.payload.sublist(0, 2));
-      final errorText = String.fromCharCodes(message.payload.sublist(4));
-      print('Error $errorCode: $errorText');
-      break;
-  }
-});
+// Создание публичного канала
+final channelResponse = await client.createChannel(
+  'General Discussion',
+  description: 'A place for general conversations',
+  type: ChannelType.public,
+);
+
+if (channelResponse.success) {
+  final channel = channelResponse.channel!;
+  
+  // Присоединение к каналу
+  await client.joinChannel(channel.id);
+  
+  // Отправка текстового сообщения
+  await client.sendChannelMessage(
+    channel.id,
+    'Hello everyone! 👋',
+    contentType: MessageContentType.text,
+  );
+  
+  // Отправка ответа на сообщение
+  await client.sendChannelMessage(
+    channel.id,
+    'I agree with your point!',
+    replyToMessageId: previousMessageId,
+  );
+  
+  // Отправка другого контента
+  await client.sendChannelMessage(
+    channel.id,
+    'Check out this image!',
+    contentType: MessageContentType.image,
+  );
+}
 ```
 
-### Настройка логирования
+### Приватные сообщения
 
 ```dart
-// Включить логирование
-AegisLogger.enabled = true;
-AegisLogger.level = LogLevel.debug;
-
-// Отключить логирование
-AegisLogger.enabled = false;
+// Поиск пользователя для приватного сообщения
+final searchResponse = await client.searchUsers('friend_username');
+if (searchResponse.success && searchResponse.users.isNotEmpty) {
+  final user = searchResponse.users.first;
+  
+  // Отправка приватного сообщения
+  final privateResponse = await client.sendPrivateMessage(
+    user.id,
+    'Hi ${user.username}! Want to chat?',
+    contentType: MessageContentType.text,
+  );
+  
+  if (privateResponse.success) {
+    print('Private message sent to ${user.username}');
+    if (privateResponse.privateChat != null) {
+      print('Private chat ID: ${privateResponse.privateChat!.id}');
+    }
+  }
+}
 ```
 
 ## Формат протокола
@@ -222,8 +413,8 @@ try {
 
 ## Примеры
 
-Базовый пример: `example/basic_example.dart`
-Продвинутый пример с переподключением: `example/advanced_example.dart`
+- **Базовый пример:** `example/basic_example.dart` - демонстрирует основные функции
+- **Полный пример:** `example/complete_example.dart` - демонстрирует все возможности
 
 ## Тестирование
 

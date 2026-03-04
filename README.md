@@ -1,6 +1,26 @@
 # Серверный протокол Aegis
 
-Высокопроизводительный TCP-протокол для мессенджера TwoSpace с собственным бинарным шифрованием.
+Высокопроизводительный TCP-протокол для мессенджера TwoSpace с собственным бинарным шифрованием, поддержкой локальной базы данных, регистрацией пользователей, каналами и приватными чатами.
+
+## Новые возможности
+
+### 🚀 База данных и пользователи
+- **Локальная SQLite база данных** с Entity Framework Core
+- **Регистрация пользователей** с username, email и паролем
+- **Аутентификация** по токенам сессий
+- **Поиск пользователей** по username с поддержкой шаблонов
+
+### 💬 Каналы и чаты
+- **Каналы** трех типов: публичные, приватные, групповые
+- **Управление участниками** с ролями (Member, Moderator, Admin, Owner)
+- **Приватные чаты** между двумя пользователями
+- **История сообщений** с поддержкой ответов и закрепления
+
+### 🔐 Безопасность
+- **End-to-end шифрование** сообщений
+- **Хеширование паролей** с использованием современных алгоритмов
+- **X3DH протокол** для ключевого обмена
+- **MAC проверка** целостности сообщений
 
 ## Архитектура
 
@@ -17,12 +37,21 @@ AegisMessenger.Server/
 ├── src/
 │   ├── Aegis.Common/          # Общие интерфейсы и типы ошибок
 │   │   ├── Errors/            # Классы пользовательских исключений
-│   │   └── Logging/           # Интерфейс логгера
+│   │   ├── Logging/           # Интерфейс логгера
+│   │   └── ICryptoProvider.cs # Интерфейсы криптографии
 │   ├── Aegis.Protocol/        # Реализация бинарного протокола
 │   │   ├── Message.cs         # Структура данных сообщения
 │   │   ├── MessageEncoder.cs  # Сериализация/десериализация
 │   │   ├── MessageType.cs     # Перечисление типов сообщений
 │   │   └── ProtocolConstants.cs # Константы протокола
+│   ├── Aegis.Data/           # Слой данных с Entity Framework Core
+│   │   ├── Entities/         # Сущности базы данных
+│   │   │   └── DataEntities.cs # User, Channel, Message и др.
+│   │   ├── Repositories/     # Репозитории для работы с БД
+│   │   │   └── Repositories.cs # UserRepository, ChannelRepository и др.
+│   │   ├── Services/         # Бизнес-логика
+│   │   │   └── UserServices.cs # Регистрация, аутентификация, поиск
+│   │   └── AegisDbContext.cs # Контекст Entity Framework
 │   ├── Aegis.Crypto/          # Криптографический слой
 │   │   ├── ICryptoProvider.cs # Интерфейс криптографии
 │   │   └── AegisCryptoProvider.cs # Реализация AES-GCM + HMAC
@@ -35,6 +64,8 @@ AegisMessenger.Server/
 │   │   ├── AuthHandler.cs     # Обработчик аутентификации
 │   │   ├── PingHandler.cs     # Обработчик keep-alive
 │   │   ├── MessageHandler.cs  # Обработчик сообщений чата
+│   │   ├── UserHandlers.cs    # Обработчики регистрации и поиска
+│   │   ├── ChannelHandlers.cs # Обработчики каналов и чатов
 │   │   └── AntiSpamClient.cs  # Интеграция с антиспамом
 │   └── Aegis.Server/          # Основное приложение сервера
 │       └── Program.cs          # Точка входа и запуск сервера
@@ -85,6 +116,60 @@ AegisMessenger.Server/
 | Ack | 4 | Подтверждение получения |
 | Error | 5 | Ответ с ошибкой |
 | Handshake | 6 | Начальное рукопожатие |
+| Nack | 7 | Negative acknowledgment |
+| RetransmitRequest | 8 | Запрос повторной отправки |
+| UserPresence | 9 | Статус пользователя |
+| GroupMessage | 10 | Групповое сообщение |
+| GroupCreate | 11 | Создание группы |
+| GroupLeave | 12 | Выход из группы |
+| **ChannelMessage** | **13** | **Сообщение в канале** |
+| **ChannelCreate** | **14** | **Создание канала** |
+| **ChannelJoin** | **15** | **Присоединение к каналу** |
+| **ChannelLeave** | **16** | **Выход из канала** |
+| **PrivateChatMessage** | **17** | **Приватное сообщение** |
+| **UserSearch** | **18** | **Поиск пользователей** |
+| **UserSearchResult** | **19** | **Результаты поиска** |
+| **Register** | **20** | **Регистрация пользователя** |
+| **RegisterResponse** | **21** | **Ответ регистрации** |
+
+### Новые типы сообщений
+
+#### Регистрация пользователя
+```json
+{
+  "Type": "Register",
+  "Payload": {
+    "Username": "john_doe",
+    "Email": "john@example.com",
+    "Password": "secure_password",
+    "PublicKey": "base64_public_key"
+  }
+}
+```
+
+#### Поиск пользователей
+```json
+{
+  "Type": "UserSearch",
+  "Payload": {
+    "Query": "john",
+    "Limit": 20
+  }
+}
+```
+
+#### Сообщение в канал
+```json
+{
+  "Type": "ChannelMessage",
+  "Payload": {
+    "ChannelId": 1,
+    "Content": "Hello, world!",
+    "ContentType": 0,
+    "ReplyToMessageId": null
+  }
+}
+```
 
 ## Основные компоненты
 
@@ -202,23 +287,56 @@ AegisMessenger.Server/
 
 ## Getting Started
 
-1. **Build:**
+### Требования
 
+- .NET 10.0
+- SQLite
+- Entity Framework Core
+
+### Быстрый запуск
+
+1. **Клонирование и сборка:**
 ```bash
+git clone <repository-url>
+cd Aegis
 dotnet build
 ```
 
-1. **Run:**
-
+2. **Настройка базы данных:**
 ```bash
-cd src/Aegis.Server
-dotnet run --port 8888
+cd src/Aegis.Data
+dotnet ef migrations add InitialCreate
+dotnet ef database update
 ```
 
-1. **Test:**
-
+3. **Запуск сервера:**
 ```bash
-dotnet test tests/Aegis.Tests
+cd src/Aegis.Server
+dotnet run
+```
+
+Сервер запустится на порту 8888 и создаст файл базы данных `aegis.db`.
+
+### Конфигурация
+
+Файл `appsettings.json` уже настроен для локальной разработки:
+
+```json
+{
+  "Server": {
+    "Port": 8888,
+    "MaxConnections": 10000
+  },
+  "Database": {
+    "Provider": "Sqlite",
+    "ConnectionString": "Data Source=aegis.db"
+  },
+  "Logging": {
+    "MinimumLevel": "Information",
+    "Console": true,
+    "File": true
+  }
+}
 ```
 
 ## Extensibility Points

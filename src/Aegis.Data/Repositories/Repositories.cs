@@ -206,3 +206,127 @@ public class MessageRepository : Repository<Message>, IMessageRepository
             .ToListAsync();
     }
 }
+
+/// <summary>
+/// Channel repository interface
+/// </summary>
+public interface IChannelRepository : IRepository<Channel>
+{
+    Task<IEnumerable<Channel>> GetUserChannelsAsync(ulong userId);
+    Task<Channel?> GetChannelWithMembersAsync(ulong channelId);
+    Task<bool> IsUserMemberAsync(ulong channelId, ulong userId);
+    Task<ChannelMember?> GetChannelMemberAsync(ulong channelId, ulong userId);
+    Task<IEnumerable<ChannelMessage>> GetChannelMessagesAsync(ulong channelId, int limit = 50);
+}
+
+/// <summary>
+/// Channel repository implementation
+/// </summary>
+public class ChannelRepository : Repository<Channel>, IChannelRepository
+{
+    private readonly AegisDbContext _context;
+
+    public ChannelRepository(AegisDbContext context) : base(context)
+    {
+        _context = context;
+    }
+
+    public async Task<IEnumerable<Channel>> GetUserChannelsAsync(ulong userId)
+    {
+        return await _context.ChannelMembers
+            .Where(cm => cm.UserId == userId && cm.IsActive)
+            .Select(cm => cm.Channel!)
+            .ToListAsync();
+    }
+
+    public async Task<Channel?> GetChannelWithMembersAsync(ulong channelId)
+    {
+        return await _context.Channels
+            .Include(c => c.Members)
+            .ThenInclude(cm => cm.User)
+            .Include(c => c.CreatedByUser)
+            .FirstOrDefaultAsync(c => c.Id == channelId && c.IsActive);
+    }
+
+    public async Task<bool> IsUserMemberAsync(ulong channelId, ulong userId)
+    {
+        return await _context.ChannelMembers
+            .AnyAsync(cm => cm.ChannelId == channelId && cm.UserId == userId && cm.IsActive);
+    }
+
+    public async Task<ChannelMember?> GetChannelMemberAsync(ulong channelId, ulong userId)
+    {
+        return await _context.ChannelMembers
+            .Include(cm => cm.User)
+            .FirstOrDefaultAsync(cm => cm.ChannelId == channelId && cm.UserId == userId && cm.IsActive);
+    }
+
+    public async Task<IEnumerable<ChannelMessage>> GetChannelMessagesAsync(ulong channelId, int limit = 50)
+    {
+        return await _context.ChannelMessages
+            .Include(cm => cm.FromUser)
+            .Include(cm => cm.ReplyToMessage)
+            .Where(cm => cm.ChannelId == channelId)
+            .OrderByDescending(cm => cm.CreatedAt)
+            .Take(limit)
+            .ToListAsync();
+    }
+}
+
+/// <summary>
+/// Private chat repository interface
+/// </summary>
+public interface IPrivateChatRepository : IRepository<PrivateChat>
+{
+    Task<PrivateChat?> GetPrivateChatAsync(ulong userId1, ulong userId2);
+    Task<IEnumerable<PrivateChat>> GetUserPrivateChatsAsync(ulong userId);
+    Task<PrivateChat> CreatePrivateChatAsync(ulong userId1, ulong userId2);
+}
+
+/// <summary>
+/// Private chat repository implementation
+/// </summary>
+public class PrivateChatRepository : Repository<PrivateChat>, IPrivateChatRepository
+{
+    private readonly AegisDbContext _context;
+
+    public PrivateChatRepository(AegisDbContext context) : base(context)
+    {
+        _context = context;
+    }
+
+    public async Task<PrivateChat?> GetPrivateChatAsync(ulong userId1, ulong userId2)
+    {
+        return await _context.PrivateChats
+            .Include(pc => pc.User1)
+            .Include(pc => pc.User2)
+            .Include(pc => pc.LastMessage)
+            .FirstOrDefaultAsync(pc => 
+                (pc.User1Id == userId1 && pc.User2Id == userId2) ||
+                (pc.User1Id == userId2 && pc.User2Id == userId1));
+    }
+
+    public async Task<IEnumerable<PrivateChat>> GetUserPrivateChatsAsync(ulong userId)
+    {
+        return await _context.PrivateChats
+            .Include(pc => pc.User1)
+            .Include(pc => pc.User2)
+            .Include(pc => pc.LastMessage)
+            .Where(pc => (pc.User1Id == userId || pc.User2Id == userId) && pc.IsActive)
+            .OrderByDescending(pc => pc.LastActivityAt)
+            .ToListAsync();
+    }
+
+    public async Task<PrivateChat> CreatePrivateChatAsync(ulong userId1, ulong userId2)
+    {
+        var privateChat = new PrivateChat
+        {
+            User1Id = Math.Min(userId1, userId2),
+            User2Id = Math.Max(userId1, userId2),
+            CreatedAt = DateTime.UtcNow,
+            IsActive = true
+        };
+
+        return await CreateAsync(privateChat);
+    }
+}

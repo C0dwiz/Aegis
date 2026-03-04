@@ -27,6 +27,15 @@ class ProtocolConstants {
   static const int typeGroupMessage = 10;
   static const int typeGroupCreate = 11;
   static const int typeGroupLeave = 12;
+  static const int typeChannelMessage = 13;
+  static const int typeChannelCreate = 14;
+  static const int typeChannelJoin = 15;
+  static const int typeChannelLeave = 16;
+  static const int typePrivateChatMessage = 17;
+  static const int typeUserSearch = 18;
+  static const int typeUserSearchResult = 19;
+  static const int typeRegister = 20;
+  static const int typeRegisterResponse = 21;
   
   // Message flags
   static const int flagNone = 0x00;

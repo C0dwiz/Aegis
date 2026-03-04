@@ -11,5 +11,10 @@
     <ProjectReference Include="..\Aegis.Protocol\Aegis.Protocol.csproj" />
     <ProjectReference Include="..\Aegis.Transport\Aegis.Transport.csproj" />
     <ProjectReference Include="..\Aegis.Crypto\Aegis.Crypto.csproj" />
+    <ProjectReference Include="..\Aegis.Data\Aegis.Data.csproj" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.1" />
   </ItemGroup>
 </Project>

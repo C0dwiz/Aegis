@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'src/message.dart';
 import 'src/message_type.dart';
+import 'src/message_payloads.dart';
 import 'src/message_encoder.dart';
 import 'src/transport.dart';
 import 'src/exceptions.dart';
@@ -157,6 +159,174 @@ class AegisClient {
     bytes.setUint64(0, random, Endian.big);
     bytes.setUint32(8, random ~/ 1000, Endian.big);
     return bytes.buffer.asUint8List().toList();
+  }
+
+  /// Register a new user
+  Future<RegistrationResponse> register(String username, String email, String password, String publicKey) async {
+    if (!_transport.isConnected) {
+      throw NotConnectedException();
+    }
+
+    final request = RegistrationRequest(
+      username: username,
+      email: email,
+      password: password,
+      publicKey: publicKey,
+    );
+
+    final message = Message.withType(MessageType.register, request.toBytes());
+    message.flags = ProtocolConstants.flagRequiresAck;
+    
+    await _transport.sendMessage(message);
+    
+    // Wait for registration response
+    final responseMessage = await messages.firstWhere(
+      (msg) => msg.type == MessageType.registerResponse,
+      orElse: () => throw TimeoutException('Registration timeout', const Duration(seconds: 10))
+    ).timeout(const Duration(seconds: 10));
+    
+    return RegistrationResponse.fromBytes(responseMessage.payload);
+  }
+
+  /// Search for users by username
+  Future<UserSearchResponse> searchUsers(String query, {int limit = 20}) async {
+    if (!_transport.isConnected) {
+      throw NotConnectedException();
+    }
+
+    if (!_isAuthenticated) {
+      throw Exception('Client is not authenticated');
+    }
+
+    final request = UserSearchRequest(query: query, limit: limit);
+    final message = Message.withType(MessageType.userSearch, request.toBytes());
+    message.flags = ProtocolConstants.flagRequiresAck;
+    
+    await _transport.sendMessage(message);
+    
+    // Wait for search response
+    final responseMessage = await messages.firstWhere(
+      (msg) => msg.type == MessageType.userSearchResult,
+      orElse: () => throw TimeoutException('Search timeout', const Duration(seconds: 10))
+    ).timeout(const Duration(seconds: 10));
+    
+    return UserSearchResponse.fromBytes(responseMessage.payload);
+  }
+
+  /// Send a message to a channel
+  Future<ChannelMessageResponse> sendChannelMessage(int channelId, String content, {MessageContentType contentType = MessageContentType.text, int? replyToMessageId}) async {
+    if (!_transport.isConnected) {
+      throw NotConnectedException();
+    }
+
+    if (!_isAuthenticated) {
+      throw Exception('Client is not authenticated');
+    }
+
+    final request = ChannelMessageRequest(
+      channelId: channelId,
+      content: content,
+      contentType: contentType,
+      replyToMessageId: replyToMessageId,
+    );
+
+    final message = Message.withType(MessageType.channelMessage, request.toBytes());
+    message.flags = ProtocolConstants.flagRequiresAck;
+    
+    await _transport.sendMessage(message);
+    
+    // Wait for response (simplified - in real implementation should handle different response types)
+    final responseMessage = await messages.firstWhere(
+      (msg) => msg.type == MessageType.channelMessage,
+      orElse: () => throw TimeoutException('Channel message timeout', const Duration(seconds: 10))
+    ).timeout(const Duration(seconds: 10));
+    
+    return ChannelMessageResponse.fromBytes(responseMessage.payload);
+  }
+
+  /// Create a new channel
+  Future<ChannelCreateResponse> createChannel(String name, {String? description, ChannelType type = ChannelType.public}) async {
+    if (!_transport.isConnected) {
+      throw NotConnectedException();
+    }
+
+    if (!_isAuthenticated) {
+      throw Exception('Client is not authenticated');
+    }
+
+    final request = ChannelCreateRequest(
+      name: name,
+      description: description,
+      type: type,
+    );
+
+    final message = Message.withType(MessageType.channelCreate, request.toBytes());
+    message.flags = ProtocolConstants.flagRequiresAck;
+    
+    await _transport.sendMessage(message);
+    
+    // Wait for response
+    final responseMessage = await messages.firstWhere(
+      (msg) => msg.type == MessageType.channelCreate,
+      orElse: () => throw TimeoutException('Channel creation timeout', const Duration(seconds: 10))
+    ).timeout(const Duration(seconds: 10));
+    
+    return ChannelCreateResponse.fromBytes(responseMessage.payload);
+  }
+
+  /// Join a channel
+  Future<ChannelJoinResponse> joinChannel(int channelId) async {
+    if (!_transport.isConnected) {
+      throw NotConnectedException();
+    }
+
+    if (!_isAuthenticated) {
+      throw Exception('Client is not authenticated');
+    }
+
+    final request = ChannelJoinRequest(channelId: channelId);
+    final message = Message.withType(MessageType.channelJoin, request.toBytes());
+    message.flags = ProtocolConstants.flagRequiresAck;
+    
+    await _transport.sendMessage(message);
+    
+    // Wait for response
+    final responseMessage = await messages.firstWhere(
+      (msg) => msg.type == MessageType.channelJoin,
+      orElse: () => throw TimeoutException('Channel join timeout', const Duration(seconds: 10))
+    ).timeout(const Duration(seconds: 10));
+    
+    return ChannelJoinResponse.fromBytes(responseMessage.payload);
+  }
+
+  /// Send a private message
+  Future<PrivateChatMessageResponse> sendPrivateMessage(int toUserId, String content, {MessageContentType contentType = MessageContentType.text}) async {
+    if (!_transport.isConnected) {
+      throw NotConnectedException();
+    }
+
+    if (!_isAuthenticated) {
+      throw Exception('Client is not authenticated');
+    }
+
+    final request = PrivateChatMessageRequest(
+      toUserId: toUserId,
+      content: content,
+      contentType: contentType,
+    );
+
+    final message = Message.withType(MessageType.privateChatMessage, request.toBytes());
+    message.flags = ProtocolConstants.flagRequiresAck;
+    
+    await _transport.sendMessage(message);
+    
+    // Wait for response
+    final responseMessage = await messages.firstWhere(
+      (msg) => msg.type == MessageType.privateChatMessage,
+      orElse: () => throw TimeoutException('Private message timeout', const Duration(seconds: 10))
+    ).timeout(const Duration(seconds: 10));
+    
+    return PrivateChatMessageResponse.fromBytes(responseMessage.payload);
   }
 
   /// Cleanup resources

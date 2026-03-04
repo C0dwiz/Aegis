@@ -1,8 +1,8 @@
 using Aegis.Protocol;
 using Aegis.Transport;
 using Aegis.Common.Logging;
-using Aegis.Crypto;
 using Aegis.Common;
+using Aegis.Crypto;
 
 namespace Aegis.Handlers;
 
@@ -10,10 +10,10 @@ public class MessageRouter
 {
     private readonly Dictionary<Aegis.Protocol.MessageType, IMessageHandler> _handlers;
     private readonly ILogger _logger;
-    private readonly ICryptoProvider _cryptoProvider;
+    private readonly Aegis.Crypto.ICryptoProvider _cryptoProvider;
     private readonly SessionManager _sessionManager;
     
-    public MessageRouter(IEnumerable<IMessageHandler> handlers, ICryptoProvider cryptoProvider, SessionManager sessionManager, ILogger? logger = null)
+    public MessageRouter(IEnumerable<IMessageHandler> handlers, Aegis.Crypto.ICryptoProvider cryptoProvider, SessionManager sessionManager, ILogger? logger = null)
     {
         _handlers = handlers.ToDictionary(h => h.Type, h => h);
         _logger = logger ?? new Aegis.Transport.NullLogger();

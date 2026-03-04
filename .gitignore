@@ -247,3 +247,6 @@ aegis.pid
 master.key
 server.pfx
 client.*
+
+
+*.db

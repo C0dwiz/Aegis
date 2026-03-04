@@ -12,7 +12,16 @@ enum MessageType {
   userPresence(9),
   groupMessage(10),
   groupCreate(11),
-  groupLeave(12);
+  groupLeave(12),
+  channelMessage(13),
+  channelCreate(14),
+  channelJoin(15),
+  channelLeave(16),
+  privateChatMessage(17),
+  userSearch(18),
+  userSearchResult(19),
+  register(20),
+  registerResponse(21);
 
   const MessageType(this.value);
   final int value;

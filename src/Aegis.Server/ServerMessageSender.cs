@@ -9,13 +9,13 @@ namespace Aegis.Server;
 public class ServerMessageSender : IMessageSender
 {
     private readonly TcpServer? _server;
-    private readonly ICryptoProvider _cryptoProvider;
+    private readonly Aegis.Crypto.ICryptoProvider _cryptoProvider;
     private readonly SessionManager _sessionManager;
     private readonly ILogger _logger;
 
     public ServerMessageSender(
         TcpServer? server, 
-        ICryptoProvider cryptoProvider, 
+        Aegis.Crypto.ICryptoProvider cryptoProvider, 
         SessionManager sessionManager, 
         ILogger logger)
     {

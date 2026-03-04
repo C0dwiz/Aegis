@@ -12,6 +12,135 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
     private const int NonceSize = 12; // AES-GCM nonce
     private const int TagSize = 16; // AES-GCM tag
 
+    // ICryptoProvider implementation
+    public async Task<string> HashPasswordAsync(string password)
+    {
+        return await Task.Run(() =>
+        {
+            using var rng = RandomNumberGenerator.Create();
+            var salt = new byte[16];
+            rng.GetBytes(salt);
+            
+            // Use PBKDF2 with SHA256 - constructor with 4 parameters
+            using var pbkdf2 = new Rfc2898DeriveBytes(password, salt, 10000, HashAlgorithmName.SHA256);
+            var hash = pbkdf2.GetBytes(32);
+            
+            // Combine salt and hash
+            var result = new byte[salt.Length + hash.Length];
+            salt.CopyTo(result, 0);
+            hash.CopyTo(result, salt.Length);
+            
+            return Convert.ToBase64String(result);
+        });
+    }
+
+    public async Task<bool> VerifyPasswordAsync(string password, string hash)
+    {
+        return await Task.Run(() =>
+        {
+            try
+            {
+                var hashBytes = Convert.FromBase64String(hash);
+                if (hashBytes.Length < 16)
+                    return false;
+                
+                var salt = hashBytes.AsSpan(0, 16);
+                var expectedHash = hashBytes.AsSpan(16);
+                
+                // Use PBKDF2 with SHA256 - constructor with 4 parameters
+                using var pbkdf2 = new Rfc2898DeriveBytes(password, salt.ToArray(), 10000, HashAlgorithmName.SHA256);
+                var computedHash = pbkdf2.GetBytes(32);
+                
+                return CryptographicOperations.FixedTimeEquals(expectedHash, computedHash);
+            }
+            catch
+            {
+                return false;
+            }
+        });
+    }
+
+    public async Task<string> HashAsync(string data)
+    {
+        return await Task.Run(() =>
+        {
+            using var sha256 = SHA256.Create();
+            var hash = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(data));
+            return Convert.ToBase64String(hash);
+        });
+    }
+
+    public async Task<bool> VerifyMacAsync(byte[] data, byte[] key, byte[] mac)
+    {
+        return await Task.Run(() => VerifyMac(data, key, mac));
+    }
+
+    public async Task<byte[]> GenerateSessionKeyAsync()
+    {
+        return await Task.Run(() =>
+        {
+            var key = new byte[EncryptionKeySize];
+            RandomNumberGenerator.Fill(key);
+            return key;
+        });
+    }
+
+    // ISessionCryptoProvider implementation
+    public async Task<byte[]> EncryptAsync(byte[] data, byte[] key)
+    {
+        return await Task.Run(() =>
+        {
+            var nonce = new byte[NonceSize];
+            RandomNumberGenerator.Fill(nonce);
+            
+            var ciphertext = new byte[data.Length + TagSize];
+            using var aes = new AesGcm(key, TagSize);
+            aes.Encrypt(nonce, data, ciphertext.AsSpan(0, data.Length), ciphertext.AsSpan(data.Length, TagSize));
+            
+            var result = new byte[nonce.Length + ciphertext.Length];
+            nonce.CopyTo(result);
+            ciphertext.CopyTo(result.AsSpan(nonce.Length));
+            
+            return result;
+        });
+    }
+
+    public async Task<byte[]> DecryptAsync(byte[] encryptedData, byte[] key)
+    {
+        return await Task.Run(() =>
+        {
+            if (encryptedData.Length < NonceSize + TagSize)
+                throw new CryptoError("Invalid encrypted data length");
+
+            var nonce = encryptedData.AsSpan(0, NonceSize);
+            var ciphertext = encryptedData.AsSpan(NonceSize);
+            var actualCiphertext = ciphertext.Slice(0, ciphertext.Length - TagSize);
+            var tag = ciphertext.Slice(ciphertext.Length - TagSize, TagSize);
+
+            var plaintext = new byte[actualCiphertext.Length];
+            using var aes = new AesGcm(key, TagSize);
+            
+            try
+            {
+                aes.Decrypt(nonce.ToArray(), actualCiphertext.ToArray(), tag.ToArray(), plaintext);
+                return plaintext;
+            }
+            catch (CryptographicException)
+            {
+                throw new CryptoError("Decryption failed - invalid authentication tag");
+            }
+        });
+    }
+
+    public async Task<byte[]> GenerateMacAsync(byte[] data, byte[] key)
+    {
+        return await Task.Run(() =>
+        {
+            using var hmac = new HMACSHA256(key);
+            return hmac.ComputeHash(data);
+        });
+    }
+
 
     public void DeriveKeys(ReadOnlySpan<byte> masterKey, Span<byte> encryptionKey, Span<byte> macKey)
     {
@@ -77,6 +206,13 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
 
         using var hmac = new HMACSHA256(key.ToArray());
         hmac.TryComputeHash(data, mac, out _);
+    }
+
+    public bool VerifyMac(byte[] data, byte[] key, byte[] mac)
+    {
+        Span<byte> computed = stackalloc byte[ProtocolConstants.MacSize];
+        ComputeMac(data, key, computed);
+        return CryptographicOperations.FixedTimeEquals(computed, mac);
     }
 
     public bool VerifyMac(ReadOnlySpan<byte> data, ReadOnlySpan<byte> key, ReadOnlySpan<byte> mac)
