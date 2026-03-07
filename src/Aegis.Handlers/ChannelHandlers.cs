@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Aegis.Common;
 using Aegis.Data.Entities;
-using Aegis.Data.Repositories;
 using Aegis.Data.Services;
 using Aegis.Protocol;
 using Aegis.Transport;
@@ -24,7 +23,7 @@ public record ChannelMessageRequest(
 /// </summary>
 public record ChannelMessageResponse(
     bool Success,
-    Aegis.Data.Entities.ChannelMessage? Message = null,
+    ulong MessageId = 0,
     string? MessageText = null
 );
 
@@ -42,7 +41,7 @@ public record ChannelCreateRequest(
 /// </summary>
 public record ChannelCreateResponse(
     bool Success,
-    Aegis.Data.Entities.Channel? Channel = null,
+    ulong ChannelId = 0,
     string? Message = null
 );
 
@@ -58,7 +57,6 @@ public record ChannelJoinRequest(
 /// </summary>
 public record ChannelJoinResponse(
     bool Success,
-    Aegis.Data.Entities.Channel? Channel = null,
     string? Message = null
 );
 
@@ -76,29 +74,30 @@ public record PrivateChatMessageRequest(
 /// </summary>
 public record PrivateChatMessageResponse(
     bool Success,
-    Aegis.Data.Entities.Message? Message = null,
-    Aegis.Data.Entities.PrivateChat? PrivateChat = null,
+    ulong MessageId = 0,
     string? MessageText = null
 );
 
-/// <summary>
-/// Channel message handler
-/// </summary>
+// ===================== CHANNEL MESSAGE HANDLER =====================
+
 public class ChannelMessageHandler : IMessageHandler
 {
     public MessageType Type => MessageType.ChannelMessage;
     
-    private readonly IChannelRepository _channelRepository;
-    private readonly IUserSearchService _userSearchService;
+    private readonly IMessageService _messageService;
+    private readonly SessionManager _sessionManager;
+    private readonly IMessageSender _messageSender;
     private readonly ILogger<ChannelMessageHandler> _logger;
 
     public ChannelMessageHandler(
-        IChannelRepository channelRepository,
-        IUserSearchService userSearchService,
+        IMessageService messageService,
+        SessionManager sessionManager,
+        IMessageSender messageSender,
         ILogger<ChannelMessageHandler> logger)
     {
-        _channelRepository = channelRepository;
-        _userSearchService = userSearchService;
+        _messageService = messageService;
+        _sessionManager = sessionManager;
+        _messageSender = messageSender;
         _logger = logger;
     }
 
@@ -106,98 +105,85 @@ public class ChannelMessageHandler : IMessageHandler
     {
         try
         {
+            var session = _sessionManager.GetAuthenticatedSession(context.ConnectionId);
+            if (session == null)
+            {
+                await SendResponseAsync(context, message.SequenceId, new ChannelMessageResponse(false, MessageText: "Not authenticated"));
+                return;
+            }
+
             var payload = JsonSerializer.Deserialize<ChannelMessageRequest>(message.Payload);
             if (payload == null)
             {
-                await SendErrorResponse(context, message.SequenceId, "Invalid payload");
+                await SendResponseAsync(context, message.SequenceId, new ChannelMessageResponse(false, MessageText: "Invalid payload"));
                 return;
             }
 
-            // Check if user is member of the channel
-            var session = GetSessionFromContext(context);
-            if (session == null)
-            {
-                await SendErrorResponse(context, message.SequenceId, "Not authenticated");
-                return;
-            }
+            var channelMsg = await _messageService.SendChannelMessageAsync(
+                payload.ChannelId, session.UserId, payload.Content,
+                payload.ContentType, payload.ReplyToMessageId);
 
-            var isMember = await _channelRepository.IsUserMemberAsync(payload.ChannelId, session.UserId);
-            if (!isMember)
-            {
-                await SendErrorResponse(context, message.SequenceId, "Not a member of this channel");
-                return;
-            }
+            await SendResponseAsync(context, message.SequenceId, 
+                new ChannelMessageResponse(true, channelMsg.Id, "Message sent"));
 
-            // Create channel message
-            var channelMessage = new ChannelMessage
-            {
-                ChannelId = payload.ChannelId,
-                FromUserId = session.UserId,
-                Content = payload.Content,
-                ContentType = payload.ContentType,
-                CreatedAt = DateTime.UtcNow,
-                ReplyToMessageId = payload.ReplyToMessageId
-            };
-
-            // Save message (would need repository for ChannelMessage)
-            // For now, just return success
-            var response = new ChannelMessageResponse(
-                Success: true,
-                Message: channelMessage,
-                MessageText: "Message sent successfully"
-            );
-
-            await SendResponseAsync(context, message.SequenceId, response);
             _logger.LogInformation("Channel message sent to channel {ChannelId} by user {UserId}", 
                 payload.ChannelId, session.UserId);
-            return;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            await SendResponseAsync(context, message.SequenceId, new ChannelMessageResponse(false, MessageText: ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            await SendResponseAsync(context, message.SequenceId, new ChannelMessageResponse(false, MessageText: ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error sending channel message");
-            await SendErrorResponse(context, message.SequenceId, "Internal server error");
-            return;
+            await SendResponseAsync(context, message.SequenceId, new ChannelMessageResponse(false, MessageText: "Internal server error"));
         }
     }
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, ChannelMessageResponse response)
     {
         var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        _logger.LogDebug("Channel message response sent for sequence {SequenceId}", sequenceId);
-    }
-
-    private async Task SendErrorResponse(ConnectionContext context, ulong sequenceId, string errorMessage)
-    {
-        var response = new ChannelMessageResponse(Success: false, MessageText: errorMessage);
-        await SendResponseAsync(context, sequenceId, response);
-    }
-
-    private Session? GetSessionFromContext(ConnectionContext context)
-    {
-        // This would need to be implemented based on how sessions are stored in context
-        // For now, return null
-        return null;
+        var msg = new Aegis.Protocol.Message
+        {
+            Magic = ProtocolConstants.Magic,
+            VersionMajor = ProtocolConstants.VersionMajor,
+            VersionMinor = ProtocolConstants.VersionMinor,
+            Type = MessageType.Ack,
+            SequenceId = sequenceId,
+            PayloadLength = (uint)payload.Length,
+            Payload = payload,
+            Mac = new byte[ProtocolConstants.MacSize]
+        };
+        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length + ProtocolConstants.MacSize];
+        MessageEncoder.Encode(msg, buffer);
+        await _messageSender.SendMessageAsync(context.ConnectionId, buffer);
     }
 }
 
-/// <summary>
-/// Channel creation handler
-/// </summary>
+// ===================== CHANNEL CREATE HANDLER =====================
+
 public class ChannelCreateHandler : IMessageHandler
 {
     public MessageType Type => MessageType.ChannelCreate;
     
-    private readonly IChannelRepository _channelRepository;
-    private readonly IUserSearchService _userSearchService;
+    private readonly IChannelService _channelService;
+    private readonly SessionManager _sessionManager;
+    private readonly IMessageSender _messageSender;
     private readonly ILogger<ChannelCreateHandler> _logger;
 
     public ChannelCreateHandler(
-        IChannelRepository channelRepository,
-        IUserSearchService userSearchService,
+        IChannelService channelService,
+        SessionManager sessionManager,
+        IMessageSender messageSender,
         ILogger<ChannelCreateHandler> logger)
     {
-        _channelRepository = channelRepository;
-        _userSearchService = userSearchService;
+        _channelService = channelService;
+        _sessionManager = sessionManager;
+        _messageSender = messageSender;
         _logger = logger;
     }
 
@@ -205,102 +191,82 @@ public class ChannelCreateHandler : IMessageHandler
     {
         try
         {
+            var session = _sessionManager.GetAuthenticatedSession(context.ConnectionId);
+            if (session == null)
+            {
+                await SendResponseAsync(context, message.SequenceId, new ChannelCreateResponse(false, Message: "Not authenticated"));
+                return;
+            }
+
             var payload = JsonSerializer.Deserialize<ChannelCreateRequest>(message.Payload);
             if (payload == null)
             {
-                await SendErrorResponse(context, message.SequenceId, "Invalid payload");
+                await SendResponseAsync(context, message.SequenceId, new ChannelCreateResponse(false, Message: "Invalid payload"));
                 return;
             }
 
-            var session = GetSessionFromContext(context);
-            if (session == null)
-            {
-                await SendErrorResponse(context, message.SequenceId, "Not authenticated");
-                return;
-            }
+            var channel = await _channelService.CreateChannelAsync(
+                session.UserId, payload.Name, payload.Description, payload.Type);
 
-            // Create channel
-            var channel = new Channel
-            {
-                Name = payload.Name,
-                Description = payload.Description,
-                Type = payload.Type,
-                CreatedByUserId = session.UserId,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow,
-                IsActive = true,
-                MemberCount = 1
-            };
+            await SendResponseAsync(context, message.SequenceId, 
+                new ChannelCreateResponse(true, channel.Id, "Channel created"));
 
-            // Save channel
-            var createdChannel = await _channelRepository.CreateAsync(channel);
-
-            // Add creator as member
-            var channelMember = new ChannelMember
-            {
-                ChannelId = createdChannel.Id,
-                UserId = session.UserId,
-                Role = ChannelMemberRole.Owner,
-                JoinedAt = DateTime.UtcNow,
-                IsActive = true
-            };
-
-            // Save member (would need repository for ChannelMember)
-            var response = new ChannelCreateResponse(
-                Success: true,
-                Channel: createdChannel,
-                Message: "Channel created successfully"
-            );
-
-            await SendResponseAsync(context, message.SequenceId, response);
-            _logger.LogInformation("Channel {ChannelName} created by user {UserId}", payload.Name, session.UserId);
-            return;
+            _logger.LogInformation("Channel '{ChannelName}' created by user {UserId}", payload.Name, session.UserId);
+        }
+        catch (ArgumentException ex)
+        {
+            await SendResponseAsync(context, message.SequenceId, new ChannelCreateResponse(false, Message: ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error creating channel");
-            await SendErrorResponse(context, message.SequenceId, "Internal server error");
-            return;
+            await SendResponseAsync(context, message.SequenceId, new ChannelCreateResponse(false, Message: "Internal server error"));
         }
     }
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, ChannelCreateResponse response)
     {
         var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        _logger.LogDebug("Channel create response sent for sequence {SequenceId}", sequenceId);
-    }
-
-    private async Task SendErrorResponse(ConnectionContext context, ulong sequenceId, string errorMessage)
-    {
-        var response = new ChannelCreateResponse(Success: false, Message: errorMessage);
-        await SendResponseAsync(context, sequenceId, response);
-    }
-
-    private Session? GetSessionFromContext(ConnectionContext context)
-    {
-        // This would need to be implemented based on how sessions are stored in context
-        return null;
+        var msg = new Aegis.Protocol.Message
+        {
+            Magic = ProtocolConstants.Magic,
+            VersionMajor = ProtocolConstants.VersionMajor,
+            VersionMinor = ProtocolConstants.VersionMinor,
+            Type = MessageType.Ack,
+            SequenceId = sequenceId,
+            PayloadLength = (uint)payload.Length,
+            Payload = payload,
+            Mac = new byte[ProtocolConstants.MacSize]
+        };
+        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length + ProtocolConstants.MacSize];
+        MessageEncoder.Encode(msg, buffer);
+        await _messageSender.SendMessageAsync(context.ConnectionId, buffer);
     }
 }
 
-/// <summary>
-/// Private chat message handler
-/// </summary>
+// ===================== PRIVATE CHAT MESSAGE HANDLER =====================
+
 public class PrivateChatMessageHandler : IMessageHandler
 {
     public MessageType Type => MessageType.PrivateChatMessage;
     
-    private readonly IPrivateChatRepository _privateChatRepository;
+    private readonly IMessageService _messageService;
     private readonly IUserSearchService _userSearchService;
+    private readonly SessionManager _sessionManager;
+    private readonly IMessageSender _messageSender;
     private readonly ILogger<PrivateChatMessageHandler> _logger;
 
     public PrivateChatMessageHandler(
-        IPrivateChatRepository privateChatRepository,
+        IMessageService messageService,
         IUserSearchService userSearchService,
+        SessionManager sessionManager,
+        IMessageSender messageSender,
         ILogger<PrivateChatMessageHandler> logger)
     {
-        _privateChatRepository = privateChatRepository;
+        _messageService = messageService;
         _userSearchService = userSearchService;
+        _sessionManager = sessionManager;
+        _messageSender = messageSender;
         _logger = logger;
     }
 
@@ -308,86 +274,62 @@ public class PrivateChatMessageHandler : IMessageHandler
     {
         try
         {
+            var session = _sessionManager.GetAuthenticatedSession(context.ConnectionId);
+            if (session == null)
+            {
+                await SendResponseAsync(context, message.SequenceId, new PrivateChatMessageResponse(false, MessageText: "Not authenticated"));
+                return;
+            }
+
             var payload = JsonSerializer.Deserialize<PrivateChatMessageRequest>(message.Payload);
             if (payload == null)
             {
-                await SendErrorResponse(context, message.SequenceId, "Invalid payload");
+                await SendResponseAsync(context, message.SequenceId, new PrivateChatMessageResponse(false, MessageText: "Invalid payload"));
                 return;
             }
 
-            var session = GetSessionFromContext(context);
-            if (session == null)
-            {
-                await SendErrorResponse(context, message.SequenceId, "Not authenticated");
-                return;
-            }
-
-            // Check if target user exists
+            // Check target user exists
             var targetUser = await _userSearchService.FindUserByIdAsync(payload.ToUserId);
             if (targetUser == null)
             {
-                await SendErrorResponse(context, message.SequenceId, "User not found");
+                await SendResponseAsync(context, message.SequenceId, new PrivateChatMessageResponse(false, MessageText: "User not found"));
                 return;
             }
 
-            // Get or create private chat
-            var privateChat = await _privateChatRepository.GetPrivateChatAsync(session.UserId, payload.ToUserId);
-            if (privateChat == null)
-            {
-                privateChat = await _privateChatRepository.CreatePrivateChatAsync(session.UserId, payload.ToUserId);
-            }
+            var privateMsg = await _messageService.SendPrivateMessageAsync(
+                session.UserId, payload.ToUserId, payload.Content, payload.ContentType);
 
-            // Create message
-            var privateMessage = new Aegis.Data.Entities.Message
-            {
-                FromUserId = session.UserId,
-                ToUserId = payload.ToUserId,
-                Content = payload.Content,
-                ContentType = payload.ContentType,
-                CreatedAt = DateTime.UtcNow,
-                IsDelivered = false,
-                IsRead = false
-            };
+            await SendResponseAsync(context, message.SequenceId, 
+                new PrivateChatMessageResponse(true, privateMsg.Id, "Message sent"));
 
-            // Update private chat
-            privateChat.LastActivityAt = DateTime.UtcNow;
-            privateChat.LastMessageId = privateMessage.Id;
-
-            var response = new PrivateChatMessageResponse(
-                Success: true,
-                Message: privateMessage,
-                PrivateChat: privateChat,
-                MessageText: "Message sent successfully"
-            );
-
-            await SendResponseAsync(context, message.SequenceId, response);
             _logger.LogInformation("Private message sent from user {FromUserId} to user {ToUserId}", 
                 session.UserId, payload.ToUserId);
-            return;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error sending private message");
-            await SendErrorResponse(context, message.SequenceId, "Internal server error");
-            return;
+            await SendResponseAsync(context, message.SequenceId, new PrivateChatMessageResponse(false, MessageText: "Internal server error"));
         }
     }
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, PrivateChatMessageResponse response)
     {
         var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        _logger.LogDebug("Private chat message response sent for sequence {SequenceId}", sequenceId);
-    }
-
-    private async Task SendErrorResponse(ConnectionContext context, ulong sequenceId, string errorMessage)
-    {
-        var response = new PrivateChatMessageResponse(Success: false, MessageText: errorMessage);
-        await SendResponseAsync(context, sequenceId, response);
-    }
-
-    private Session? GetSessionFromContext(ConnectionContext context)
-    {
-        // This would need to be implemented based on how sessions are stored in context
-        return null;
+        var msg = new Aegis.Protocol.Message
+        {
+            Magic = ProtocolConstants.Magic,
+            VersionMajor = ProtocolConstants.VersionMajor,
+            VersionMinor = ProtocolConstants.VersionMinor,
+            Type = MessageType.Ack,
+            SequenceId = sequenceId,
+            PayloadLength = (uint)payload.Length,
+            Payload = payload,
+            Mac = new byte[ProtocolConstants.MacSize]
+        };
+        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length + ProtocolConstants.MacSize];
+        MessageEncoder.Encode(msg, buffer);
+        await _messageSender.SendMessageAsync(context.ConnectionId, buffer);
     }
 }
+
+

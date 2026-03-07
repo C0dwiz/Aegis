@@ -9,6 +9,8 @@ namespace Aegis.Data;
 /// </summary>
 public class AegisDbContext : DbContext
 {
+    private const string DefaultTimestampSql = "CURRENT_TIMESTAMP";
+
     public AegisDbContext(DbContextOptions<AegisDbContext> options) : base(options)
     {
     }
@@ -50,8 +52,8 @@ public class AegisDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.Username).IsUnique();
             entity.HasIndex(e => e.Email).IsUnique();
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
-            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("GETUTCDATE()");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
 
         // Session configuration
@@ -61,7 +63,7 @@ public class AegisDbContext : DbContext
             entity.HasIndex(e => e.SessionToken).IsUnique();
             entity.HasOne(e => e.User).WithMany(u => u.Sessions).HasForeignKey(e => e.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
 
         // Message configuration
@@ -74,7 +76,7 @@ public class AegisDbContext : DbContext
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(e => e.ToUser).WithMany(u => u.ReceivedMessages).HasForeignKey(e => e.ToUserId)
                 .OnDelete(DeleteBehavior.Restrict);
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
 
         // Group configuration
@@ -84,8 +86,8 @@ public class AegisDbContext : DbContext
             entity.HasIndex(e => e.Name);
             entity.HasOne(e => e.CreatedByUser).WithMany().HasForeignKey(e => e.CreatedByUserId)
                 .OnDelete(DeleteBehavior.Restrict);
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
-            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("GETUTCDATE()");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
 
         // GroupMember configuration
@@ -95,7 +97,9 @@ public class AegisDbContext : DbContext
             entity.HasIndex(e => new { e.GroupId, e.UserId }).IsUnique();
             entity.HasOne(e => e.Group).WithMany(g => g.Members).HasForeignKey(e => e.GroupId)
                 .OnDelete(DeleteBehavior.Cascade);
-            entity.Property(e => e.JoinedAt).HasDefaultValueSql("GETUTCDATE()");
+            entity.HasOne(e => e.User).WithMany(u => u.GroupMemberships).HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.Property(e => e.JoinedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
 
         // GroupMessage configuration
@@ -105,7 +109,11 @@ public class AegisDbContext : DbContext
             entity.HasIndex(e => new { e.GroupId, e.CreatedAt });
             entity.HasOne(e => e.Group).WithMany(g => g.Messages).HasForeignKey(e => e.GroupId)
                 .OnDelete(DeleteBehavior.Cascade);
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+            entity.HasOne(e => e.FromUser).WithMany().HasForeignKey(e => e.FromUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.ReplyToMessage).WithMany(m => m.Replies).HasForeignKey(e => e.ReplyToMessageId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
 
         // PreKey configuration
@@ -122,7 +130,7 @@ public class AegisDbContext : DbContext
             entity.HasIndex(e => e.DeviceId).IsUnique();
             entity.HasOne(e => e.User).WithMany(u => u.Devices).HasForeignKey(e => e.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
 
         // Channel configuration
@@ -132,8 +140,8 @@ public class AegisDbContext : DbContext
             entity.HasIndex(e => e.Name);
             entity.HasOne(e => e.CreatedByUser).WithMany(u => u.CreatedChannels).HasForeignKey(e => e.CreatedByUserId)
                 .OnDelete(DeleteBehavior.Restrict);
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
-            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("GETUTCDATE()");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
 
         // ChannelMember configuration
@@ -145,7 +153,7 @@ public class AegisDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(e => e.User).WithMany(u => u.ChannelMemberships).HasForeignKey(e => e.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
-            entity.Property(e => e.JoinedAt).HasDefaultValueSql("GETUTCDATE()");
+            entity.Property(e => e.JoinedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
 
         // ChannelMessage configuration
@@ -159,7 +167,7 @@ public class AegisDbContext : DbContext
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(e => e.ReplyToMessage).WithMany(m => m.Replies).HasForeignKey(e => e.ReplyToMessageId)
                 .OnDelete(DeleteBehavior.Restrict);
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
 
         // PrivateChat configuration
@@ -173,7 +181,7 @@ public class AegisDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(e => e.LastMessage).WithMany().HasForeignKey(e => e.LastMessageId)
                 .OnDelete(DeleteBehavior.SetNull);
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
     }
 }

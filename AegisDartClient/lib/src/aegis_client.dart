@@ -42,23 +42,30 @@ class AegisClient {
   }
 
   /// Authenticate with server
-  Future<void> authenticate(String authToken) async {
+  Future<void> authenticate(String authPayloadOrToken) async {
     if (!_transport.isConnected) {
       throw NotConnectedException();
     }
 
+    final payloadText = authPayloadOrToken.trim().startsWith('{')
+        ? authPayloadOrToken
+        : jsonEncode({
+            'Token': authPayloadOrToken,
+            'ClientInfo': 'aegis-dart-client',
+          });
+
     final message = Message.withType(MessageType.auth);
-    message.payload = utf8.encode(authToken);
+    message.payload = utf8.encode(payloadText);
     message.flags = ProtocolConstants.flagRequiresAck;
     
     await _transport.sendMessage(message);
-    _authToken = authToken;
+    _authToken = authPayloadOrToken;
     
-    // Wait for ACK response (simplified - in real implementation should wait for specific response)
-    await messages.firstWhere(
-      (msg) => msg.type == MessageType.ack,
-      orElse: () => throw TimeoutException('Authentication timeout', const Duration(seconds: 10))
-    ).timeout(const Duration(seconds: 10));
+    final responseMessage = await _waitForMessageTypes({MessageType.ack});
+    final authOk = _isSuccessfulJsonResponse(responseMessage.payload);
+    if (!authOk) {
+      throw Exception(_extractErrorMessage(responseMessage.payload) ?? 'Authentication failed');
+    }
     
     _isAuthenticated = true;
   }
@@ -235,11 +242,7 @@ class AegisClient {
     
     await _transport.sendMessage(message);
     
-    // Wait for response (simplified - in real implementation should handle different response types)
-    final responseMessage = await messages.firstWhere(
-      (msg) => msg.type == MessageType.channelMessage,
-      orElse: () => throw TimeoutException('Channel message timeout', const Duration(seconds: 10))
-    ).timeout(const Duration(seconds: 10));
+    final responseMessage = await _waitForMessageTypes({MessageType.ack, MessageType.channelMessage});
     
     return ChannelMessageResponse.fromBytes(responseMessage.payload);
   }
@@ -265,11 +268,7 @@ class AegisClient {
     
     await _transport.sendMessage(message);
     
-    // Wait for response
-    final responseMessage = await messages.firstWhere(
-      (msg) => msg.type == MessageType.channelCreate,
-      orElse: () => throw TimeoutException('Channel creation timeout', const Duration(seconds: 10))
-    ).timeout(const Duration(seconds: 10));
+    final responseMessage = await _waitForMessageTypes({MessageType.ack, MessageType.channelCreate});
     
     return ChannelCreateResponse.fromBytes(responseMessage.payload);
   }
@@ -290,11 +289,7 @@ class AegisClient {
     
     await _transport.sendMessage(message);
     
-    // Wait for response
-    final responseMessage = await messages.firstWhere(
-      (msg) => msg.type == MessageType.channelJoin,
-      orElse: () => throw TimeoutException('Channel join timeout', const Duration(seconds: 10))
-    ).timeout(const Duration(seconds: 10));
+    final responseMessage = await _waitForMessageTypes({MessageType.ack, MessageType.channelJoin});
     
     return ChannelJoinResponse.fromBytes(responseMessage.payload);
   }
@@ -320,13 +315,42 @@ class AegisClient {
     
     await _transport.sendMessage(message);
     
-    // Wait for response
-    final responseMessage = await messages.firstWhere(
-      (msg) => msg.type == MessageType.privateChatMessage,
-      orElse: () => throw TimeoutException('Private message timeout', const Duration(seconds: 10))
-    ).timeout(const Duration(seconds: 10));
+    final responseMessage = await _waitForMessageTypes({MessageType.ack, MessageType.privateChatMessage});
     
     return PrivateChatMessageResponse.fromBytes(responseMessage.payload);
+  }
+
+  Future<Message> _waitForMessageTypes(Set<MessageType> types) async {
+    return messages.firstWhere(
+      (msg) => types.contains(msg.type),
+      orElse: () => throw TimeoutException('Response timeout', const Duration(seconds: 10)),
+    ).timeout(const Duration(seconds: 10));
+  }
+
+  bool _isSuccessfulJsonResponse(List<int> payload) {
+    try {
+      final decoded = jsonDecode(utf8.decode(payload));
+      if (decoded is Map<String, dynamic> && decoded.containsKey('Success')) {
+        return decoded['Success'] == true;
+      }
+    } catch (_) {
+      return false;
+    }
+
+    return false;
+  }
+
+  String? _extractErrorMessage(List<int> payload) {
+    try {
+      final decoded = jsonDecode(utf8.decode(payload));
+      if (decoded is Map<String, dynamic>) {
+        return (decoded['Error'] ?? decoded['Message'] ?? decoded['MessageText']) as String?;
+      }
+    } catch (_) {
+      return null;
+    }
+
+    return null;
   }
 
   /// Cleanup resources

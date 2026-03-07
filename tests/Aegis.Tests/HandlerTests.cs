@@ -27,6 +27,25 @@ public class TestMessageSender : IMessageSender
         SentMessages.Add(encryptedMessage);
         return Task.CompletedTask;
     }
+
+    public Task SendProtocolMessageAsync(ulong connectionId, ushort messageType, ulong sequenceId, byte[] payload, bool allowUnsigned = false)
+    {
+        var message = new Aegis.Protocol.Message
+        {
+            Magic = ProtocolConstants.Magic,
+            VersionMajor = ProtocolConstants.VersionMajor,
+            VersionMinor = ProtocolConstants.VersionMinor,
+            Type = (MessageType)messageType,
+            SequenceId = sequenceId,
+            Payload = payload,
+            PayloadLength = (uint)payload.Length,
+            Mac = new byte[ProtocolConstants.MacSize]
+        };
+
+        var buffer = new byte[Aegis.Protocol.Message.TotalSize(message)];
+        MessageEncoder.Encode(message, buffer);
+        return SendMessageAsync(connectionId, buffer);
+    }
 }
 
 public class HandlerTests
@@ -47,7 +66,7 @@ public class HandlerTests
     {
         // Arrange
         var testHandler = new TestMessageHandler();
-        var router = new MessageRouter(new IMessageHandler[] { testHandler }, _cryptoProvider, _sessionManager, _logger);
+        var router = new MessageRouter(new IMessageHandler[] { testHandler }, _messageSender, _logger);
         var context = new TestConnectionContext(12345ul);
         var message = new Aegis.Protocol.Message
         {
@@ -75,7 +94,7 @@ public class HandlerTests
     public async Task MessageRouter_UnknownMessage_ShouldSendError()
     {
         // Arrange
-        var router = new MessageRouter(Array.Empty<IMessageHandler>(), _cryptoProvider, _sessionManager, _logger);
+        var router = new MessageRouter(Array.Empty<IMessageHandler>(), _messageSender, _logger);
         var context = new TestConnectionContext(12345ul);
         var message = new Aegis.Protocol.Message
         {
@@ -102,7 +121,12 @@ public class HandlerTests
     public async Task AuthHandler_ShouldProcessAuthMessages()
     {
         // Arrange
-        var handler = new AuthHandler(_antiSpam, _messageSender, _cryptoProvider, _logger);
+        var handler = new AuthHandler(
+            new Mock<IUserAuthenticationService>().Object,
+            new RateLimiter(new Aegis.Common.Configuration.RateLimitOptions()),
+            _sessionManager,
+            _messageSender,
+            new Mock<Microsoft.Extensions.Logging.ILogger<AuthHandler>>().Object);
         var context = new TestConnectionContext(12345ul);
         var message = new Aegis.Protocol.Message
         {
@@ -120,9 +144,8 @@ public class HandlerTests
         // Act
         await handler.HandleAsync(context, message);
         
-        // Assert
-        Assert.True(_antiSpam.CheckedConnection);
-        Assert.Equal(12345ul, _antiSpam.CheckedConnectionId);
+        // Assert - with invalid JSON payload, handler should send error response
+        Assert.NotEmpty(_messageSender.SentMessages);
     }
     
     [Fact]
@@ -158,8 +181,11 @@ public class HandlerTests
     public async Task MessageHandler_AllowedMessage_ShouldSendAck()
     {
         // Arrange
-        var handler = new MessageHandler(_antiSpam, _messageSender, _cryptoProvider, _logger);
+        var handler = new MessageHandler(_antiSpam, _messageSender, _sessionManager, _logger);
         var context = new TestConnectionContext(12345ul);
+        _sessionManager.CreateSession(context.ConnectionId);
+        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32], new byte[32]);
+        _sessionManager.AuthenticateSession(context.ConnectionId, 42, "tester");
         var message = new Aegis.Protocol.Message
         {
             Magic = ProtocolConstants.Magic,
@@ -188,8 +214,11 @@ public class HandlerTests
     public async Task MessageHandler_RejectedMessage_ShouldSendError()
     {
         // Arrange
-        var handler = new MessageHandler(_antiSpam, _messageSender, _cryptoProvider, _logger);
+        var handler = new MessageHandler(_antiSpam, _messageSender, _sessionManager, _logger);
         var context = new TestConnectionContext(12345ul);
+        _sessionManager.CreateSession(context.ConnectionId);
+        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32], new byte[32]);
+        _sessionManager.AuthenticateSession(context.ConnectionId, 42, "tester");
         var message = new Aegis.Protocol.Message
         {
             Magic = ProtocolConstants.Magic,
@@ -289,15 +318,21 @@ public class HandlerTests
         // Arrange
         var mockRegistrationService = new Mock<IUserRegistrationService>();
         var mockSearchService = new Mock<IUserSearchService>();
-        var mockChannelRepository = new Mock<IChannelRepository>();
-        var mockPrivateChatRepository = new Mock<IPrivateChatRepository>();
+        var rateLimiter = new RateLimiter(new Aegis.Common.Configuration.RateLimitOptions());
 
-        var registrationHandler = new RegistrationHandler(mockRegistrationService.Object, new Mock<ILogger<RegistrationHandler>>().Object);
-        var searchHandler = new UserSearchHandler(mockSearchService.Object, new Mock<ILogger<UserSearchHandler>>().Object);
-        var channelHandler = new ChannelMessageHandler(mockChannelRepository.Object, mockSearchService.Object, new Mock<ILogger<ChannelMessageHandler>>().Object);
+        var registrationHandler = new RegistrationHandler(mockRegistrationService.Object, _messageSender, rateLimiter, new Mock<ILogger<RegistrationHandler>>().Object);
+        var searchHandler = new UserSearchHandler(mockSearchService.Object, _sessionManager, _messageSender, rateLimiter, new Mock<ILogger<UserSearchHandler>>().Object);
+        var channelHandler = new ChannelMessageHandler(
+            new Mock<IMessageService>().Object,
+            _sessionManager,
+            _messageSender,
+            new Mock<Microsoft.Extensions.Logging.ILogger<ChannelMessageHandler>>().Object);
 
-        var router = new MessageRouter(new IMessageHandler[] { registrationHandler, searchHandler, channelHandler }, _cryptoProvider, _sessionManager, _logger);
+        var router = new MessageRouter(new IMessageHandler[] { registrationHandler, searchHandler, channelHandler }, _messageSender, _logger);
         var context = new TestConnectionContext(12345ul);
+        _sessionManager.CreateSession(context.ConnectionId);
+        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32], new byte[32]);
+        _sessionManager.AuthenticateSession(context.ConnectionId, 1, "router-user");
 
         // Test Registration message routing
         var registrationRequest = new RegistrationRequest("testuser", "test@example.com", "password123", "public_key");
@@ -357,14 +392,26 @@ public class HandlerTests
         // Arrange
         var mockRegistrationService = new Mock<IUserRegistrationService>();
         var mockSearchService = new Mock<IUserSearchService>();
-        var mockChannelRepository = new Mock<IChannelRepository>();
-        var mockPrivateChatRepository = new Mock<IPrivateChatRepository>();
+        var rateLimiter = new RateLimiter(new Aegis.Common.Configuration.RateLimitOptions());
 
-        var registrationHandler = new RegistrationHandler(mockRegistrationService.Object, new Mock<ILogger<RegistrationHandler>>().Object);
-        var searchHandler = new UserSearchHandler(mockSearchService.Object, new Mock<ILogger<UserSearchHandler>>().Object);
-        var channelHandler = new ChannelMessageHandler(mockChannelRepository.Object, mockSearchService.Object, new Mock<ILogger<ChannelMessageHandler>>().Object);
-        var channelCreateHandler = new ChannelCreateHandler(mockChannelRepository.Object, mockSearchService.Object, new Mock<ILogger<ChannelCreateHandler>>().Object);
-        var privateChatHandler = new PrivateChatMessageHandler(mockPrivateChatRepository.Object, mockSearchService.Object, new Mock<ILogger<PrivateChatMessageHandler>>().Object);
+        var registrationHandler = new RegistrationHandler(mockRegistrationService.Object, _messageSender, rateLimiter, new Mock<ILogger<RegistrationHandler>>().Object);
+        var searchHandler = new UserSearchHandler(mockSearchService.Object, _sessionManager, _messageSender, rateLimiter, new Mock<ILogger<UserSearchHandler>>().Object);
+        var channelHandler = new ChannelMessageHandler(
+            new Mock<IMessageService>().Object,
+            _sessionManager,
+            _messageSender,
+            new Mock<Microsoft.Extensions.Logging.ILogger<ChannelMessageHandler>>().Object);
+        var channelCreateHandler = new ChannelCreateHandler(
+            new Mock<IChannelService>().Object,
+            _sessionManager,
+            _messageSender,
+            new Mock<Microsoft.Extensions.Logging.ILogger<ChannelCreateHandler>>().Object);
+        var privateChatHandler = new PrivateChatMessageHandler(
+            new Mock<IMessageService>().Object,
+            mockSearchService.Object,
+            _sessionManager,
+            _messageSender,
+            new Mock<Microsoft.Extensions.Logging.ILogger<PrivateChatMessageHandler>>().Object);
 
         // Act & Assert
         Assert.Equal(MessageType.Register, registrationHandler.Type);
@@ -379,7 +426,7 @@ public class HandlerTests
     {
         // Arrange
         var testHandler = new TestMessageHandler();
-        var router = new MessageRouter(new IMessageHandler[] { testHandler }, _cryptoProvider, _sessionManager, _logger);
+        var router = new MessageRouter(new IMessageHandler[] { testHandler }, _messageSender, _logger);
         var context = new TestConnectionContext(12345ul);
         var message = new Aegis.Protocol.Message
         {

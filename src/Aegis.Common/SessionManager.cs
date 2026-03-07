@@ -23,8 +23,9 @@ public class SessionManager
             ConnectionId = connectionId,
             CreatedAt = DateTime.UtcNow,
             LastActivity = DateTime.UtcNow,
-            SessionKey = _cryptoProvider.GenerateSessionKey(),
-            MacKey = _cryptoProvider.GenerateMacKey()
+            SessionKey = Memory<byte>.Empty,
+            MacKey = Memory<byte>.Empty,
+            HandshakeEstablished = false
         };
         
         _sessions.TryAdd(connectionId, session);
@@ -47,18 +48,72 @@ public class SessionManager
         }
     }
     
+    public bool AuthenticateSession(ulong connectionId, ulong userId, string username)
+    {
+        if (_sessions.TryGetValue(connectionId, out var session))
+        {
+            if (!session.HandshakeEstablished)
+            {
+                _logger.Warning($"Rejected authentication before handshake for connection {connectionId}");
+                return false;
+            }
+
+            session.UserId = userId;
+            session.Username = username;
+            session.IsAuthenticated = true;
+            _logger.Info($"Session authenticated for connection {connectionId}, user {username} (ID: {userId})");
+            return true;
+        }
+        return false;
+    }
+    
+    public SessionInfo? GetAuthenticatedSession(ulong connectionId)
+    {
+        if (_sessions.TryGetValue(connectionId, out var session) && session.IsAuthenticated)
+        {
+            return session;
+        }
+        return null;
+    }
+    
     public void RemoveSession(ulong connectionId)
     {
         if (_sessions.TryRemove(connectionId, out var session))
         {
+            ZeroSessionSecrets(session);
             _logger.Info($"Session removed for connection {connectionId}");
         }
+    }
+
+    public bool EstablishHandshake(ulong connectionId, ReadOnlySpan<byte> sessionKey, ReadOnlySpan<byte> macKey)
+    {
+        if (!_sessions.TryGetValue(connectionId, out var session))
+        {
+            return false;
+        }
+
+        ZeroSessionSecrets(session);
+
+        session.SessionKey = sessionKey.ToArray();
+        session.MacKey = macKey.ToArray();
+        session.HandshakeEstablished = true;
+        session.LastActivity = DateTime.UtcNow;
+
+        _logger.Info($"Handshake established for connection {connectionId}");
+        return true;
+    }
+
+    public bool CanValidateMac(ulong connectionId)
+    {
+        return _sessions.TryGetValue(connectionId, out var session) &&
+            session.HandshakeEstablished &&
+            !session.MacKey.IsEmpty;
     }
     
     public bool VerifyMac(ulong connectionId, ReadOnlySpan<byte> data, ReadOnlySpan<byte> receivedMac)
     {
         var session = GetSession(connectionId);
-        if (session == null)
+        if (session == null || !session.HandshakeEstablished || session.MacKey.IsEmpty)
         {
             _logger.Warning($"No session found for connection {connectionId}");
             return false;
@@ -66,11 +121,32 @@ public class SessionManager
         
         return _cryptoProvider.VerifyMac(data.ToArray(), session.MacKey.ToArray(), receivedMac.ToArray());
     }
+
+    private static void ZeroSessionSecrets(SessionInfo session)
+    {
+        if (!session.SessionKey.IsEmpty)
+        {
+            session.SessionKey.Span.Clear();
+        }
+
+        if (!session.MacKey.IsEmpty)
+        {
+            session.MacKey.Span.Clear();
+        }
+
+        session.SessionKey = Memory<byte>.Empty;
+        session.MacKey = Memory<byte>.Empty;
+        session.HandshakeEstablished = false;
+    }
 }
 
 public class SessionInfo
 {
     public ulong ConnectionId { get; set; }
+    public ulong UserId { get; set; }
+    public string Username { get; set; } = string.Empty;
+    public bool IsAuthenticated { get; set; }
+    public bool HandshakeEstablished { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime LastActivity { get; set; }
     public Memory<byte> SessionKey { get; set; }

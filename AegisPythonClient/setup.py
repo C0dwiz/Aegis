@@ -34,7 +34,7 @@ setup(
     ],
     python_requires=">=3.8",
     install_requires=[
-        # No external dependencies required for basic functionality
+        "cryptography>=45.0",
     ],
     extras_require={
         "dev": [

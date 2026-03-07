@@ -42,8 +42,8 @@ namespace Aegis.Data.Migrations
                     PublicKey = table.Column<string>(type: "TEXT", nullable: false),
                     IdentityKeyFingerprint = table.Column<string>(type: "TEXT", nullable: true),
                     IsActive = table.Column<bool>(type: "INTEGER", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "GETUTCDATE()"),
-                    UpdatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "GETUTCDATE()"),
+                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
+                    UpdatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
                     LastSeenAt = table.Column<DateTime>(type: "TEXT", nullable: true)
                 },
                 constraints: table =>
@@ -61,8 +61,8 @@ namespace Aegis.Data.Migrations
                     Description = table.Column<string>(type: "TEXT", nullable: true),
                     Type = table.Column<int>(type: "INTEGER", nullable: false),
                     CreatedByUserId = table.Column<ulong>(type: "INTEGER", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "GETUTCDATE()"),
-                    UpdatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "GETUTCDATE()"),
+                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
+                    UpdatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
                     IsActive = table.Column<bool>(type: "INTEGER", nullable: false),
                     InviteCode = table.Column<string>(type: "TEXT", nullable: true),
                     MemberCount = table.Column<int>(type: "INTEGER", nullable: false)
@@ -89,7 +89,7 @@ namespace Aegis.Data.Migrations
                     DeviceName = table.Column<string>(type: "TEXT", nullable: false),
                     IdentityKey = table.Column<string>(type: "TEXT", nullable: false),
                     IsActive = table.Column<bool>(type: "INTEGER", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "GETUTCDATE()"),
+                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
                     LastSeenAt = table.Column<DateTime>(type: "TEXT", nullable: false)
                 },
                 constraints: table =>
@@ -112,8 +112,8 @@ namespace Aegis.Data.Migrations
                     Name = table.Column<string>(type: "TEXT", nullable: false),
                     Description = table.Column<string>(type: "TEXT", nullable: true),
                     CreatedByUserId = table.Column<ulong>(type: "INTEGER", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "GETUTCDATE()"),
-                    UpdatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "GETUTCDATE()"),
+                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
+                    UpdatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
                     IsActive = table.Column<bool>(type: "INTEGER", nullable: false),
                     UserId = table.Column<ulong>(type: "INTEGER", nullable: true)
                 },
@@ -146,7 +146,7 @@ namespace Aegis.Data.Migrations
                     SequenceNumber = table.Column<ulong>(type: "INTEGER", nullable: false),
                     IsDelivered = table.Column<bool>(type: "INTEGER", nullable: false),
                     IsRead = table.Column<bool>(type: "INTEGER", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "GETUTCDATE()"),
+                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
                     DeliveredAt = table.Column<DateTime>(type: "TEXT", nullable: true),
                     ReadAt = table.Column<DateTime>(type: "TEXT", nullable: true)
                 },
@@ -179,7 +179,7 @@ namespace Aegis.Data.Migrations
                     SessionKeyHash = table.Column<string>(type: "TEXT", nullable: false),
                     ClientInfo = table.Column<string>(type: "TEXT", nullable: false),
                     IpAddress = table.Column<string>(type: "TEXT", nullable: true),
-                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "GETUTCDATE()"),
+                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
                     ExpiresAt = table.Column<DateTime>(type: "TEXT", nullable: false),
                     LastActivityAt = table.Column<DateTime>(type: "TEXT", nullable: true),
                     IsActive = table.Column<bool>(type: "INTEGER", nullable: false)
@@ -204,7 +204,7 @@ namespace Aegis.Data.Migrations
                     ChannelId = table.Column<ulong>(type: "INTEGER", nullable: false),
                     UserId = table.Column<ulong>(type: "INTEGER", nullable: false),
                     Role = table.Column<int>(type: "INTEGER", nullable: false),
-                    JoinedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "GETUTCDATE()"),
+                    JoinedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
                     LastReadAt = table.Column<DateTime>(type: "TEXT", nullable: true),
                     IsActive = table.Column<bool>(type: "INTEGER", nullable: false),
                     IsMuted = table.Column<bool>(type: "INTEGER", nullable: false)
@@ -236,7 +236,7 @@ namespace Aegis.Data.Migrations
                     FromUserId = table.Column<ulong>(type: "INTEGER", nullable: false),
                     Content = table.Column<string>(type: "TEXT", nullable: false),
                     ContentType = table.Column<int>(type: "INTEGER", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "GETUTCDATE()"),
+                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
                     EditedAt = table.Column<DateTime>(type: "TEXT", nullable: true),
                     IsEdited = table.Column<bool>(type: "INTEGER", nullable: false),
                     ReplyToMessageId = table.Column<ulong>(type: "INTEGER", nullable: true),
@@ -274,7 +274,7 @@ namespace Aegis.Data.Migrations
                     GroupId = table.Column<ulong>(type: "INTEGER", nullable: false),
                     UserId = table.Column<ulong>(type: "INTEGER", nullable: false),
                     Role = table.Column<int>(type: "INTEGER", nullable: false),
-                    JoinedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "GETUTCDATE()"),
+                    JoinedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
                     IsActive = table.Column<bool>(type: "INTEGER", nullable: false)
                 },
                 constraints: table =>
@@ -304,7 +304,7 @@ namespace Aegis.Data.Migrations
                     FromUserId = table.Column<ulong>(type: "INTEGER", nullable: false),
                     Content = table.Column<string>(type: "TEXT", nullable: false),
                     ContentType = table.Column<int>(type: "INTEGER", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "GETUTCDATE()")
+                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP")
                 },
                 constraints: table =>
                 {
@@ -325,7 +325,7 @@ namespace Aegis.Data.Migrations
                         .Annotation("Sqlite:Autoincrement", true),
                     User1Id = table.Column<ulong>(type: "INTEGER", nullable: false),
                     User2Id = table.Column<ulong>(type: "INTEGER", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "GETUTCDATE()"),
+                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
                     LastActivityAt = table.Column<DateTime>(type: "TEXT", nullable: true),
                     LastMessageId = table.Column<ulong>(type: "INTEGER", nullable: true),
                     IsActive = table.Column<bool>(type: "INTEGER", nullable: false)

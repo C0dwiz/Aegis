@@ -250,3 +250,5 @@ client.*
 
 
 *.db
+
+.venv/

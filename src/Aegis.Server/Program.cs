@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Serilog;
 using Aegis.Common;
 using Aegis.Common.Configuration;
@@ -24,11 +25,14 @@ public static class Program
         try
         {
             var host = CreateHostBuilder(args).Build();
+            await InitializeDatabaseAsync(host);
             await host.RunAsync();
         }
         catch (Exception ex)
         {
+            Console.Error.WriteLine($"Fatal startup error: {ex}");
             Log.Fatal(ex, "Application terminated unexpectedly");
+            Environment.ExitCode = 1;
         }
         finally
         {
@@ -36,12 +40,33 @@ public static class Program
         }
     }
 
+    private static async Task InitializeDatabaseAsync(IHost host)
+    {
+        using var scope = host.Services.CreateScope();
+        var logger = scope.ServiceProvider
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger("Aegis.Server.DatabaseInitialization");
+        var databaseOptions = scope.ServiceProvider
+            .GetRequiredService<IOptions<DatabaseOptions>>()
+            .Value;
+        var dbContext = scope.ServiceProvider.GetRequiredService<AegisDbContext>();
+
+        logger.LogInformation(
+            "Applying database migrations using provider {Provider}",
+            databaseOptions.Provider);
+
+        await dbContext.Database.MigrateAsync();
+
+        logger.LogInformation("Database schema is ready");
+    }
+
     private static IHostBuilder CreateHostBuilder(string[] args) =>
         Host.CreateDefaultBuilder(args)
             .ConfigureAppConfiguration((context, config) =>
             {
+                var configBasePath = AppContext.BaseDirectory;
                 config
-                    .SetBasePath(Directory.GetCurrentDirectory())
+                    .SetBasePath(configBasePath)
                     .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
                     .AddJsonFile($"appsettings.{context.HostingEnvironment.EnvironmentName}.json", 
                         optional: true, reloadOnChange: true)
@@ -63,9 +88,17 @@ public static class Program
                     context.Configuration.GetSection(LoggingOptions.SectionName));
 
                 // Register database
-                services.AddDbContext<AegisDbContext>(options =>
-                    options.UseSqlite(context.Configuration.GetConnectionString("DefaultConnection") ?? 
-                                     "Data Source=aegis.db"));
+                services.AddDbContext<AegisDbContext>((serviceProvider, options) =>
+                {
+                    var databaseOptions = serviceProvider
+                        .GetRequiredService<IOptions<DatabaseOptions>>()
+                        .Value;
+                    var connectionString = string.IsNullOrWhiteSpace(databaseOptions.ConnectionString)
+                        ? "Data Source=aegis.db"
+                        : databaseOptions.ConnectionString;
+
+                    options.UseSqlite(connectionString);
+                });
 
                 // Register repositories
                 services.AddScoped<IUserRepository, UserRepository>();
@@ -73,18 +106,25 @@ public static class Program
                 services.AddScoped<IMessageRepository, MessageRepository>();
                 services.AddScoped<IChannelRepository, ChannelRepository>();
                 services.AddScoped<IPrivateChatRepository, PrivateChatRepository>();
+                services.AddScoped<IGroupRepository, GroupRepository>();
 
                 // Register services
                 services.AddScoped<IUserRegistrationService, UserRegistrationService>();
                 services.AddScoped<IUserAuthenticationService, UserAuthenticationService>();
                 services.AddScoped<IUserSearchService, UserSearchService>();
+                services.AddScoped<IUserProfileService, UserProfileService>();
+                services.AddScoped<IChannelService, ChannelService>();
+                services.AddScoped<IGroupService, GroupService>();
+                services.AddScoped<IMessageService, MessageService>();
 
-                // Register core services
-                services.AddSingleton<Aegis.Crypto.ICryptoProvider, AegisCryptoProvider>();
-                services.AddSingleton<Aegis.Common.ICryptoProvider, CommonCryptoProviderAdapter>();
-                services.AddSingleton<ISessionCryptoProvider>(sp => 
-                    sp.GetRequiredService<Aegis.Crypto.ICryptoProvider>() as AegisCryptoProvider 
-                    ?? throw new InvalidOperationException("AegisCryptoProvider must implement ISessionCryptoProvider"));
+                // Register core services (singletons - no DB dependencies)
+                services.AddSingleton<Aegis.Common.Logging.ILogger>(_ =>
+                    new Aegis.Common.Logging.SerilogLogger(Log.Logger));
+                services.AddSingleton<AegisCryptoProvider>();
+                services.AddSingleton<Aegis.Crypto.ICryptoProvider>(sp => sp.GetRequiredService<AegisCryptoProvider>());
+                services.AddSingleton<Aegis.Common.ICryptoProvider>(sp =>
+                    new CommonCryptoProviderAdapter(sp.GetRequiredService<AegisCryptoProvider>()));
+                services.AddSingleton<ISessionCryptoProvider>(sp => sp.GetRequiredService<AegisCryptoProvider>());
                 services.AddSingleton<SessionManager>();
                 services.AddSingleton<IAntiSpamClient, AntiSpamClient>();
                 services.AddSingleton<AcknowledgmentManager>();
@@ -93,24 +133,46 @@ public static class Program
                     new RateLimiter(context.Configuration.GetSection(RateLimitOptions.SectionName).Get<RateLimitOptions>() ?? new()));
                 services.AddSingleton<HealthCheckService>();
                 services.AddSingleton<GracefulShutdownManager>();
-
-                // Register transport
-                services.AddSingleton<TcpServer>();
-
-                // Register handlers
-                services.AddSingleton<IMessageHandler, AuthHandler>();
-                services.AddSingleton<IMessageHandler, PingHandler>();
-                services.AddSingleton<IMessageHandler, MessageHandler>();
-                services.AddSingleton<IMessageHandler, AckHandler>();
-                services.AddSingleton<IMessageHandler, NackHandler>();
-                services.AddSingleton<IMessageHandler, RetransmitRequestHandler>();
-                services.AddSingleton<IMessageHandler, RegistrationHandler>();
-                services.AddSingleton<IMessageHandler, UserSearchHandler>();
-                services.AddSingleton<IMessageHandler, ChannelMessageHandler>();
-                services.AddSingleton<IMessageHandler, ChannelCreateHandler>();
-                services.AddSingleton<IMessageHandler, PrivateChatMessageHandler>();
-                services.AddSingleton<MessageRouter>();
                 services.AddSingleton<IMessageSender, ServerMessageSender>();
+
+                // Register transport with explicit options binding for ctor params
+                services.AddSingleton<TcpServer>(sp =>
+                {
+                    var options = sp.GetRequiredService<IOptions<ServerOptions>>().Value;
+                    return new TcpServer(
+                        options.Port,
+                        options.MaxConnections,
+                        options.BufferSize,
+                        options.EnableIPv6,
+                        options.IdleTimeoutSeconds,
+                        sp.GetRequiredService<RateLimiter>(),
+                        sp.GetRequiredService<Aegis.Common.Logging.ILogger>());
+                });
+
+                // Register handlers as Scoped (they depend on scoped DB services)
+                services.AddScoped<IMessageHandler, HandshakeHandler>();
+                services.AddScoped<IMessageHandler, AuthHandler>();
+                services.AddScoped<IMessageHandler, PingHandler>();
+                services.AddScoped<IMessageHandler, MessageHandler>();
+                services.AddScoped<IMessageHandler, AckHandler>();
+                services.AddScoped<IMessageHandler, NackHandler>();
+                services.AddScoped<IMessageHandler, RetransmitRequestHandler>();
+                services.AddScoped<IMessageHandler, RegistrationHandler>();
+                services.AddScoped<IMessageHandler, UserSearchHandler>();
+                services.AddScoped<IMessageHandler, ChannelMessageHandler>();
+                services.AddScoped<IMessageHandler, ChannelCreateHandler>();
+                services.AddScoped<IMessageHandler, PrivateChatMessageHandler>();
+                services.AddScoped<IMessageHandler, ProfileUpdateHandler>();
+                services.AddScoped<IMessageHandler, ProfileGetHandler>();
+                services.AddScoped<IMessageHandler, MessageEditHandler>();
+                services.AddScoped<IMessageHandler, MessageDeleteHandler>();
+                services.AddScoped<IMessageHandler, ChannelEditHandler>();
+                services.AddScoped<IMessageHandler, GroupCreateHandler>();
+                services.AddScoped<IMessageHandler, GroupEditHandler>();
+                services.AddScoped<IMessageHandler, GroupMessageSendHandler>();
+                services.AddScoped<IMessageHandler, MemberRoleUpdateHandler>();
+                services.AddScoped<IMessageHandler, MemberPermissionUpdateHandler>();
+                services.AddScoped<MessageRouter>();
 
                 // Register hosted service
                 services.AddHostedService<AegisMessengerService>();
@@ -147,23 +209,26 @@ public static class Program
 public class AegisMessengerService : BackgroundService
 {
     private readonly TcpServer _server;
-    private readonly MessageRouter _router;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly Aegis.Crypto.ICryptoProvider _crypto;
+    private readonly RateLimiter _rateLimiter;
     private readonly SessionManager _sessionManager;
     private readonly ILogger<AegisMessengerService> _logger;
     private readonly ServerOptions _serverOptions;
 
     public AegisMessengerService(
         TcpServer server,
-        MessageRouter router,
+        IServiceScopeFactory scopeFactory,
         Aegis.Crypto.ICryptoProvider crypto,
+        RateLimiter rateLimiter,
         SessionManager sessionManager,
         ILogger<AegisMessengerService> logger,
         Microsoft.Extensions.Options.IOptions<ServerOptions> serverOptions)
     {
         _server = server;
-        _router = router;
+        _scopeFactory = scopeFactory;
         _crypto = crypto;
+        _rateLimiter = rateLimiter;
         _sessionManager = sessionManager;
         _logger = logger;
         _serverOptions = serverOptions.Value;
@@ -205,6 +270,7 @@ public class AegisMessengerService : BackgroundService
 
     private void OnClientDisconnected(ConnectionContext context)
     {
+        _rateLimiter.RemoveConnection(context.ConnectionId);
         _sessionManager.RemoveSession(context.ConnectionId);
         _logger.LogInformation("Client {ConnectionId} disconnected", context.ConnectionId);
     }
@@ -219,18 +285,28 @@ public class AegisMessengerService : BackgroundService
             // Decode message
             var message = MessageEncoder.Decode(data.Span);
 
+            var session = _sessionManager.GetSession(context.ConnectionId) ??
+                _sessionManager.CreateSession(context.ConnectionId);
+
+            var isHandshake = message.Type == MessageType.Handshake;
+            var isAuthFlow = message.Type == MessageType.Auth || message.Type == MessageType.Register;
+            if (!isHandshake && !session.HandshakeEstablished)
+            {
+                _logger.LogWarning("Rejected {MessageType} from connection {ConnectionId} before handshake", message.Type, context.ConnectionId);
+                return;
+            }
+
+            if (!isHandshake && !isAuthFlow && !_rateLimiter.CanSendMessage(context.ConnectionId))
+            {
+                _logger.LogWarning("Rate limit exceeded for connection {ConnectionId} on {MessageType}", context.ConnectionId, message.Type);
+                return;
+            }
+
             // Verify MAC
             var messageData = data.Slice(0, data.Length - ProtocolConstants.MacSize);
             var receivedMac = data.Slice(data.Length - ProtocolConstants.MacSize, ProtocolConstants.MacSize);
 
-            var session = _sessionManager.GetSession(context.ConnectionId);
-            if (session == null)
-            {
-                _logger.LogWarning("No session found for connection {ConnectionId}", context.ConnectionId);
-                session = _sessionManager.CreateSession(context.ConnectionId);
-            }
-
-            if (!_crypto.VerifyMac(messageData.Span, session.MacKey.Span, receivedMac.Span))
+            if (!isHandshake && !session.MacKey.IsEmpty && !_crypto.VerifyMac(messageData.Span, session.MacKey.Span, receivedMac.Span))
             {
                 _logger.LogWarning("Invalid MAC for message {SequenceId} from connection {ConnectionId}",
                     message.SequenceId, context.ConnectionId);
@@ -239,8 +315,10 @@ public class AegisMessengerService : BackgroundService
 
             _sessionManager.UpdateActivity(context.ConnectionId);
 
-            // Route message
-            await _router.RouteAsync(context, message);
+            // Create a scope per message so scoped services (DB, repos, handlers) are properly managed
+            using var scope = _scopeFactory.CreateScope();
+            var router = scope.ServiceProvider.GetRequiredService<MessageRouter>();
+            await router.RouteAsync(context, message);
         }
         catch (Exception ex)
         {

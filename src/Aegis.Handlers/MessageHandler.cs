@@ -9,7 +9,7 @@ public class MessageHandler : IMessageHandler
 {
     private readonly IAntiSpamClient _antiSpam;
     private readonly IMessageSender _messageSender;
-    private readonly Aegis.Crypto.ICryptoProvider _cryptoProvider;
+    private readonly SessionManager _sessionManager;
     private readonly ILogger _logger;
     private bool _ackSent = false;
     private ulong _ackSequenceId = 0;
@@ -17,16 +17,23 @@ public class MessageHandler : IMessageHandler
     
     public Aegis.Protocol.MessageType Type => Aegis.Protocol.MessageType.Message;
     
-    public MessageHandler(IAntiSpamClient antiSpam, IMessageSender messageSender, Aegis.Crypto.ICryptoProvider cryptoProvider, ILogger? logger = null)
+    public MessageHandler(IAntiSpamClient antiSpam, IMessageSender messageSender, SessionManager sessionManager, ILogger? logger = null)
     {
         _antiSpam = antiSpam;
         _messageSender = messageSender;
-        _cryptoProvider = cryptoProvider;
+        _sessionManager = sessionManager;
         _logger = logger ?? new Aegis.Transport.NullLogger();
     }
     
     public async ValueTask HandleAsync(ConnectionContext context, Message message)
     {
+        var session = _sessionManager.GetAuthenticatedSession(context.ConnectionId);
+        if (session == null)
+        {
+            await SendErrorAsync(context, message.SequenceId, "Not authenticated");
+            return;
+        }
+
         var allowed = await _antiSpam.CheckMessageAsync(context.ConnectionId, message.Payload);
         
         if (!allowed)
@@ -86,14 +93,14 @@ public class MessageHandler : IMessageHandler
                 Type = Aegis.Protocol.MessageType.Ack,
                 SequenceId = sequenceId,
                 PayloadLength = 0,
-                Payload = Array.Empty<byte>(),
-                Mac = new byte[ProtocolConstants.MacSize]
+                Payload = Array.Empty<byte>()
             };
-            
-            // Encrypt and send through message sender
-            var sessionKey = new byte[32]; // TODO: Get from session manager
-            var encryptedMessage = await _cryptoProvider.EncryptMessageAsync(ackMessage, sessionKey);
-            await _messageSender.SendMessageAsync(context.ConnectionId, encryptedMessage);
+
+            await _messageSender.SendProtocolMessageAsync(
+                context.ConnectionId,
+                (ushort)Aegis.Protocol.MessageType.Ack,
+                sequenceId,
+                Array.Empty<byte>());
             
             _ackSent = true;
             _ackSequenceId = sequenceId;
@@ -119,14 +126,14 @@ public class MessageHandler : IMessageHandler
                 Type = Aegis.Protocol.MessageType.Error,
                 SequenceId = sequenceId,
                 PayloadLength = (uint)System.Text.Encoding.UTF8.GetByteCount(error),
-                Payload = System.Text.Encoding.UTF8.GetBytes(error),
-                Mac = new byte[ProtocolConstants.MacSize]
+                Payload = System.Text.Encoding.UTF8.GetBytes(error)
             };
-            
-            // Encrypt and send through message sender
-            var sessionKey = new byte[32]; // TODO: Get from session manager
-            var encryptedMessage = await _cryptoProvider.EncryptMessageAsync(errorMessage, sessionKey);
-            await _messageSender.SendMessageAsync(context.ConnectionId, encryptedMessage);
+
+            await _messageSender.SendProtocolMessageAsync(
+                context.ConnectionId,
+                (ushort)Aegis.Protocol.MessageType.Error,
+                sequenceId,
+                System.Text.Encoding.UTF8.GetBytes(error));
             
             _errorMessage = error;
             

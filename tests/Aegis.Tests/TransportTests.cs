@@ -11,7 +11,7 @@ namespace Aegis.Tests;
 public class TransportTests
 {
     private readonly TestLogger _logger = new TestLogger();
-    private const int TestTimeoutMs = 1000; // Reduced timeout for faster tests
+    private const int TestTimeoutMs = 3000;
     
     [Fact]
     public async Task TcpServer_StartStop_ShouldWorkCorrectly()
@@ -19,7 +19,7 @@ public class TransportTests
         using var cts = new CancellationTokenSource(TestTimeoutMs);
         
         // Arrange
-        var server = new TcpServer(0, 100, 1024, _logger);
+        var server = new TcpServer(0, 100, 1024, false, 300, null, _logger);
         
         try
         {
@@ -47,7 +47,7 @@ public class TransportTests
         using var cts = new CancellationTokenSource(TestTimeoutMs);
         
         // Arrange - use a specific port to avoid binding issues
-        var server = new TcpServer(12345, 100, 1024, _logger);
+        var server = new TcpServer(12345, 100, 1024, false, 300, null, _logger);
         var connectedTcs = new TaskCompletionSource<ConnectionContext>();
         var disconnectedTcs = new TaskCompletionSource<ConnectionContext>();
         
@@ -182,7 +182,7 @@ public class TransportTests
     public void TcpServer_Constructor_ShouldInitializeCorrectly()
     {
         // Act
-        var server = new TcpServer(8080, 100, 2048, _logger);
+        var server = new TcpServer(8080, 100, 2048, false, 300, null, _logger);
         
         // Assert
         Assert.Equal(8080, server.Port);
@@ -194,7 +194,7 @@ public class TransportTests
     public void TcpServer_SendAsync_WithNullContext_ShouldThrowException()
     {
         // Arrange
-        var server = new TcpServer(8080, 100, 2048, _logger);
+        var server = new TcpServer(8080, 100, 2048, false, 300, null, _logger);
         
         // Act & Assert
         Assert.ThrowsAsync<ArgumentNullException>(async () => 

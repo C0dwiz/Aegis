@@ -70,19 +70,17 @@ public class Repository<T> : IRepository<T> where T : class
     }
 }
 
-/// <summary>
-/// User repository interface
-/// </summary>
+// ===================== USER REPOSITORY =====================
+
 public interface IUserRepository : IRepository<User>
 {
     Task<User?> GetByUsernameAsync(string username);
     Task<User?> GetByEmailAsync(string email);
     Task<IEnumerable<User>> SearchByUsernameAsync(string pattern);
+    Task<IEnumerable<User>> SearchByEmailAsync(string pattern);
+    Task<IEnumerable<User>> SearchAsync(string query, int limit = 20);
 }
 
-/// <summary>
-/// User repository implementation
-/// </summary>
 public class UserRepository : Repository<User>, IUserRepository
 {
     private readonly AegisDbContext _context;
@@ -105,24 +103,36 @@ public class UserRepository : Repository<User>, IUserRepository
     public async Task<IEnumerable<User>> SearchByUsernameAsync(string pattern)
     {
         return await _context.Users
-            .Where(u => u.Username.Contains(pattern))
+            .Where(u => u.Username.Contains(pattern) && u.IsActive)
+            .ToListAsync();
+    }
+
+    public async Task<IEnumerable<User>> SearchByEmailAsync(string pattern)
+    {
+        return await _context.Users
+            .Where(u => u.Email.Contains(pattern) && u.IsActive)
+            .ToListAsync();
+    }
+
+    public async Task<IEnumerable<User>> SearchAsync(string query, int limit = 20)
+    {
+        return await _context.Users
+            .Where(u => (u.Username.Contains(query) || u.Email.Contains(query)) && u.IsActive)
+            .Take(limit)
             .ToListAsync();
     }
 }
 
-/// <summary>
-/// Session repository interface
-/// </summary>
+// ===================== SESSION REPOSITORY =====================
+
 public interface ISessionRepository : IRepository<Session>
 {
     Task<Session?> GetByTokenAsync(string token);
     Task<IEnumerable<Session>> GetUserActiveSessions(ulong userId);
     Task<bool> DeleteExpiredSessionsAsync();
+    Task<Session?> GetByConnectionIdAsync(string connectionId);
 }
 
-/// <summary>
-/// Session repository implementation
-/// </summary>
 public class SessionRepository : Repository<Session>, ISessionRepository
 {
     private readonly AegisDbContext _context;
@@ -158,21 +168,25 @@ public class SessionRepository : Repository<Session>, ISessionRepository
         await _context.SaveChangesAsync();
         return true;
     }
+
+    public async Task<Session?> GetByConnectionIdAsync(string connectionId)
+    {
+        return await _context.Sessions
+            .Include(s => s.User)
+            .FirstOrDefaultAsync(s => s.ConnectionId == connectionId && s.IsActive);
+    }
 }
 
-/// <summary>
-/// Message repository interface
-/// </summary>
+// ===================== MESSAGE REPOSITORY =====================
+
 public interface IMessageRepository : IRepository<Message>
 {
     Task<IEnumerable<Message>> GetConversationAsync(ulong userId1, ulong userId2, int limit = 50);
     Task<IEnumerable<Message>> GetUndeliveredMessagesAsync(ulong userId);
     Task<IEnumerable<Message>> GetUnreadMessagesAsync(ulong userId);
+    Task<Message?> GetMessageForEditAsync(ulong messageId, ulong userId);
 }
 
-/// <summary>
-/// Message repository implementation
-/// </summary>
 public class MessageRepository : Repository<Message>, IMessageRepository
 {
     private readonly AegisDbContext _context;
@@ -185,8 +199,9 @@ public class MessageRepository : Repository<Message>, IMessageRepository
     public async Task<IEnumerable<Message>> GetConversationAsync(ulong userId1, ulong userId2, int limit = 50)
     {
         return await _context.Messages
-            .Where(m => (m.FromUserId == userId1 && m.ToUserId == userId2) ||
-                        (m.FromUserId == userId2 && m.ToUserId == userId1))
+            .Where(m => !m.IsDeleted &&
+                ((m.FromUserId == userId1 && m.ToUserId == userId2) ||
+                 (m.FromUserId == userId2 && m.ToUserId == userId1)))
             .OrderByDescending(m => m.CreatedAt)
             .Take(limit)
             .ToListAsync();
@@ -195,21 +210,26 @@ public class MessageRepository : Repository<Message>, IMessageRepository
     public async Task<IEnumerable<Message>> GetUndeliveredMessagesAsync(ulong userId)
     {
         return await _context.Messages
-            .Where(m => m.ToUserId == userId && !m.IsDelivered)
+            .Where(m => m.ToUserId == userId && !m.IsDelivered && !m.IsDeleted)
             .ToListAsync();
     }
 
     public async Task<IEnumerable<Message>> GetUnreadMessagesAsync(ulong userId)
     {
         return await _context.Messages
-            .Where(m => m.ToUserId == userId && !m.IsRead)
+            .Where(m => m.ToUserId == userId && !m.IsRead && !m.IsDeleted)
             .ToListAsync();
+    }
+
+    public async Task<Message?> GetMessageForEditAsync(ulong messageId, ulong userId)
+    {
+        return await _context.Messages
+            .FirstOrDefaultAsync(m => m.Id == messageId && m.FromUserId == userId && !m.IsDeleted);
     }
 }
 
-/// <summary>
-/// Channel repository interface
-/// </summary>
+// ===================== CHANNEL REPOSITORY =====================
+
 public interface IChannelRepository : IRepository<Channel>
 {
     Task<IEnumerable<Channel>> GetUserChannelsAsync(ulong userId);
@@ -217,11 +237,14 @@ public interface IChannelRepository : IRepository<Channel>
     Task<bool> IsUserMemberAsync(ulong channelId, ulong userId);
     Task<ChannelMember?> GetChannelMemberAsync(ulong channelId, ulong userId);
     Task<IEnumerable<ChannelMessage>> GetChannelMessagesAsync(ulong channelId, int limit = 50);
+    Task<ChannelMember> AddMemberAsync(ChannelMember member);
+    Task<ChannelMember> UpdateMemberAsync(ChannelMember member);
+    Task<ChannelMessage> AddChannelMessageAsync(ChannelMessage message);
+    Task<ChannelMessage?> GetChannelMessageAsync(ulong messageId);
+    Task<ChannelMessage> UpdateChannelMessageAsync(ChannelMessage message);
+    Task<IEnumerable<ChannelMember>> GetChannelMembersAsync(ulong channelId);
 }
 
-/// <summary>
-/// Channel repository implementation
-/// </summary>
 public class ChannelRepository : Repository<Channel>, IChannelRepository
 {
     private readonly AegisDbContext _context;
@@ -266,16 +289,167 @@ public class ChannelRepository : Repository<Channel>, IChannelRepository
         return await _context.ChannelMessages
             .Include(cm => cm.FromUser)
             .Include(cm => cm.ReplyToMessage)
-            .Where(cm => cm.ChannelId == channelId)
+            .Where(cm => cm.ChannelId == channelId && !cm.IsDeleted)
             .OrderByDescending(cm => cm.CreatedAt)
+            .Take(limit)
+            .ToListAsync();
+    }
+
+    public async Task<ChannelMember> AddMemberAsync(ChannelMember member)
+    {
+        _context.ChannelMembers.Add(member);
+        await _context.SaveChangesAsync();
+        return member;
+    }
+
+    public async Task<ChannelMember> UpdateMemberAsync(ChannelMember member)
+    {
+        _context.ChannelMembers.Update(member);
+        await _context.SaveChangesAsync();
+        return member;
+    }
+
+    public async Task<ChannelMessage> AddChannelMessageAsync(ChannelMessage message)
+    {
+        _context.ChannelMessages.Add(message);
+        await _context.SaveChangesAsync();
+        return message;
+    }
+
+    public async Task<ChannelMessage?> GetChannelMessageAsync(ulong messageId)
+    {
+        return await _context.ChannelMessages
+            .Include(cm => cm.FromUser)
+            .FirstOrDefaultAsync(cm => cm.Id == messageId && !cm.IsDeleted);
+    }
+
+    public async Task<ChannelMessage> UpdateChannelMessageAsync(ChannelMessage message)
+    {
+        _context.ChannelMessages.Update(message);
+        await _context.SaveChangesAsync();
+        return message;
+    }
+
+    public async Task<IEnumerable<ChannelMember>> GetChannelMembersAsync(ulong channelId)
+    {
+        return await _context.ChannelMembers
+            .Include(cm => cm.User)
+            .Where(cm => cm.ChannelId == channelId && cm.IsActive)
+            .ToListAsync();
+    }
+}
+
+// ===================== GROUP REPOSITORY =====================
+
+public interface IGroupRepository : IRepository<Group>
+{
+    Task<IEnumerable<Group>> GetUserGroupsAsync(ulong userId);
+    Task<Group?> GetGroupWithMembersAsync(ulong groupId);
+    Task<bool> IsUserMemberAsync(ulong groupId, ulong userId);
+    Task<GroupMember?> GetGroupMemberAsync(ulong groupId, ulong userId);
+    Task<GroupMember> AddMemberAsync(GroupMember member);
+    Task<GroupMember> UpdateMemberAsync(GroupMember member);
+    Task<IEnumerable<GroupMember>> GetGroupMembersAsync(ulong groupId);
+    Task<GroupMessage> AddGroupMessageAsync(GroupMessage message);
+    Task<GroupMessage?> GetGroupMessageAsync(ulong messageId);
+    Task<GroupMessage> UpdateGroupMessageAsync(GroupMessage message);
+    Task<IEnumerable<GroupMessage>> GetGroupMessagesAsync(ulong groupId, int limit = 50);
+}
+
+public class GroupRepository : Repository<Group>, IGroupRepository
+{
+    private readonly AegisDbContext _context;
+
+    public GroupRepository(AegisDbContext context) : base(context)
+    {
+        _context = context;
+    }
+
+    public async Task<IEnumerable<Group>> GetUserGroupsAsync(ulong userId)
+    {
+        return await _context.GroupMembers
+            .Where(gm => gm.UserId == userId && gm.IsActive)
+            .Select(gm => gm.Group!)
+            .ToListAsync();
+    }
+
+    public async Task<Group?> GetGroupWithMembersAsync(ulong groupId)
+    {
+        return await _context.Groups
+            .Include(g => g.Members).ThenInclude(gm => gm.User)
+            .Include(g => g.CreatedByUser)
+            .FirstOrDefaultAsync(g => g.Id == groupId && g.IsActive);
+    }
+
+    public async Task<bool> IsUserMemberAsync(ulong groupId, ulong userId)
+    {
+        return await _context.GroupMembers
+            .AnyAsync(gm => gm.GroupId == groupId && gm.UserId == userId && gm.IsActive);
+    }
+
+    public async Task<GroupMember?> GetGroupMemberAsync(ulong groupId, ulong userId)
+    {
+        return await _context.GroupMembers
+            .Include(gm => gm.User)
+            .FirstOrDefaultAsync(gm => gm.GroupId == groupId && gm.UserId == userId && gm.IsActive);
+    }
+
+    public async Task<GroupMember> AddMemberAsync(GroupMember member)
+    {
+        _context.GroupMembers.Add(member);
+        await _context.SaveChangesAsync();
+        return member;
+    }
+
+    public async Task<GroupMember> UpdateMemberAsync(GroupMember member)
+    {
+        _context.GroupMembers.Update(member);
+        await _context.SaveChangesAsync();
+        return member;
+    }
+
+    public async Task<IEnumerable<GroupMember>> GetGroupMembersAsync(ulong groupId)
+    {
+        return await _context.GroupMembers
+            .Include(gm => gm.User)
+            .Where(gm => gm.GroupId == groupId && gm.IsActive)
+            .ToListAsync();
+    }
+
+    public async Task<GroupMessage> AddGroupMessageAsync(GroupMessage message)
+    {
+        _context.GroupMessages.Add(message);
+        await _context.SaveChangesAsync();
+        return message;
+    }
+
+    public async Task<GroupMessage?> GetGroupMessageAsync(ulong messageId)
+    {
+        return await _context.GroupMessages
+            .Include(gm => gm.FromUser)
+            .FirstOrDefaultAsync(gm => gm.Id == messageId && !gm.IsDeleted);
+    }
+
+    public async Task<GroupMessage> UpdateGroupMessageAsync(GroupMessage message)
+    {
+        _context.GroupMessages.Update(message);
+        await _context.SaveChangesAsync();
+        return message;
+    }
+
+    public async Task<IEnumerable<GroupMessage>> GetGroupMessagesAsync(ulong groupId, int limit = 50)
+    {
+        return await _context.GroupMessages
+            .Include(gm => gm.FromUser)
+            .Where(gm => gm.GroupId == groupId && !gm.IsDeleted)
+            .OrderByDescending(gm => gm.CreatedAt)
             .Take(limit)
             .ToListAsync();
     }
 }
 
-/// <summary>
-/// Private chat repository interface
-/// </summary>
+// ===================== PRIVATE CHAT REPOSITORY =====================
+
 public interface IPrivateChatRepository : IRepository<PrivateChat>
 {
     Task<PrivateChat?> GetPrivateChatAsync(ulong userId1, ulong userId2);
@@ -283,9 +457,6 @@ public interface IPrivateChatRepository : IRepository<PrivateChat>
     Task<PrivateChat> CreatePrivateChatAsync(ulong userId1, ulong userId2);
 }
 
-/// <summary>
-/// Private chat repository implementation
-/// </summary>
 public class PrivateChatRepository : Repository<PrivateChat>, IPrivateChatRepository
 {
     private readonly AegisDbContext _context;

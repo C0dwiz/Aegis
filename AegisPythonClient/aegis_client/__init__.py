@@ -6,9 +6,11 @@ Python клиентская библиотека для протокола Aegis
 from .aegis_client import AegisClient
 from .message import Message, MessageType
 from .message_payloads import (
+    AuthResponse,
+    HandshakeResponse,
     RegistrationRequest, RegistrationResponse,
     UserSearchRequest, UserSearchResponse, UserSearchResult,
-    ChannelCreateRequest, ChannelCreateResponse, Channel,
+    ChannelCreateRequest, ChannelCreateResponse,
     ChannelMessageRequest, ChannelMessageResponse,
     PrivateChatMessageRequest, PrivateChatMessageResponse,
     MessageContentType, ChannelType
@@ -23,9 +25,10 @@ __version__ = "1.0.0"
 __all__ = [
     "AegisClient",
     "Message", "MessageType",
+    "AuthResponse", "HandshakeResponse",
     "RegistrationRequest", "RegistrationResponse",
     "UserSearchRequest", "UserSearchResponse", "UserSearchResult",
-    "ChannelCreateRequest", "ChannelCreateResponse", "Channel",
+    "ChannelCreateRequest", "ChannelCreateResponse",
     "ChannelMessageRequest", "ChannelMessageResponse",
     "PrivateChatMessageRequest", "PrivateChatMessageResponse",
     "MessageContentType", "ChannelType",

@@ -1,14 +1,20 @@
-"""
-Классы сообщений протокола Aegis
-"""
+"""Message primitives for the Aegis wire protocol."""
+
+from __future__ import annotations
+
 import struct
 from enum import IntEnum
-from .protocol_constants import ProtocolConstants
+
 from .exceptions import ProtocolError
+from .protocol_constants import ProtocolConstants
+
+
+HEADER_FORMAT = ">IBBBHQI"
 
 
 class MessageType(IntEnum):
-    """Типы сообщений протокола"""
+    """Типы сообщений протокола."""
+
     UNKNOWN = ProtocolConstants.TYPE_UNKNOWN
     AUTH = ProtocolConstants.TYPE_AUTH
     PING = ProtocolConstants.TYPE_PING
@@ -31,19 +37,22 @@ class MessageType(IntEnum):
     USER_SEARCH_RESULT = ProtocolConstants.TYPE_USER_SEARCH_RESULT
     REGISTER = ProtocolConstants.TYPE_REGISTER
     REGISTER_RESPONSE = ProtocolConstants.TYPE_REGISTER_RESPONSE
+    PROFILE_UPDATE = ProtocolConstants.TYPE_PROFILE_UPDATE
+    PROFILE_UPDATE_RESPONSE = ProtocolConstants.TYPE_PROFILE_UPDATE_RESPONSE
+    PROFILE_GET = ProtocolConstants.TYPE_PROFILE_GET
+    PROFILE_GET_RESPONSE = ProtocolConstants.TYPE_PROFILE_GET_RESPONSE
 
     @classmethod
-    def from_value(cls, value: int) -> 'MessageType':
-        """Получить тип сообщения по значению"""
-        for msg_type in cls:
-            if msg_type.value == value:
-                return msg_type
-        return cls.UNKNOWN
+    def from_value(cls, value: int) -> "MessageType":
+        try:
+            return cls(value)
+        except ValueError:
+            return cls.UNKNOWN
 
 
 class Message:
-    """Класс сообщения протокола"""
-    
+    """Класс сообщения протокола."""
+
     def __init__(self, message_type: MessageType = MessageType.UNKNOWN):
         self.magic: int = ProtocolConstants.MAGIC
         self.version_major: int = ProtocolConstants.VERSION_MAJOR
@@ -52,33 +61,31 @@ class Message:
         self.type: MessageType = message_type
         self.sequence_id: int = 0
         self.payload_length: int = 0
-        self.payload: bytes = b''
+        self.payload: bytes = b""
         self.mac: bytes = bytes(ProtocolConstants.MAC_SIZE)
-    
+
     @classmethod
-    def with_type(cls, message_type: MessageType, payload: bytes = b'') -> 'Message':
-        """Создать сообщение с указанным типом и payload"""
+    def with_type(cls, message_type: MessageType, payload: bytes = b"") -> "Message":
         message = cls(message_type)
         message.payload = payload
         message.payload_length = len(payload)
         return message
-    
+
     @classmethod
-    def from_bytes(cls, data: bytes) -> 'Message':
-        """Десериализовать сообщение из байтов"""
+    def from_bytes(cls, data: bytes) -> "Message":
         if len(data) < ProtocolConstants.HEADER_SIZE:
             raise ProtocolError("Message too short for header")
-        
-        # Распаковка заголовка (big-endian)
-        header = struct.unpack('>IBBHIB', data[:ProtocolConstants.HEADER_SIZE])
+
+        header = struct.unpack(HEADER_FORMAT, data[: ProtocolConstants.HEADER_SIZE])
         magic, version_major, version_minor, flags, msg_type, sequence_id, payload_length = header
-        
+
         if magic != ProtocolConstants.MAGIC:
             raise ProtocolError(f"Invalid magic number: {magic}")
-        
-        if len(data) < ProtocolConstants.HEADER_SIZE + payload_length + ProtocolConstants.MAC_SIZE:
+
+        total_size = ProtocolConstants.HEADER_SIZE + payload_length + ProtocolConstants.MAC_SIZE
+        if len(data) < total_size:
             raise ProtocolError("Message too short for complete data")
-        
+
         message = cls(MessageType.from_value(msg_type))
         message.magic = magic
         message.version_major = version_major
@@ -86,46 +93,43 @@ class Message:
         message.flags = flags
         message.sequence_id = sequence_id
         message.payload_length = payload_length
-        message.payload = data[ProtocolConstants.HEADER_SIZE:ProtocolConstants.HEADER_SIZE + payload_length]
-        message.mac = data[ProtocolConstants.HEADER_SIZE + payload_length:ProtocolConstants.HEADER_SIZE + payload_length + ProtocolConstants.MAC_SIZE]
-        
+        payload_end = ProtocolConstants.HEADER_SIZE + payload_length
+        message.payload = data[ProtocolConstants.HEADER_SIZE:payload_end]
+        message.mac = data[payload_end:payload_end + ProtocolConstants.MAC_SIZE]
         return message
-    
+
     def to_bytes(self) -> bytes:
-        """Сериализовать сообщение в байты"""
-        # Установка актуальной длины payload
         self.payload_length = len(self.payload)
-        
-        # Убедимся, что MAC имеет правильный размер
+
         if len(self.mac) != ProtocolConstants.MAC_SIZE:
             self.mac = bytes(ProtocolConstants.MAC_SIZE)
-        
-        # Упаковка заголовка (big-endian)
+
         header = struct.pack(
-            '>IBBHIB',
+            HEADER_FORMAT,
             self.magic,
             self.version_major,
             self.version_minor,
             self.flags,
             self.type.value,
             self.sequence_id,
-            self.payload_length
+            self.payload_length,
         )
-        
         return header + self.payload + self.mac
-    
+
     @property
     def total_size(self) -> int:
-        """Общий размер сообщения"""
         return ProtocolConstants.HEADER_SIZE + self.payload_length + ProtocolConstants.MAC_SIZE
-    
+
     def __repr__(self) -> str:
-        return (f"Message(type={self.type.name}, sequence_id={self.sequence_id}, "
-                f"payload_length={self.payload_length}, flags=0x{self.flags:02x})")
+        return (
+            f"Message(type={self.type.name}, sequence_id={self.sequence_id}, "
+            f"payload_length={self.payload_length}, flags=0x{self.flags:02x})"
+        )
 
 
 class MessageFlags:
-    """Флаги сообщений"""
+    """Флаги сообщений."""
+
     NONE = ProtocolConstants.FLAG_NONE
     REQUIRES_ACK = ProtocolConstants.FLAG_REQUIRES_ACK
     IS_RETRANSMIT = ProtocolConstants.FLAG_IS_RETRANSMIT
@@ -135,7 +139,8 @@ class MessageFlags:
 
 
 class AckStatus(IntEnum):
-    """Статусы подтверждения"""
+    """Статусы подтверждения."""
+
     OK = ProtocolConstants.ACK_OK
     ERROR = ProtocolConstants.ACK_ERROR
     RETRY = ProtocolConstants.ACK_RETRY

@@ -72,7 +72,7 @@ class RegistrationRequest {
 class RegistrationResponse {
   final bool success;
   final String? message;
-  final User? user;
+  final RegisteredUserInfo? user;
 
   RegistrationResponse({
     required this.success,
@@ -89,13 +89,37 @@ class RegistrationResponse {
   factory RegistrationResponse.fromJson(Map<String, dynamic> json) => RegistrationResponse(
     success: json['Success'] as bool,
     message: json['Message'] as String?,
-    user: json['User'] != null ? User.fromJson(json['User'] as Map<String, dynamic>) : null,
+    user: json['User'] != null
+        ? RegisteredUserInfo.fromJson(json['User'] as Map<String, dynamic>)
+        : null,
   );
 
   factory RegistrationResponse.fromBytes(List<int> bytes) {
     final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
     return RegistrationResponse.fromJson(json);
   }
+}
+
+/// Minimal registered user info returned by the server
+class RegisteredUserInfo {
+  final int id;
+  final String username;
+
+  RegisteredUserInfo({
+    required this.id,
+    required this.username,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'Id': id,
+    'Username': username,
+  };
+
+  factory RegisteredUserInfo.fromJson(Map<String, dynamic> json) =>
+      RegisteredUserInfo(
+        id: json['Id'] as int,
+        username: json['Username'] as String,
+      );
 }
 
 /// User search request payload
@@ -261,24 +285,24 @@ class ChannelMessageRequest {
 /// Channel message response payload
 class ChannelMessageResponse {
   final bool success;
-  final ChannelMessage? message;
+  final int messageId;
   final String? messageText;
 
   ChannelMessageResponse({
     required this.success,
-    this.message,
+    this.messageId = 0,
     this.messageText,
   });
 
   Map<String, dynamic> toJson() => {
     'Success': success,
-    if (message != null) 'Message': message!.toJson(),
+    'MessageId': messageId,
     if (messageText != null) 'MessageText': messageText,
   };
 
   factory ChannelMessageResponse.fromJson(Map<String, dynamic> json) => ChannelMessageResponse(
     success: json['Success'] as bool,
-    message: json['Message'] != null ? ChannelMessage.fromJson(json['Message'] as Map<String, dynamic>) : null,
+    messageId: json['MessageId'] as int? ?? 0,
     messageText: json['MessageText'] as String?,
   );
 
@@ -371,24 +395,24 @@ class ChannelCreateRequest {
 /// Channel create response payload
 class ChannelCreateResponse {
   final bool success;
-  final Channel? channel;
+  final int channelId;
   final String? message;
 
   ChannelCreateResponse({
     required this.success,
-    this.channel,
+    this.channelId = 0,
     this.message,
   });
 
   Map<String, dynamic> toJson() => {
     'Success': success,
-    if (channel != null) 'Channel': channel!.toJson(),
+    'ChannelId': channelId,
     if (message != null) 'Message': message,
   };
 
   factory ChannelCreateResponse.fromJson(Map<String, dynamic> json) => ChannelCreateResponse(
     success: json['Success'] as bool,
-    channel: json['Channel'] != null ? Channel.fromJson(json['Channel'] as Map<String, dynamic>) : null,
+    channelId: json['ChannelId'] as int? ?? 0,
     message: json['Message'] as String?,
   );
 
@@ -530,28 +554,24 @@ class PrivateChatMessageRequest {
 /// Private chat message response payload
 class PrivateChatMessageResponse {
   final bool success;
-  final Message? message;
-  final PrivateChat? privateChat;
+  final int messageId;
   final String? messageText;
 
   PrivateChatMessageResponse({
     required this.success,
-    this.message,
-    this.privateChat,
+    this.messageId = 0,
     this.messageText,
   });
 
   Map<String, dynamic> toJson() => {
     'Success': success,
-    if (message != null) 'Message': message!.toJson(),
-    if (privateChat != null) 'PrivateChat': privateChat!.toJson(),
+    'MessageId': messageId,
     if (messageText != null) 'MessageText': messageText,
   };
 
   factory PrivateChatMessageResponse.fromJson(Map<String, dynamic> json) => PrivateChatMessageResponse(
     success: json['Success'] as bool,
-    message: json['Message'] != null ? Message.fromJson(json['Message'] as Map<String, dynamic>) : null,
-    privateChat: json['PrivateChat'] != null ? PrivateChat.fromJson(json['PrivateChat'] as Map<String, dynamic>) : null,
+    messageId: json['MessageId'] as int? ?? 0,
     messageText: json['MessageText'] as String?,
   );
 

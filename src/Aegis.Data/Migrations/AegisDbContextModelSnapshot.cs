@@ -23,10 +23,13 @@ namespace Aegis.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("AvatarUrl")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
-                        .HasDefaultValueSql("GETUTCDATE()");
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<ulong>("CreatedByUserId")
                         .HasColumnType("INTEGER");
@@ -53,7 +56,7 @@ namespace Aegis.Data.Migrations
                     b.Property<DateTime>("UpdatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
-                        .HasDefaultValueSql("GETUTCDATE()");
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.HasKey("Id");
 
@@ -70,6 +73,27 @@ namespace Aegis.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("CanDeleteOthersMessages")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("CanEditChannelInfo")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("CanInviteUsers")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("CanManageRoles")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("CanPinMessages")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("CanRemoveUsers")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("CanSendMessages")
+                        .HasColumnType("INTEGER");
+
                     b.Property<ulong>("ChannelId")
                         .HasColumnType("INTEGER");
 
@@ -82,7 +106,7 @@ namespace Aegis.Data.Migrations
                     b.Property<DateTime>("JoinedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
-                        .HasDefaultValueSql("GETUTCDATE()");
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<DateTime?>("LastReadAt")
                         .HasColumnType("TEXT");
@@ -122,12 +146,18 @@ namespace Aegis.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
-                        .HasDefaultValueSql("GETUTCDATE()");
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("EditedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<ulong>("FromUserId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsDeleted")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("IsEdited")
@@ -159,7 +189,7 @@ namespace Aegis.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
-                        .HasDefaultValueSql("GETUTCDATE()");
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<string>("DeviceId")
                         .IsRequired()
@@ -198,10 +228,13 @@ namespace Aegis.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("AvatarUrl")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
-                        .HasDefaultValueSql("GETUTCDATE()");
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<ulong>("CreatedByUserId")
                         .HasColumnType("INTEGER");
@@ -212,6 +245,9 @@ namespace Aegis.Data.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("MemberCount")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -219,7 +255,7 @@ namespace Aegis.Data.Migrations
                     b.Property<DateTime>("UpdatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
-                        .HasDefaultValueSql("GETUTCDATE()");
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<ulong?>("UserId")
                         .HasColumnType("INTEGER");
@@ -241,6 +277,27 @@ namespace Aegis.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("CanDeleteOthersMessages")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("CanEditGroupInfo")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("CanInviteUsers")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("CanManageRoles")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("CanPinMessages")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("CanRemoveUsers")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("CanSendMessages")
+                        .HasColumnType("INTEGER");
+
                     b.Property<ulong>("GroupId")
                         .HasColumnType("INTEGER");
 
@@ -250,7 +307,7 @@ namespace Aegis.Data.Migrations
                     b.Property<DateTime>("JoinedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
-                        .HasDefaultValueSql("GETUTCDATE()");
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<int>("Role")
                         .HasColumnType("INTEGER");
@@ -284,7 +341,13 @@ namespace Aegis.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
-                        .HasDefaultValueSql("GETUTCDATE()");
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("EditedAt")
+                        .HasColumnType("TEXT");
 
                     b.Property<ulong>("FromUserId")
                         .HasColumnType("INTEGER");
@@ -292,7 +355,23 @@ namespace Aegis.Data.Migrations
                     b.Property<ulong>("GroupId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsEdited")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsPinned")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<ulong?>("ReplyToMessageId")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("FromUserId");
+
+                    b.HasIndex("ReplyToMessageId");
 
                     b.HasIndex("GroupId", "CreatedAt");
 
@@ -315,15 +394,27 @@ namespace Aegis.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
-                        .HasDefaultValueSql("GETUTCDATE()");
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("DeliveredAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("EditedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<ulong>("FromUserId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("IsDelivered")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsEdited")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("IsRead")
@@ -392,7 +483,7 @@ namespace Aegis.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
-                        .HasDefaultValueSql("GETUTCDATE()");
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("INTEGER");
@@ -437,7 +528,7 @@ namespace Aegis.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
-                        .HasDefaultValueSql("GETUTCDATE()");
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<DateTime>("ExpiresAt")
                         .HasColumnType("TEXT");
@@ -478,10 +569,19 @@ namespace Aegis.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("AvatarUrl")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Bio")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
-                        .HasDefaultValueSql("GETUTCDATE()");
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("DisplayName")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Email")
                         .IsRequired()
@@ -507,7 +607,7 @@ namespace Aegis.Data.Migrations
                     b.Property<DateTime>("UpdatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
-                        .HasDefaultValueSql("GETUTCDATE()");
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<string>("Username")
                         .IsRequired()
@@ -614,24 +714,41 @@ namespace Aegis.Data.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Aegis.Data.Entities.User", null)
+                    b.HasOne("Aegis.Data.Entities.User", "User")
                         .WithMany("GroupMemberships")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.Navigation("Group");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("Aegis.Data.Entities.GroupMessage", b =>
                 {
+                    b.HasOne("Aegis.Data.Entities.User", "FromUser")
+                        .WithMany()
+                        .HasForeignKey("FromUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("Aegis.Data.Entities.Group", "Group")
                         .WithMany("Messages")
                         .HasForeignKey("GroupId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("Aegis.Data.Entities.GroupMessage", "ReplyToMessage")
+                        .WithMany("Replies")
+                        .HasForeignKey("ReplyToMessageId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("FromUser");
+
                     b.Navigation("Group");
+
+                    b.Navigation("ReplyToMessage");
                 });
 
             modelBuilder.Entity("Aegis.Data.Entities.Message", b =>
@@ -707,6 +824,11 @@ namespace Aegis.Data.Migrations
                     b.Navigation("Members");
 
                     b.Navigation("Messages");
+                });
+
+            modelBuilder.Entity("Aegis.Data.Entities.GroupMessage", b =>
+                {
+                    b.Navigation("Replies");
                 });
 
             modelBuilder.Entity("Aegis.Data.Entities.User", b =>

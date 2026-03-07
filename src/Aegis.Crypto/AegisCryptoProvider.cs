@@ -11,6 +11,7 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
     private const int MacKeySize = 32; // HMAC-SHA256
     private const int NonceSize = 12; // AES-GCM nonce
     private const int TagSize = 16; // AES-GCM tag
+    private const int PasswordHashIterations = 210000;
 
     // ICryptoProvider implementation
     public async Task<string> HashPasswordAsync(string password)
@@ -20,10 +21,8 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
             using var rng = RandomNumberGenerator.Create();
             var salt = new byte[16];
             rng.GetBytes(salt);
-            
-            // Use PBKDF2 with SHA256 - constructor with 4 parameters
-            using var pbkdf2 = new Rfc2898DeriveBytes(password, salt, 10000, HashAlgorithmName.SHA256);
-            var hash = pbkdf2.GetBytes(32);
+
+            var hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, PasswordHashIterations, HashAlgorithmName.SHA256, 32);
             
             // Combine salt and hash
             var result = new byte[salt.Length + hash.Length];
@@ -46,10 +45,8 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
                 
                 var salt = hashBytes.AsSpan(0, 16);
                 var expectedHash = hashBytes.AsSpan(16);
-                
-                // Use PBKDF2 with SHA256 - constructor with 4 parameters
-                using var pbkdf2 = new Rfc2898DeriveBytes(password, salt.ToArray(), 10000, HashAlgorithmName.SHA256);
-                var computedHash = pbkdf2.GetBytes(32);
+
+                var computedHash = Rfc2898DeriveBytes.Pbkdf2(password, salt, PasswordHashIterations, HashAlgorithmName.SHA256, 32);
                 
                 return CryptographicOperations.FixedTimeEquals(expectedHash, computedHash);
             }

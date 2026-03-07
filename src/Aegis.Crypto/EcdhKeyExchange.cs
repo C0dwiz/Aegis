@@ -9,7 +9,7 @@ namespace Aegis.Crypto;
 /// </summary>
 public class EcdhKeyExchange : IDisposable
 {
-    private readonly ECDsa _privateKey;
+    private readonly ECDiffieHellman _privateKey;
     private readonly byte[] _publicKey;
     private const int KeySize = 256; // P-256 curve
 
@@ -25,7 +25,7 @@ public class EcdhKeyExchange : IDisposable
 
     private EcdhKeyExchange()
     {
-        _privateKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        _privateKey = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
         _publicKey = _privateKey.ExportSubjectPublicKeyInfo();
     }
 
@@ -37,16 +37,11 @@ public class EcdhKeyExchange : IDisposable
         try
         {
             // Import peer's public key
-            var peerKey = ECDsa.Create();
+            using var peerKey = ECDiffieHellman.Create();
             peerKey.ImportSubjectPublicKeyInfo(peerPublicKey, out _);
 
-            // Use ECDH to derive shared secret
-            using (var ecdh = ECDiffieHellman.Create(_privateKey.ExportParameters(false)))
-            using (var peerEcdh = ECDiffieHellman.Create(peerKey.ExportParameters(false)))
-            {
-                var sharedSecret = ecdh.DeriveRawSecretAgreement(peerEcdh.PublicKey);
-                return sharedSecret;
-            }
+            // Use the raw ECDH shared secret and let HKDF derive session keys.
+            return _privateKey.DeriveRawSecretAgreement(peerKey.PublicKey);
         }
         catch (Exception ex)
         {

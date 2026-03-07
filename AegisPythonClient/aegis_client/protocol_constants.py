@@ -1,23 +1,17 @@
-"""
-Константы протокола Aegis
-"""
+"""Protocol constants used by the Python client."""
 
 
 class ProtocolConstants:
-    # Magic number для идентификации протокола
     MAGIC = 0xAE6C5D7
-    
-    # Версия протокола
+
     VERSION_MAJOR = 1
     VERSION_MINOR = 0
-    
-    # Размеры заголовков
-    HEADER_SIZE = 4 + 1 + 1 + 1 + 2 + 8 + 4  # 20 байт
-    MAC_SIZE = 32  # SHA256 HMAC
-    MAX_MESSAGE_SIZE = 1024 * 1024  # 1MB
+
+    HEADER_SIZE = 4 + 1 + 1 + 1 + 2 + 8 + 4  # 21 bytes
+    MAC_SIZE = 32
+    MAX_MESSAGE_SIZE = 1024 * 1024
     MAX_PAYLOAD_SIZE = MAX_MESSAGE_SIZE - HEADER_SIZE - MAC_SIZE
-    
-    # Типы сообщений
+
     TYPE_UNKNOWN = 0
     TYPE_AUTH = 1
     TYPE_PING = 2
@@ -40,16 +34,33 @@ class ProtocolConstants:
     TYPE_USER_SEARCH_RESULT = 19
     TYPE_REGISTER = 20
     TYPE_REGISTER_RESPONSE = 21
-    
-    # Флаги сообщений
+    TYPE_PROFILE_UPDATE = 22
+    TYPE_PROFILE_UPDATE_RESPONSE = 23
+    TYPE_PROFILE_GET = 24
+    TYPE_PROFILE_GET_RESPONSE = 25
+    TYPE_MESSAGE_EDIT = 26
+    TYPE_MESSAGE_EDIT_RESPONSE = 27
+    TYPE_MESSAGE_DELETE = 28
+    TYPE_MESSAGE_DELETE_RESPONSE = 29
+    TYPE_CHANNEL_EDIT = 30
+    TYPE_CHANNEL_EDIT_RESPONSE = 31
+    TYPE_GROUP_EDIT = 32
+    TYPE_GROUP_EDIT_RESPONSE = 33
+    TYPE_MEMBER_ROLE_UPDATE = 34
+    TYPE_MEMBER_ROLE_UPDATE_RESPONSE = 35
+    TYPE_MEMBER_PERMISSION_UPDATE = 36
+    TYPE_MEMBER_PERMISSION_UPDATE_RESPONSE = 37
+    TYPE_GROUP_MESSAGE_SEND = 38
+    TYPE_GROUP_MESSAGE_RESPONSE = 39
+    TYPE_GROUP_CREATE_RESPONSE = 40
+
     FLAG_NONE = 0x00
     FLAG_REQUIRES_ACK = 0x01
     FLAG_IS_RETRANSMIT = 0x02
     FLAG_COMPRESSED = 0x04
     FLAG_ENCRYPTED = 0x08
     FLAG_PRIORITY = 0x10
-    
-    # Коды подтверждения
+
     ACK_OK = 0
     ACK_ERROR = 1
     ACK_RETRY = 2

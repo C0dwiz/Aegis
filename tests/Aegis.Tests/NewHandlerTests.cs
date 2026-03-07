@@ -2,11 +2,12 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Aegis.Data.Entities;
-using Aegis.Data.Repositories;
 using Aegis.Data.Services;
 using Aegis.Protocol;
 using Aegis.Transport;
 using Aegis.Handlers;
+using Aegis.Common;
+using Aegis.Common.Configuration;
 using Aegis.Data;
 using System.Text.Json;
 using Xunit;
@@ -20,8 +21,11 @@ public class NewHandlerTests : IDisposable
     private readonly AegisDbContext _context;
     private readonly Mock<IUserRegistrationService> _mockRegistrationService;
     private readonly Mock<IUserSearchService> _mockSearchService;
-    private readonly Mock<IChannelRepository> _mockChannelRepository;
-    private readonly Mock<IPrivateChatRepository> _mockPrivateChatRepository;
+    private readonly Mock<IMessageService> _mockMessageService;
+    private readonly Mock<IChannelService> _mockChannelService;
+    private readonly Mock<IMessageSender> _mockMessageSender;
+    private readonly RateLimiter _rateLimiter;
+    private readonly SessionManager _sessionManager;
     private readonly Mock<ILogger<RegistrationHandler>> _mockRegistrationLogger;
     private readonly Mock<ILogger<UserSearchHandler>> _mockSearchLogger;
     private readonly Mock<ILogger<ChannelMessageHandler>> _mockChannelLogger;
@@ -44,8 +48,13 @@ public class NewHandlerTests : IDisposable
 
         _mockRegistrationService = new Mock<IUserRegistrationService>();
         _mockSearchService = new Mock<IUserSearchService>();
-        _mockChannelRepository = new Mock<IChannelRepository>();
-        _mockPrivateChatRepository = new Mock<IPrivateChatRepository>();
+        _mockMessageService = new Mock<IMessageService>();
+        _mockChannelService = new Mock<IChannelService>();
+        _mockMessageSender = new Mock<IMessageSender>();
+        _rateLimiter = new RateLimiter(new RateLimitOptions());
+
+        var cryptoProvider = new Aegis.Crypto.AegisCryptoProvider();
+        _sessionManager = new Aegis.Common.SessionManager(cryptoProvider, new Aegis.Transport.NullLogger());
 
         _mockRegistrationLogger = new Mock<ILogger<RegistrationHandler>>();
         _mockSearchLogger = new Mock<ILogger<UserSearchHandler>>();
@@ -53,11 +62,11 @@ public class NewHandlerTests : IDisposable
         _mockChannelCreateLogger = new Mock<ILogger<ChannelCreateHandler>>();
         _mockPrivateChatLogger = new Mock<ILogger<PrivateChatMessageHandler>>();
 
-        _registrationHandler = new RegistrationHandler(_mockRegistrationService.Object, _mockRegistrationLogger.Object);
-        _searchHandler = new UserSearchHandler(_mockSearchService.Object, _mockSearchLogger.Object);
-        _channelMessageHandler = new ChannelMessageHandler(_mockChannelRepository.Object, _mockSearchService.Object, _mockChannelLogger.Object);
-        _channelCreateHandler = new ChannelCreateHandler(_mockChannelRepository.Object, _mockSearchService.Object, _mockChannelCreateLogger.Object);
-        _privateChatMessageHandler = new PrivateChatMessageHandler(_mockPrivateChatRepository.Object, _mockSearchService.Object, _mockPrivateChatLogger.Object);
+        _registrationHandler = new RegistrationHandler(_mockRegistrationService.Object, _mockMessageSender.Object, _rateLimiter, _mockRegistrationLogger.Object);
+        _searchHandler = new UserSearchHandler(_mockSearchService.Object, _sessionManager, _mockMessageSender.Object, _rateLimiter, _mockSearchLogger.Object);
+        _channelMessageHandler = new ChannelMessageHandler(_mockMessageService.Object, _sessionManager, _mockMessageSender.Object, _mockChannelLogger.Object);
+        _channelCreateHandler = new ChannelCreateHandler(_mockChannelService.Object, _sessionManager, _mockMessageSender.Object, _mockChannelCreateLogger.Object);
+        _privateChatMessageHandler = new PrivateChatMessageHandler(_mockMessageService.Object, _mockSearchService.Object, _sessionManager, _mockMessageSender.Object, _mockPrivateChatLogger.Object);
     }
 
     [Fact]
@@ -138,7 +147,7 @@ public class NewHandlerTests : IDisposable
 
         var expectedUsers = new List<UserSearchResult>
         {
-            new UserSearchResult(1, "john_doe", "john@example.com")
+            new UserSearchResult(1, "john_doe")
         };
 
         _mockSearchService.Setup(x => x.SearchUsersByUsernameAsync("john", 20))
@@ -148,12 +157,16 @@ public class NewHandlerTests : IDisposable
                 { 
                     Id = u.Id, 
                     Username = u.Username, 
-                    Email = u.Email ?? "", 
+                    Email = string.Empty,
                     PublicKey = "", 
                     PasswordHash = "" 
                 };
                 return user;
             }));
+
+        _sessionManager.CreateSession(context.ConnectionId);
+        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32], new byte[32]);
+        _sessionManager.AuthenticateSession(context.ConnectionId, 1, "john_doe");
 
         // Act
         await _searchHandler.HandleAsync(context, message);
@@ -188,8 +201,8 @@ public class NewHandlerTests : IDisposable
         // Act - should return error due to no session
         await _channelMessageHandler.HandleAsync(context, message);
 
-        // Assert - no repository calls should be made since there's no session
-        _mockChannelRepository.Verify(x => x.IsUserMemberAsync(It.IsAny<ulong>(), It.IsAny<ulong>()), Times.Never);
+        // Assert - no service calls should be made since there's no session
+        _mockMessageService.Verify(x => x.SendChannelMessageAsync(It.IsAny<ulong>(), It.IsAny<ulong>(), It.IsAny<string>(), It.IsAny<MessageContentType>(), It.IsAny<ulong?>()), Times.Never);
     }
 
     [Fact]
@@ -218,8 +231,8 @@ public class NewHandlerTests : IDisposable
         // Act - should return error due to no session
         await _channelCreateHandler.HandleAsync(context, message);
 
-        // Assert - no repository calls should be made since there's no session
-        _mockChannelRepository.Verify(x => x.CreateAsync(It.IsAny<Channel>()), Times.Never);
+        // Assert - no service calls should be made since there's no session
+        _mockChannelService.Verify(x => x.CreateChannelAsync(It.IsAny<ulong>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<ChannelType>()), Times.Never);
     }
 
     [Fact]
@@ -248,9 +261,9 @@ public class NewHandlerTests : IDisposable
         // Act - should return error due to no session
         await _privateChatMessageHandler.HandleAsync(context, message);
 
-        // Assert - no repository calls should be made since there's no session
+        // Assert - no service calls should be made since there's no session
         _mockSearchService.Verify(x => x.FindUserByIdAsync(It.IsAny<ulong>()), Times.Never);
-        _mockPrivateChatRepository.Verify(x => x.GetPrivateChatAsync(It.IsAny<ulong>(), It.IsAny<ulong>()), Times.Never);
+        _mockMessageService.Verify(x => x.SendPrivateMessageAsync(It.IsAny<ulong>(), It.IsAny<ulong>(), It.IsAny<string>(), It.IsAny<MessageContentType>()), Times.Never);
     }
 
     [Fact]
@@ -272,7 +285,7 @@ public class NewHandlerTests : IDisposable
         // Act - should return error due to no session
         await _privateChatMessageHandler.HandleAsync(context, message);
 
-        // Assert - no repository calls should be made since there's no session
+        // Assert - no service calls should be made since there's no session
         _mockSearchService.Verify(x => x.FindUserByIdAsync(It.IsAny<ulong>()), Times.Never);
     }
 

@@ -1,5 +1,5 @@
 # Aegis Python Client Requirements
-# No external dependencies required for basic functionality
+cryptography>=45.0
 
 # Development dependencies (optional)
 pytest>=6.0

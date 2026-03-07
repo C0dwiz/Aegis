@@ -11,6 +11,12 @@ public class User
     public string PasswordHash { get; set; } = string.Empty;
     public string PublicKey { get; set; } = string.Empty;
     public string? IdentityKeyFingerprint { get; set; }
+    
+    // Profile fields
+    public string? DisplayName { get; set; }
+    public string? AvatarUrl { get; set; }
+    public string? Bio { get; set; }
+    
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
@@ -63,6 +69,10 @@ public class Message
     public ulong SequenceNumber { get; set; }
     public bool IsDelivered { get; set; }
     public bool IsRead { get; set; }
+    public bool IsEdited { get; set; }
+    public DateTime? EditedAt { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? DeliveredAt { get; set; }
     public DateTime? ReadAt { get; set; }
@@ -93,10 +103,12 @@ public class Group
     public ulong Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
+    public string? AvatarUrl { get; set; }
     public ulong CreatedByUserId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public bool IsActive { get; set; } = true;
+    public int MemberCount { get; set; } = 0;
     
     // Navigation properties
     public User? CreatedByUser { get; set; }
@@ -116,8 +128,18 @@ public class GroupMember
     public DateTime JoinedAt { get; set; } = DateTime.UtcNow;
     public bool IsActive { get; set; } = true;
     
+    // Granular permissions
+    public bool CanSendMessages { get; set; } = true;
+    public bool CanDeleteOthersMessages { get; set; }
+    public bool CanEditGroupInfo { get; set; }
+    public bool CanInviteUsers { get; set; }
+    public bool CanRemoveUsers { get; set; }
+    public bool CanPinMessages { get; set; }
+    public bool CanManageRoles { get; set; }
+    
     // Navigation properties
     public Group? Group { get; set; }
+    public User? User { get; set; }
 }
 
 /// <summary>
@@ -131,9 +153,18 @@ public class GroupMessage
     public string Content { get; set; } = string.Empty;
     public MessageContentType ContentType { get; set; } = MessageContentType.Text;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? EditedAt { get; set; }
+    public bool IsEdited { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
+    public ulong? ReplyToMessageId { get; set; }
+    public bool IsPinned { get; set; }
     
     // Navigation properties
     public Group? Group { get; set; }
+    public User? FromUser { get; set; }
+    public GroupMessage? ReplyToMessage { get; set; }
+    public ICollection<GroupMessage> Replies { get; set; } = new List<GroupMessage>();
 }
 
 /// <summary>
@@ -188,6 +219,7 @@ public class Channel
     public ulong Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
+    public string? AvatarUrl { get; set; }
     public ChannelType Type { get; set; } = ChannelType.Public;
     public ulong CreatedByUserId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -216,6 +248,15 @@ public class ChannelMember
     public bool IsActive { get; set; } = true;
     public bool IsMuted { get; set; } = false;
     
+    // Granular permissions
+    public bool CanSendMessages { get; set; } = true;
+    public bool CanDeleteOthersMessages { get; set; }
+    public bool CanEditChannelInfo { get; set; }
+    public bool CanInviteUsers { get; set; }
+    public bool CanRemoveUsers { get; set; }
+    public bool CanPinMessages { get; set; }
+    public bool CanManageRoles { get; set; }
+    
     // Navigation properties
     public Channel? Channel { get; set; }
     public User? User { get; set; }
@@ -234,6 +275,8 @@ public class ChannelMessage
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? EditedAt { get; set; }
     public bool IsEdited { get; set; } = false;
+    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
     public ulong? ReplyToMessageId { get; set; }
     public bool IsPinned { get; set; } = false;
     

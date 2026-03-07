@@ -1,8 +1,9 @@
 using Aegis.Protocol;
 using Aegis.Transport;
-using Aegis.Common.Logging;
-using System.Text.Json;
 using Aegis.Common;
+using Aegis.Data.Services;
+using System.Text.Json;
+using Microsoft.Extensions.Logging;
 
 namespace Aegis.Handlers;
 
@@ -11,50 +12,57 @@ public class AuthRequest
     public string Username { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
     public string Token { get; set; } = string.Empty;
+    public string ClientInfo { get; set; } = string.Empty;
 }
 
 public class AuthResponse
 {
     public bool Success { get; set; }
-    public string UserId { get; set; } = string.Empty;
+    public ulong UserId { get; set; }
+    public string Username { get; set; } = string.Empty;
     public string SessionToken { get; set; } = string.Empty;
     public string Error { get; set; } = string.Empty;
 }
 
 public class AuthHandler : IMessageHandler
 {
-    private readonly IAntiSpamClient _antiSpam;
+    private readonly IUserAuthenticationService _authService;
+    private readonly RateLimiter _rateLimiter;
+    private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;
-    private readonly Aegis.Crypto.ICryptoProvider _cryptoProvider;
-    private readonly ILogger _logger;
-    private readonly Dictionary<string, string> _users; // Simple in-memory user store
+    private readonly ILogger<AuthHandler> _logger;
     
-    public Aegis.Protocol.MessageType Type => Aegis.Protocol.MessageType.Auth;
+    public MessageType Type => MessageType.Auth;
     
-    public AuthHandler(IAntiSpamClient antiSpam, IMessageSender messageSender, Aegis.Crypto.ICryptoProvider cryptoProvider, ILogger? logger = null)
+    public AuthHandler(
+        IUserAuthenticationService authService,
+        RateLimiter rateLimiter,
+        SessionManager sessionManager,
+        IMessageSender messageSender,
+        ILogger<AuthHandler> logger)
     {
-        _antiSpam = antiSpam;
+        _authService = authService;
+        _rateLimiter = rateLimiter;
+        _sessionManager = sessionManager;
         _messageSender = messageSender;
-        _cryptoProvider = cryptoProvider;
-        _logger = logger ?? new Aegis.Transport.NullLogger();
-        
-        // Initialize with some test users (in production, use a proper database)
-        _users = new Dictionary<string, string>
-        {
-            ["admin"] = "admin123",
-            ["user1"] = "password1",
-            ["user2"] = "password2"
-        };
+        _logger = logger;
     }
     
     public async ValueTask HandleAsync(ConnectionContext context, Message message)
     {
-        await _antiSpam.CheckMessageAsync(context.ConnectionId, message.Payload);
-        
         try
         {
-            // Implement authentication logic
-            var authRequest = JsonSerializer.Deserialize<AuthRequest>(message.Payload.ToArray());
+            if (!_rateLimiter.CanSendAuthRequest(context.ConnectionId))
+            {
+                await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
+                {
+                    Success = false,
+                    Error = "Too many authentication attempts"
+                });
+                return;
+            }
+
+            var authRequest = JsonSerializer.Deserialize<AuthRequest>(message.Payload);
             if (authRequest == null)
             {
                 await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
@@ -65,36 +73,75 @@ public class AuthHandler : IMessageHandler
                 return;
             }
             
-            _logger.Info($"Authentication attempt for user: {authRequest.Username} from connection {context.ConnectionId}");
-            
-            // Check credentials
-            var isAuthenticated = await AuthenticateUserAsync(authRequest);
-            
-            var response = new AuthResponse
+            _logger.LogInformation("Authentication attempt for user: {Username} from connection {ConnectionId}", 
+                authRequest.Username, context.ConnectionId);
+
+            // Token-based re-authentication
+            if (!string.IsNullOrEmpty(authRequest.Token))
             {
-                Success = isAuthenticated,
-                UserId = isAuthenticated ? authRequest.Username : string.Empty,
-                SessionToken = isAuthenticated ? GenerateSessionToken(authRequest.Username) : string.Empty,
-                Error = isAuthenticated ? string.Empty : "Invalid credentials"
-            };
-            
-            if (isAuthenticated)
-            {
-                _logger.Info($"User {authRequest.Username} authenticated successfully from connection {context.ConnectionId}");
-                
-                // Store user info in connection context (in production, use proper session management)
-                // This could be extended to store user roles, permissions, etc.
+                var session = await _authService.AuthenticateUserByTokenAsync(authRequest.Token);
+                if (session?.User != null)
+                {
+                    _sessionManager.AuthenticateSession(context.ConnectionId, session.UserId, session.User.Username);
+                    await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
+                    {
+                        Success = true,
+                        UserId = session.UserId,
+                        Username = session.User.Username,
+                        SessionToken = string.Empty
+                    });
+                    return;
+                }
+                await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
+                {
+                    Success = false,
+                    Error = "Authentication failed"
+                });
+                return;
             }
-            else
-            {
-                _logger.Warning($"Authentication failed for user {authRequest.Username} from connection {context.ConnectionId}");
-            }
+
+            // Username/password authentication
+            var ipAddress = context.Socket.RemoteEndPoint?.ToString();
+            var result = await _authService.AuthenticateUserAsync(
+                authRequest.Username, 
+                authRequest.Password, 
+                authRequest.ClientInfo, 
+                ipAddress);
             
-            await SendAuthResponseAsync(context, message.SequenceId, response);
+            if (result == null)
+            {
+                _logger.LogWarning("Authentication failed for user {Username} from connection {ConnectionId}", 
+                    authRequest.Username, context.ConnectionId);
+                await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
+                {
+                    Success = false,
+                    Error = "Authentication failed"
+                });
+                return;
+            }
+
+            var (user, dbSession) = result.Value;
+            
+            // Associate the TCP connection with the authenticated user
+            _sessionManager.AuthenticateSession(context.ConnectionId, user.Id, user.Username);
+            
+            // Bind session to connection
+            dbSession.ConnectionId = context.ConnectionId.ToString();
+            
+            _logger.LogInformation("User {Username} (ID: {UserId}) authenticated successfully from connection {ConnectionId}", 
+                user.Username, user.Id, context.ConnectionId);
+            
+            await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
+            {
+                Success = true,
+                UserId = user.Id,
+                Username = user.Username,
+                SessionToken = string.Empty
+            });
         }
         catch (JsonException ex)
         {
-            _logger.Error($"Invalid JSON in auth message from connection {context.ConnectionId}", ex);
+            _logger.LogError(ex, "Invalid JSON in auth message from connection {ConnectionId}", context.ConnectionId);
             await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
             {
                 Success = false,
@@ -103,7 +150,7 @@ public class AuthHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.Error($"Error processing authentication from connection {context.ConnectionId}", ex);
+            _logger.LogError(ex, "Error processing authentication from connection {ConnectionId}", context.ConnectionId);
             await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
             {
                 Success = false,
@@ -112,69 +159,32 @@ public class AuthHandler : IMessageHandler
         }
     }
     
-    private async Task<bool> AuthenticateUserAsync(AuthRequest request)
-    {
-        // Simple authentication logic (in production, use proper password hashing, database, etc.)
-        if (string.IsNullOrEmpty(request.Username) || string.IsNullOrEmpty(request.Password))
-            return false;
-        
-        // Check if user exists and password matches
-        if (_users.TryGetValue(request.Username, out var storedPassword))
-        {
-            return storedPassword == request.Password; // In production, use proper password verification
-        }
-        
-        // Could also support token-based authentication
-        if (!string.IsNullOrEmpty(request.Token))
-        {
-            return await ValidateTokenAsync(request.Token);
-        }
-        
-        return false;
-    }
-    
-    private async Task<bool> ValidateTokenAsync(string token)
-    {
-        // Simple token validation (in production, use JWT or proper token validation)
-        await Task.Delay(1); // Simulate async validation
-        return token.StartsWith("valid_token_"); // Simple validation logic
-    }
-    
-    private string GenerateSessionToken(string username)
-    {
-        // Generate a simple session token (in production, use proper token generation)
-        return $"session_token_{username}_{DateTime.UtcNow:yyyyMMddHHmmss}";
-    }
-    
     private async Task SendAuthResponseAsync(ConnectionContext context, ulong sequenceId, AuthResponse response)
     {
         try
         {
             var responseJson = JsonSerializer.SerializeToUtf8Bytes(response);
             
-            var ackMessage = new Message
+            var responseMessage = new Aegis.Protocol.Message
             {
                 Magic = ProtocolConstants.Magic,
                 VersionMajor = ProtocolConstants.VersionMajor,
                 VersionMinor = ProtocolConstants.VersionMinor,
-                Type = Aegis.Protocol.MessageType.Ack,
+                Type = MessageType.Ack,
                 SequenceId = sequenceId,
                 PayloadLength = (uint)responseJson.Length,
-                Payload = responseJson,
-                Mac = new byte[ProtocolConstants.MacSize]
+                Payload = responseJson
             };
-            
-            // Encrypt and send through message sender
-            var sessionKey = new byte[32]; // TODO: Get from session manager
-            var encryptedMessage = await _cryptoProvider.EncryptMessageAsync(ackMessage, sessionKey);
-            await _messageSender.SendMessageAsync(context.ConnectionId, encryptedMessage);
-            
-            _logger.Debug($"Authentication response sent to connection {context.ConnectionId}, success: {response.Success}");
+
+            await _messageSender.SendProtocolMessageAsync(
+                context.ConnectionId,
+                (ushort)MessageType.Ack,
+                sequenceId,
+                responseJson);
         }
         catch (Exception ex)
         {
-            _logger.Error($"Error sending authentication response to connection {context.ConnectionId}", ex);
-            throw;
+            _logger.LogError(ex, "Error sending auth response to connection {ConnectionId}", context.ConnectionId);
         }
     }
 }

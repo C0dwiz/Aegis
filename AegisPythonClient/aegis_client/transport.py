@@ -1,146 +1,132 @@
-"""
-Транспортный слой Aegis
-"""
+"""Transport layer for the Aegis Python client."""
+
+from __future__ import annotations
+
+import queue
 import socket
 import threading
-import queue
 from typing import Callable, Optional
-from .message import Message
+
 from .exceptions import ConnectionException, NotConnectedException
+from .message import Message
+from .protocol_constants import ProtocolConstants
+
+
+class EventHook:
+    """Simple callback collection with the legacy `.listen = callback` API."""
+
+    def __init__(self) -> None:
+        self._listeners: list[Callable] = []
+
+    def add_listener(self, listener: Callable) -> None:
+        self._listeners.append(listener)
+
+    @property
+    def listen(self) -> list[Callable]:
+        return self._listeners
+
+    @listen.setter
+    def listen(self, listener: Callable) -> None:
+        self.add_listener(listener)
+
+    def emit(self, *args) -> None:
+        for listener in list(self._listeners):
+            try:
+                listener(*args)
+            except Exception:
+                pass
 
 
 class AegisTransport:
-    """Транспортный слой для работы с TCP соединением"""
-    
+    """TCP transport for the Aegis protocol."""
+
     def __init__(self):
         self._socket: Optional[socket.socket] = None
         self._connected = False
         self._receive_thread: Optional[threading.Thread] = None
-        self._message_queue = queue.Queue()
-        self._disconnect_listeners: list[Callable[[], None]] = []
-        self._message_listeners: list[Callable[[Message], None]] = []
+        self._message_queue: queue.Queue[Message] = queue.Queue()
+        self._disconnect_events = EventHook()
+        self._message_events = EventHook()
         self._running = False
         self._lock = threading.Lock()
-    
+
     @property
     def is_connected(self) -> bool:
-        """Проверка состояния подключения"""
         return self._connected
-    
+
     def connect(self, host: str, port: int, timeout: Optional[float] = None) -> None:
-        """Подключение к серверу"""
         if self._connected:
             return
-        
+
         try:
-            self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self._socket.settimeout(timeout or 10.0)
-            self._socket.connect((host, port))
-            self._socket.settimeout(None)  # Убираем таймаут после подключения
-            
+            self._socket = socket.create_connection((host, port), timeout or 10.0)
+            self._socket.settimeout(None)
             self._connected = True
             self._running = True
-            
-            # Запускаем поток приема сообщений
             self._receive_thread = threading.Thread(target=self._receive_loop, daemon=True)
             self._receive_thread.start()
-            
-        except socket.error as e:
+        except OSError as exc:
             self._cleanup()
-            raise ConnectionException(f"Failed to connect to {host}:{port}: {e}")
-    
+            raise ConnectionException(f"Failed to connect to {host}:{port}: {exc}") from exc
+
     def disconnect(self) -> None:
-        """Отключение от сервера"""
         with self._lock:
             if not self._connected:
                 return
-            
+
             self._running = False
             self._cleanup()
-            
-            # Уведомляем слушателей о отключении
-            for listener in self._disconnect_listeners:
-                try:
-                    listener()
-                except Exception:
-                    pass  # Игнорируем ошибки в слушателях
-    
+            self._disconnect_events.emit()
+
     def send_message(self, message: Message) -> None:
-        """Отправка сообщения"""
         if not self._connected or not self._socket:
             raise NotConnectedException("Not connected to server")
-        
+
         try:
-            data = message.to_bytes()
-            self._socket.sendall(data)
-        except socket.error as e:
+            self._socket.sendall(message.to_bytes())
+        except OSError as exc:
             self._connected = False
-            raise ConnectionException(f"Failed to send message: {e}")
-    
+            raise ConnectionException(f"Failed to send message: {exc}") from exc
+
     def _receive_loop(self) -> None:
-        """Основной цикл приема сообщений"""
-        buffer = b''
-        
+        buffer = b""
+
         while self._running and self._connected:
             try:
-                # Получаем данные
                 data = self._socket.recv(4096)
                 if not data:
                     break
-                
+
                 buffer += data
-                
-                # Обрабатываем полные сообщения
-                while len(buffer) >= 20:  # Минимальный размер заголовка
-                    # Извлекаем длину payload
-                    payload_length = int.from_bytes(buffer[16:20], byteorder='big')
-                    total_size = 20 + payload_length + 32  # header + payload + MAC
-                    
+
+                while len(buffer) >= ProtocolConstants.HEADER_SIZE:
+                    payload_length = int.from_bytes(buffer[17:21], byteorder="big")
+                    total_size = ProtocolConstants.HEADER_SIZE + payload_length + ProtocolConstants.MAC_SIZE
                     if len(buffer) < total_size:
-                        break  # Недостаточно данных для полного сообщения
-                    
-                    # Извлекаем сообщение
+                        break
+
                     message_data = buffer[:total_size]
                     buffer = buffer[total_size:]
-                    
+
                     try:
-                        message = Message.from_bytes(message_data)
-                        self._handle_message(message)
-                    except Exception as e:
-                        print(f"Error parsing message: {e}")
-                        continue
-                
-            except socket.error:
+                        self._handle_message(Message.from_bytes(message_data))
+                    except Exception as exc:
+                        print(f"Error parsing message: {exc}")
+            except OSError:
                 break
-            except Exception as e:
-                print(f"Error in receive loop: {e}")
+            except Exception as exc:
+                print(f"Error in receive loop: {exc}")
                 break
-        
-        # Соединение разорвано
+
         self._connected = False
         self._cleanup()
-        
-        # Уведомляем о отключении
-        for listener in self._disconnect_listeners:
-            try:
-                listener()
-            except Exception:
-                pass
-    
+        self._disconnect_events.emit()
+
     def _handle_message(self, message: Message) -> None:
-        """Обработка полученного сообщения"""
-        # Помещаем в очередь
         self._message_queue.put(message)
-        
-        # Уведомляем слушателей
-        for listener in self._message_listeners:
-            try:
-                listener(message)
-            except Exception:
-                pass  # Игнорируем ошибки в слушателях
-    
+        self._message_events.emit(message)
+
     def _cleanup(self) -> None:
-        """Очистка ресурсов"""
         try:
             if self._socket:
                 self._socket.close()
@@ -149,32 +135,26 @@ class AegisTransport:
         finally:
             self._socket = None
             self._connected = False
-    
+
     def add_disconnect_listener(self, listener: Callable[[], None]) -> None:
-        """Добавить слушателя события отключения"""
-        self._disconnect_listeners.append(listener)
-    
+        self._disconnect_events.add_listener(listener)
+
     def add_message_listener(self, listener: Callable[[Message], None]) -> None:
-        """Добавить слушателя сообщений"""
-        self._message_listeners.append(listener)
-    
+        self._message_events.add_listener(listener)
+
     def get_message(self, timeout: Optional[float] = None) -> Optional[Message]:
-        """Получить сообщение из очереди"""
         try:
             return self._message_queue.get(timeout=timeout)
         except queue.Empty:
             return None
-    
+
     @property
-    def messages(self) -> queue.Queue:
-        """Очередь сообщений для чтения"""
-        return self._message_queue
-    
+    def messages(self) -> EventHook:
+        return self._message_events
+
     @property
-    def disconnects(self) -> list[Callable[[], None]]:
-        """Список слушателей отключения"""
-        return self._disconnect_listeners
-    
+    def disconnects(self) -> EventHook:
+        return self._disconnect_events
+
     def dispose(self) -> None:
-        """Освобождение ресурсов"""
         self.disconnect()

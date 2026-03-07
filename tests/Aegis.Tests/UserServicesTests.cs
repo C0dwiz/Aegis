@@ -127,10 +127,11 @@ public class UserServicesTests : IDisposable
         var clientInfo = "Test Client";
 
         // Act
-        var session = await _authService.AuthenticateUserAsync("testuser", "password123", clientInfo);
+        var result = await _authService.AuthenticateUserAsync("testuser", "password123", clientInfo);
 
         // Assert
-        Assert.NotNull(session);
+        Assert.NotNull(result);
+        var (authUser, session) = result.Value;
         Assert.Equal(user.Id, session.UserId);
         Assert.Equal(clientInfo, session.ClientInfo);
         Assert.Equal("hashed_session_key", session.SessionKeyHash);
@@ -147,20 +148,20 @@ public class UserServicesTests : IDisposable
             .ReturnsAsync(false);
 
         // Act
-        var session = await _authService.AuthenticateUserAsync("testuser", "wrongpassword", "Test Client");
+        var result = await _authService.AuthenticateUserAsync("testuser", "wrongpassword", "Test Client");
 
         // Assert
-        Assert.Null(session);
+        Assert.Null(result);
     }
 
     [Fact]
     public async Task UserAuthenticationService_AuthenticateUserAsync_ShouldReturnNullOnNonExistentUser()
     {
         // Act
-        var session = await _authService.AuthenticateUserAsync("nonexistent", "password123", "Test Client");
+        var result = await _authService.AuthenticateUserAsync("nonexistent", "password123", "Test Client");
 
         // Assert
-        Assert.Null(session);
+        Assert.Null(result);
     }
 
     [Fact]

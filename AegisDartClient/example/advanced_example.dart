@@ -1,221 +1,128 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+
 import 'package:aegis_client/aegis_client.dart';
 
-/// Advanced example with error handling and reconnection
+/// Advanced example with reconnect loop and periodic protocol checks.
 class AdvancedAegisClient {
-  late AegisClient _client;
-  final String host;
-  final int port;
-  final String authToken;
-  
-  bool _isRunning = false;
-  Timer? _pingTimer;
-  Timer? _reconnectTimer;
-
   AdvancedAegisClient({
     required this.host,
     required this.port,
-    required this.authToken,
+    required this.username,
+    required this.password,
   });
 
-  /// Start the client with automatic reconnection
+  final String host;
+  final int port;
+  final String username;
+  final String password;
+
+  AegisClient? _client;
+  bool _running = false;
+  Timer? _heartbeatTimer;
+
   Future<void> start() async {
-    _isRunning = true;
-    AegisLogger.info('Starting Aegis client...');
-    
-    await _connect();
-    _startPingTimer();
-  }
-
-  /// Stop the client
-  Future<void> stop() async {
-    _isRunning = false;
-    _pingTimer?.cancel();
-    _reconnectTimer?.cancel();
-    
-    if (_client.isConnected) {
-      await _client.disconnect();
-    }
-    
-    _client.dispose();
-    AegisLogger.info('Aegis client stopped');
-  }
-
-  /// Connect to server with retry logic
-  Future<void> _connect() async {
-    while (_isRunning) {
+    _running = true;
+    while (_running) {
       try {
-        _client = AegisClient();
-        
-        // Setup message handlers
-        _setupMessageHandlers();
-        
-        // Connect
-        await _client.connect(host, port);
-        
-        // Authenticate
-        await _client.authenticate(authToken);
-        
-        AegisLogger.info('Connected and authenticated successfully');
-        return;
-        
+        await _connectAndAuthenticate();
+        _startHeartbeat();
+
+        // Keep this session alive until disconnect.
+        await _client!.disconnects.first;
+        _stopHeartbeat();
       } catch (e) {
-        AegisLogger.error('Connection failed, retrying in 5 seconds...', e);
-        
-        if (!_isRunning) break;
-        
-        await Future.delayed(const Duration(seconds: 5));
+        stderr.writeln('Session error: $e');
+      }
+
+      if (_running) {
+        stderr.writeln('Reconnecting in 3 seconds...');
+        await Future.delayed(const Duration(seconds: 3));
       }
     }
   }
 
-  /// Setup message and disconnect handlers
-  void _setupMessageHandlers() {
-    // Handle incoming messages
-    _client.messages.listen((message) {
-      switch (message.type) {
-        case MessageType.message:
-          _handleChatMessage(message);
-          break;
-        case MessageType.ping:
-          _handlePingMessage(message);
-          break;
-        case MessageType.error:
-          _handleErrorMessage(message);
-          break;
-        default:
-          AegisLogger.debug('Received unhandled message type: ${message.type}');
-      }
-    });
-
-    // Handle disconnections
-    _client.disconnects.listen((_) {
-      AegisLogger.warning('Disconnected from server');
-      
-      if (_isRunning) {
-        _scheduleReconnect();
-      }
-    });
+  Future<void> stop() async {
+    _running = false;
+    _stopHeartbeat();
+    await _client?.disconnect();
+    _client?.dispose();
   }
 
-  /// Handle chat messages
-  void _handleChatMessage(Message message) {
-    try {
-      // Parse message payload: fromId(8) + toId(8) + messageType(1) + reserved(3) + text
-      if (message.payload.length >= 21) {
-        final fromId = _bytesToInt64(message.payload.sublist(0, 8));
-        final toId = _bytesToInt64(message.payload.sublist(8, 16));
-        final messageType = message.payload[20];
-        final text = String.fromCharCodes(message.payload.sublist(21));
-        
-        AegisLogger.info('Chat message from $fromId to $toId: $text');
-        
-        // Handle message based on type
-        if (messageType == 0) { // Text message
-          print('💬 [$fromId]: $text');
+  Future<void> _connectAndAuthenticate() async {
+    _client?.dispose();
+    _client = AegisClient();
+
+    await _client!.connect(host, port);
+
+    await _client!.authenticate(jsonEncode({
+      'Username': username,
+      'Password': password,
+      'ClientInfo': 'aegis-dart-advanced-example'
+    }));
+
+    stdout.writeln('Connected and authenticated as $username');
+  }
+
+  void _startHeartbeat() {
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 15), (_) async {
+      try {
+        if (_client == null || !_client!.isConnected || !_client!.isAuthenticated) {
+          return;
         }
-      }
-    } catch (e) {
-      AegisLogger.error('Error parsing chat message', e);
-    }
-  }
 
-  /// Handle ping messages
-  void _handlePingMessage(Message message) {
-    if (message.payload.length >= 8) {
-      final timestamp = _bytesToInt64(message.payload);
-      final latency = DateTime.now().millisecondsSinceEpoch - timestamp;
-      AegisLogger.debug('Ping response: ${latency}ms');
-    }
-  }
-
-  /// Handle error messages
-  void _handleErrorMessage(Message message) {
-    if (message.payload.length >= 4) {
-      final errorCode = _bytesToUint16(message.payload.sublist(0, 2));
-      final errorMessage = String.fromCharCodes(message.payload.sublist(4));
-      AegisLogger.error('Server error $errorCode: $errorMessage');
-    }
-  }
-
-  /// Send a message with error handling
-  Future<void> sendMessage(String text, {int? toUserId}) async {
-    try {
-      await _client.sendMessage(text, toUserId: toUserId);
-      AegisLogger.info('Message sent successfully');
-    } catch (e) {
-      AegisLogger.error('Failed to send message', e);
-    }
-  }
-
-  /// Start periodic ping timer
-  void _startPingTimer() {
-    _pingTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (_client.isConnected) {
-        _client.ping();
+        await _client!.ping();
+        final search = await _client!.searchUsers('dart_', limit: 3);
+        stdout.writeln(
+          'Heartbeat ok: ping sent, search users=${search.users.length}',
+        );
+      } catch (e) {
+        stderr.writeln('Heartbeat failed: $e');
       }
     });
   }
 
-  /// Schedule reconnection attempt
-  void _scheduleReconnect() {
-    _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(const Duration(seconds: 5), () {
-      if (_isRunning) {
-        _connect();
-      }
-    });
-  }
-
-  /// Helper: convert bytes to int64
-  int _bytesToInt64(List<int> bytes) {
-    int result = 0;
-    for (int i = 0; i < 8; i++) {
-      result = (result << 8) | bytes[i];
-    }
-    return result;
-  }
-
-  /// Helper: convert bytes to uint16
-  int _bytesToUint16(List<int> bytes) {
-    return (bytes[0] << 8) | bytes[1];
+  void _stopHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
   }
 }
 
-void main() async {
-  // Configure logging
+Future<void> main() async {
   AegisLogger.enabled = true;
   AegisLogger.level = LogLevel.info;
+
+  final userSuffix = DateTime.now().millisecondsSinceEpoch;
+  final username = 'dart_adv_$userSuffix';
+  final password = 'test_password_123';
+
+  // Create user once for the advanced session.
+  final bootstrapClient = AegisClient();
+  try {
+    await bootstrapClient.connect('localhost', 8888);
+    await bootstrapClient.register(
+      username,
+      'dart_adv_$userSuffix@example.com',
+      password,
+      'dart_public_key_placeholder',
+    );
+  } finally {
+    await bootstrapClient.disconnect();
+    bootstrapClient.dispose();
+  }
 
   final client = AdvancedAegisClient(
     host: 'localhost',
     port: 8888,
-    authToken: 'your_auth_token_here',
+    username: username,
+    password: password,
   );
 
-  // Handle Ctrl+C gracefully
-  ProcessSignal.sigint.watch().listen((signal) async {
-    print('\nShutting down...');
+  ProcessSignal.sigint.watch().listen((_) async {
     await client.stop();
     exit(0);
   });
 
-  // Start the client
   await client.start();
-
-  // Send some test messages
-  await Future.delayed(const Duration(seconds: 2));
-  await client.sendMessage('Hello from advanced client!');
-
-  // Keep running
-  print('Client is running. Press Ctrl+C to stop.');
-  
-  // Simulate some activity
-  int counter = 0;
-  while (true) {
-    await Future.delayed(const Duration(seconds: 10));
-    counter++;
-    await client.sendMessage('Auto message #$counter');
-  }
 }

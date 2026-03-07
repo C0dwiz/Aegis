@@ -25,7 +25,12 @@ public record RegistrationRequest(
 public record RegistrationResponse(
     bool Success,
     string? Message = null,
-    User? User = null
+    RegisteredUserInfo? User = null
+);
+
+public record RegisteredUserInfo(
+    ulong Id,
+    string Username
 );
 
 /// <summary>
@@ -50,8 +55,7 @@ public record UserSearchResponse(
 /// </summary>
 public record UserSearchResult(
     ulong Id,
-    string Username,
-    string? Email
+    string Username
 );
 
 /// <summary>
@@ -62,11 +66,19 @@ public class RegistrationHandler : IMessageHandler
     public MessageType Type => MessageType.Register;
     
     private readonly IUserRegistrationService _registrationService;
+    private readonly IMessageSender _messageSender;
+    private readonly RateLimiter _rateLimiter;
     private readonly ILogger<RegistrationHandler> _logger;
 
-    public RegistrationHandler(IUserRegistrationService registrationService, ILogger<RegistrationHandler> logger)
+    public RegistrationHandler(
+        IUserRegistrationService registrationService,
+        IMessageSender messageSender,
+        RateLimiter rateLimiter,
+        ILogger<RegistrationHandler> logger)
     {
         _registrationService = registrationService;
+        _messageSender = messageSender;
+        _rateLimiter = rateLimiter;
         _logger = logger;
     }
 
@@ -74,6 +86,12 @@ public class RegistrationHandler : IMessageHandler
     {
         try
         {
+            if (!_rateLimiter.CanSendAuthRequest(context.ConnectionId))
+            {
+                await SendErrorResponse(context, message.SequenceId, "Too many registration attempts");
+                return;
+            }
+
             var payload = JsonSerializer.Deserialize<RegistrationRequest>(message.Payload);
             if (payload == null)
             {
@@ -90,7 +108,7 @@ public class RegistrationHandler : IMessageHandler
 
             var response = new RegistrationResponse(
                 Success: true,
-                User: user
+                User: new RegisteredUserInfo(user.Id, user.Username)
             );
 
             await SendResponseAsync(context, message.SequenceId, response);
@@ -129,9 +147,11 @@ public class RegistrationHandler : IMessageHandler
             Payload = payload
         };
 
-        // This would need to be sent through the message sender
-        // For now, we'll just log it
-        _logger.LogDebug("Registration response sent for sequence {SequenceId}", sequenceId);
+        await _messageSender.SendProtocolMessageAsync(
+            context.ConnectionId,
+            (ushort)MessageType.RegisterResponse,
+            sequenceId,
+            payload);
     }
 
     private async Task SendErrorResponse(ConnectionContext context, ulong sequenceId, string errorMessage)
@@ -149,11 +169,22 @@ public class UserSearchHandler : IMessageHandler
     public MessageType Type => MessageType.UserSearch;
     
     private readonly IUserSearchService _searchService;
+    private readonly SessionManager _sessionManager;
+    private readonly IMessageSender _messageSender;
+    private readonly RateLimiter _rateLimiter;
     private readonly ILogger<UserSearchHandler> _logger;
 
-    public UserSearchHandler(IUserSearchService searchService, ILogger<UserSearchHandler> logger)
+    public UserSearchHandler(
+        IUserSearchService searchService,
+        SessionManager sessionManager,
+        IMessageSender messageSender,
+        RateLimiter rateLimiter,
+        ILogger<UserSearchHandler> logger)
     {
         _searchService = searchService;
+        _sessionManager = sessionManager;
+        _messageSender = messageSender;
+        _rateLimiter = rateLimiter;
         _logger = logger;
     }
 
@@ -161,6 +192,19 @@ public class UserSearchHandler : IMessageHandler
     {
         try
         {
+            var session = _sessionManager.GetAuthenticatedSession(context.ConnectionId);
+            if (session == null)
+            {
+                await SendErrorResponse(context, message.SequenceId, "Not authenticated");
+                return;
+            }
+
+            if (!_rateLimiter.CanSendMessage(context.ConnectionId))
+            {
+                await SendErrorResponse(context, message.SequenceId, "Rate limit exceeded");
+                return;
+            }
+
             var payload = JsonSerializer.Deserialize<UserSearchRequest>(message.Payload);
             if (payload == null)
             {
@@ -168,8 +212,9 @@ public class UserSearchHandler : IMessageHandler
                 return;
             }
 
-            var users = await _searchService.SearchUsersByUsernameAsync(payload.Query, payload.Limit);
-            var searchResults = users.Select(u => new UserSearchResult(u.Id, u.Username, u.Email)).ToList();
+            var safeLimit = Math.Clamp(payload.Limit, 1, 20);
+            var users = await _searchService.SearchUsersByUsernameAsync(payload.Query, safeLimit);
+            var searchResults = users.Select(u => new UserSearchResult(u.Id, u.Username)).ToList();
 
             var response = new UserSearchResponse(
                 Success: true,
@@ -203,7 +248,11 @@ public class UserSearchHandler : IMessageHandler
             Payload = payload
         };
 
-        _logger.LogDebug("User search response sent for sequence {SequenceId}", sequenceId);
+        await _messageSender.SendProtocolMessageAsync(
+            context.ConnectionId,
+            (ushort)MessageType.UserSearchResult,
+            sequenceId,
+            payload);
     }
 
     private async Task SendErrorResponse(ConnectionContext context, ulong sequenceId, string errorMessage)

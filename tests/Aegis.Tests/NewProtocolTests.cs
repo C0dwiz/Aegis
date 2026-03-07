@@ -45,7 +45,7 @@ public class NewProtocolTests
     public void RegistrationResponse_Serialization_ShouldWork()
     {
         // Arrange
-        var user = new Aegis.Data.Entities.User { Id = 1, Username = "testuser", Email = "test@example.com" };
+        var user = new RegisteredUserInfo(1, "testuser");
         var response = new RegistrationResponse(true, "Success", user);
 
         // Act
@@ -82,8 +82,8 @@ public class NewProtocolTests
         // Arrange
         var users = new List<UserSearchResult>
         {
-            new UserSearchResult(1, "john_doe", "john@example.com"),
-            new UserSearchResult(2, "jane_doe", "jane@example.com")
+            new UserSearchResult(1, "john_doe"),
+            new UserSearchResult(2, "jane_doe")
         };
         var response = new UserSearchResponse(true, users, "Found users");
 
@@ -131,7 +131,7 @@ public class NewProtocolTests
             ContentType = MessageContentType.Text,
             CreatedAt = DateTime.UtcNow
         };
-        var response = new ChannelMessageResponse(true, channelMessage, "Message sent");
+        var response = new ChannelMessageResponse(true, 1, "Message sent");
 
         // Act
         var json = JsonSerializer.Serialize(response);
@@ -141,8 +141,7 @@ public class NewProtocolTests
         Assert.NotNull(deserialized);
         Assert.Equal(response.Success, deserialized.Success);
         Assert.Equal(response.MessageText, deserialized.MessageText);
-        Assert.Equal(response.Message?.Id, deserialized.Message?.Id);
-        Assert.Equal(response.Message?.Content, deserialized.Message?.Content);
+        Assert.Equal(response.MessageId, deserialized.MessageId);
     }
 
     [Fact]
@@ -174,7 +173,7 @@ public class NewProtocolTests
             Type = ChannelType.Public,
             CreatedAt = DateTime.UtcNow
         };
-        var response = new ChannelCreateResponse(true, channel, "Channel created");
+        var response = new ChannelCreateResponse(true, 1, "Channel created");
 
         // Act
         var json = JsonSerializer.Serialize(response);
@@ -184,8 +183,7 @@ public class NewProtocolTests
         Assert.NotNull(deserialized);
         Assert.Equal(response.Success, deserialized.Success);
         Assert.Equal(response.Message, deserialized.Message);
-        Assert.Equal(response.Channel?.Id, deserialized.Channel?.Id);
-        Assert.Equal(response.Channel?.Name, deserialized.Channel?.Name);
+        Assert.Equal(response.ChannelId, deserialized.ChannelId);
     }
 
     [Fact]
@@ -225,7 +223,7 @@ public class NewProtocolTests
             User2Id = 2,
             CreatedAt = DateTime.UtcNow
         };
-        var response = new PrivateChatMessageResponse(true, message, privateChat, "Message sent");
+        var response = new PrivateChatMessageResponse(true, 1, "Message sent");
 
         // Act
         var json = JsonSerializer.Serialize(response);
@@ -235,8 +233,7 @@ public class NewProtocolTests
         Assert.NotNull(deserialized);
         Assert.Equal(response.Success, deserialized.Success);
         Assert.Equal(response.MessageText, deserialized.MessageText);
-        Assert.Equal(response.Message?.Id, deserialized.Message?.Id);
-        Assert.Equal(response.PrivateChat?.Id, deserialized.PrivateChat?.Id);
+        Assert.Equal(response.MessageId, deserialized.MessageId);
     }
 
     [Fact]

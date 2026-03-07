@@ -311,8 +311,7 @@ dotnet ef database update
 
 3. **Запуск сервера:**
 ```bash
-cd src/Aegis.Server
-dotnet run
+dotnet run --project src/Aegis.Server/Aegis.Server.csproj
 ```
 
 Сервер запустится на порту 8888 и создаст файл базы данных `aegis.db`.

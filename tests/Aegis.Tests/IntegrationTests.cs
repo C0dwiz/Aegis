@@ -8,6 +8,8 @@ using Aegis.Data.Services;
 using Aegis.Protocol;
 using Aegis.Transport;
 using Aegis.Handlers;
+using Aegis.Common;
+using Aegis.Common.Configuration;
 using System.Text.Json;
 using Xunit;
 using Microsoft.EntityFrameworkCore.InMemory;
@@ -81,14 +83,14 @@ public class IntegrationTests : IDisposable
         Assert.Equal("testuser", user.Username);
 
         // Act & Assert - Authentication
-        var session = await authService.AuthenticateUserAsync(
+        var authResult = await authService.AuthenticateUserAsync(
             "testuser", 
             "password123", 
             "Test Client", 
             "127.0.0.1");
 
-        Assert.NotNull(session);
-        Assert.Equal(user.Id, session.UserId);
+        Assert.NotNull(authResult);
+        Assert.Equal(user.Id, authResult.Value.Session.UserId);
 
         // Act & Assert - User Search
         var foundUser = await searchService.FindUserByUsernameAsync("testuser");
@@ -201,6 +203,9 @@ public class IntegrationTests : IDisposable
         var channelRepository = _serviceProvider.GetRequiredService<IChannelRepository>();
 
         var loggerFactory = _serviceProvider.GetRequiredService<ILoggerFactory>();
+        var messageSender = new Mock<IMessageSender>().Object;
+        var rateLimiter = new RateLimiter(new RateLimitOptions());
+        var sessionManager = new SessionManager(new Aegis.Crypto.AegisCryptoProvider(), new NullLogger());
 
         var user = await registrationService.RegisterUserAsync(
             "handleruser",
@@ -209,7 +214,11 @@ public class IntegrationTests : IDisposable
             "public_key");
 
         // Test Registration Handler
-        var registrationHandler = new RegistrationHandler(registrationService, loggerFactory.CreateLogger<RegistrationHandler>());
+        var registrationHandler = new RegistrationHandler(
+            registrationService,
+            messageSender,
+            rateLimiter,
+            loggerFactory.CreateLogger<RegistrationHandler>());
         Assert.Equal(MessageType.Register, registrationHandler.Type);
 
         var registrationRequest = new RegistrationRequest("newuser", "new@example.com", "password123", "new_public_key");
@@ -226,7 +235,16 @@ public class IntegrationTests : IDisposable
         await registrationHandler.HandleAsync(context, registrationMessage);
 
         // Test User Search Handler
-        var searchHandler = new UserSearchHandler(searchService, loggerFactory.CreateLogger<UserSearchHandler>());
+        sessionManager.CreateSession(context.ConnectionId);
+        sessionManager.EstablishHandshake(context.ConnectionId, new byte[32], new byte[32]);
+        sessionManager.AuthenticateSession(context.ConnectionId, user.Id, user.Username);
+
+        var searchHandler = new UserSearchHandler(
+            searchService,
+            sessionManager,
+            messageSender,
+            rateLimiter,
+            loggerFactory.CreateLogger<UserSearchHandler>());
         Assert.Equal(MessageType.UserSearch, searchHandler.Type);
 
         var searchRequest = new UserSearchRequest("handler", 10);
@@ -276,20 +294,22 @@ public class IntegrationTests : IDisposable
             "public_key");
 
         // Act & Assert - Create Session
-        var session1 = await authService.AuthenticateUserAsync(
+        var result1 = await authService.AuthenticateUserAsync(
             "sessionuser",
             "password123",
             "Client 1",
             "127.0.0.1");
 
-        var session2 = await authService.AuthenticateUserAsync(
+        var result2 = await authService.AuthenticateUserAsync(
             "sessionuser",
             "password123",
             "Client 2",
             "127.0.0.2");
 
-        Assert.NotNull(session1);
-        Assert.NotNull(session2);
+        Assert.NotNull(result1);
+        Assert.NotNull(result2);
+        var session1 = result1.Value.Session;
+        var session2 = result2.Value.Session;
         Assert.NotEqual(session1.SessionToken, session2.SessionToken);
 
         // Get user sessions
