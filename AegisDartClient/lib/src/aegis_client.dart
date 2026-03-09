@@ -1,178 +1,130 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
-import 'package:crypto/crypto.dart';
-import 'src/message.dart';
-import 'src/message_type.dart';
-import 'src/message_payloads.dart';
-import 'src/message_encoder.dart';
-import 'src/transport.dart';
-import 'src/exceptions.dart';
-import 'src/protocol_constants.dart';
+import 'message.dart';
+import 'message_type.dart';
+import 'message_payloads.dart';
+import 'transport.dart';
+import 'exceptions.dart';
+import 'protocol_constants.dart';
 
 /// Main Aegis client class
 class AegisClient {
   late AegisTransport _transport;
-  String? _authToken;
   bool _isAuthenticated = false;
-  
-  /// Stream of incoming messages
+  int? _userId;
+  String? _username;
+
+  // Per-client sequence-ID counter so responses can be matched unambiguously.
+  int _nextSeqId = 1;
+
+  /// Stream of incoming messages (unsolicited pushes from the server)
   Stream<Message> get messages => _transport.messages;
-  
-  /// Stream of disconnect events  
+
+  /// Stream of disconnect events
   Stream<void> get disconnects => _transport.disconnects;
-  
-  /// Check if client is connected to server
+
+  /// Whether this client is currently connected
   bool get isConnected => _transport.isConnected;
-  
-  /// Check if client is authenticated
+
+  /// Whether this client has completed authentication
   bool get isAuthenticated => _isAuthenticated;
 
-  /// Create new Aegis client
+  /// The authenticated user's ID, available after [login] or [loginWithToken]
+  int? get userId => _userId;
+
+  /// The authenticated user's username, available after [login] or [loginWithToken]
+  String? get username => _username;
+
+  /// Create a new Aegis client
   AegisClient() {
     _transport = AegisTransport();
   }
 
-  /// Connect to Aegis server
+  // ─── Connection ────────────────────────────────────────────────────────────
+
+  /// Connect to the Aegis server and complete the protocol handshake.
   Future<void> connect(String host, int port, {Duration? timeout}) async {
     await _transport.connect(host, port, timeout: timeout);
-    
-    // Send handshake message
     await _sendHandshake();
   }
 
-  /// Authenticate with server
-  Future<void> authenticate(String authPayloadOrToken) async {
-    if (!_transport.isConnected) {
-      throw NotConnectedException();
-    }
+  /// Disconnect from the server.
+  Future<void> disconnect() async {
+    await _transport.disconnect();
+    _isAuthenticated = false;
+    _userId = null;
+    _username = null;
+  }
 
+  /// Release all resources.
+  void dispose() {
+    _transport.dispose();
+  }
+
+  // ─── Authentication ─────────────────────────────────────────────────────────
+
+  /// Authenticate with username and password.
+  ///
+  /// Throws [NotConnectedException] if not connected.
+  /// Throws an [Exception] if authentication fails.
+  Future<void> login(String username, String password,
+      {String clientInfo = 'aegis-dart-client'}) async {
+    _requireConnected();
+    final payloadJson = jsonEncode({
+      'Username': username,
+      'Password': password,
+      'ClientInfo': clientInfo,
+    });
+    await _doAuthenticate(payloadJson);
+  }
+
+  /// Re-authenticate with a previously issued session token.
+  Future<void> loginWithToken(String token) async {
+    _requireConnected();
+    final payloadJson = jsonEncode({
+      'Token': token,
+      'ClientInfo': 'aegis-dart-client',
+    });
+    await _doAuthenticate(payloadJson);
+  }
+
+  /// Low-level authenticate: accepts either a raw JSON string or a token.
+  ///
+  /// Prefer [login] / [loginWithToken] for clarity.
+  Future<void> authenticate(String authPayloadOrToken) async {
+    _requireConnected();
     final payloadText = authPayloadOrToken.trim().startsWith('{')
         ? authPayloadOrToken
         : jsonEncode({
             'Token': authPayloadOrToken,
             'ClientInfo': 'aegis-dart-client',
           });
+    await _doAuthenticate(payloadText);
+  }
 
-    final message = Message.withType(MessageType.auth);
-    message.payload = utf8.encode(payloadText);
-    message.flags = ProtocolConstants.flagRequiresAck;
-    
-    await _transport.sendMessage(message);
-    _authToken = authPayloadOrToken;
-    
-    final responseMessage = await _waitForMessageTypes({MessageType.ack});
-    final authOk = _isSuccessfulJsonResponse(responseMessage.payload);
-    if (!authOk) {
-      throw Exception(_extractErrorMessage(responseMessage.payload) ?? 'Authentication failed');
+  Future<void> _doAuthenticate(String jsonPayload) async {
+    final msg = Message.withType(MessageType.auth, utf8.encode(jsonPayload));
+    final response = await _sendAndWaitResponse(msg);
+
+    final decoded = _tryDecodeJson(response.payload);
+    if (decoded == null || decoded['Success'] != true) {
+      final err = _extractErrorMessage(response.payload) ?? 'Authentication failed';
+      throw Exception(err);
     }
-    
+
     _isAuthenticated = true;
+    _userId = decoded['UserId'] as int?;
+    _username = decoded['Username'] as String?;
   }
 
-  /// Send a text message
-  Future<void> sendMessage(String text, {int? toUserId}) async {
-    if (!_transport.isConnected) {
-      throw NotConnectedException();
-    }
+  // ─── Registration ───────────────────────────────────────────────────────────
 
-    if (!_isAuthenticated) {
-      throw Exception('Client is not authenticated');
-    }
-
-    // Create message payload: fromId(8) + toId(8) + messageType(1) + reserved(3) + text
-    final payload = <int>[];
-    
-    // From user ID (placeholder - should be set after authentication)
-    payload.addAll(_int64ToBytes(0)); 
-    
-    // To user ID (0 for broadcast)
-    payload.addAll(_int64ToBytes(toUserId ?? 0));
-    
-    // Message type (0 = text)
-    payload.add(0);
-    
-    // Reserved bytes
-    payload.addAll([0, 0, 0]);
-    
-    // Message text
-    payload.addAll(utf8.encode(text));
-    
-    final message = Message.withType(MessageType.message, payload);
-    message.flags = ProtocolConstants.flagRequiresAck;
-    
-    await _transport.sendMessage(message);
-  }
-
-  /// Send ping message
-  Future<void> ping() async {
-    if (!_transport.isConnected) {
-      throw NotConnectedException();
-    }
-
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final message = Message.withType(MessageType.ping, _int64ToBytes(timestamp));
-    
-    await _transport.sendMessage(message);
-  }
-
-  /// Disconnect from server
-  Future<void> disconnect() async {
-    await _transport.disconnect();
-    _isAuthenticated = false;
-    _authToken = null;
-  }
-
-  /// Send initial handshake
-  Future<void> _sendHandshake() async {
-    final message = Message.withType(MessageType.handshake);
-    
-    // Create handshake payload: clientVersion(4) + nonce(12) + publicKey(var)
-    final payload = <int>[];
-    
-    // Client version (placeholder)
-    payload.addAll(_int32ToBytes(1000));
-    
-    // Nonce (12 random bytes)
-    final nonce = _generateNonce();
-    payload.addAll(nonce);
-    
-    // Public key (placeholder - should implement real key exchange)
-    payload.addAll(utf8.encode('client_public_key_placeholder'));
-    
-    message.payload = payload;
-    
-    await _transport.sendMessage(message);
-  }
-
-  /// Convert int to 8-byte big-endian representation
-  List<int> _int64ToBytes(int value) {
-    final bytes = ByteData(8);
-    bytes.setUint64(0, value, Endian.big);
-    return bytes.buffer.asUint8List().toList();
-  }
-
-  /// Convert int to 4-byte big-endian representation  
-  List<int> _int32ToBytes(int value) {
-    final bytes = ByteData(4);
-    bytes.setUint32(0, value, Endian.big);
-    return bytes.buffer.asUint8List().toList();
-  }
-
-  /// Generate random nonce
-  List<int> _generateNonce() {
-    final random = DateTime.now().millisecondsSinceEpoch;
-    final bytes = ByteData(12);
-    bytes.setUint64(0, random, Endian.big);
-    bytes.setUint32(8, random ~/ 1000, Endian.big);
-    return bytes.buffer.asUint8List().toList();
-  }
-
-  /// Register a new user
-  Future<RegistrationResponse> register(String username, String email, String password, String publicKey) async {
-    if (!_transport.isConnected) {
-      throw NotConnectedException();
-    }
+  /// Register a new account on the server.
+  Future<RegistrationResponse> register(
+      String username, String email, String password, String publicKey) async {
+    _requireConnected();
 
     final request = RegistrationRequest(
       username: username,
@@ -181,54 +133,57 @@ class AegisClient {
       publicKey: publicKey,
     );
 
-    final message = Message.withType(MessageType.register, request.toBytes());
-    message.flags = ProtocolConstants.flagRequiresAck;
-    
-    await _transport.sendMessage(message);
-    
-    // Wait for registration response
-    final responseMessage = await messages.firstWhere(
-      (msg) => msg.type == MessageType.registerResponse,
-      orElse: () => throw TimeoutException('Registration timeout', const Duration(seconds: 10))
-    ).timeout(const Duration(seconds: 10));
-    
-    return RegistrationResponse.fromBytes(responseMessage.payload);
+    final msg = Message.withType(MessageType.register, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.registerResponse});
+    return RegistrationResponse.fromBytes(response.payload);
   }
 
-  /// Search for users by username
-  Future<UserSearchResponse> searchUsers(String query, {int limit = 20}) async {
-    if (!_transport.isConnected) {
-      throw NotConnectedException();
-    }
+  // ─── Messaging ──────────────────────────────────────────────────────────────
 
-    if (!_isAuthenticated) {
-      throw Exception('Client is not authenticated');
-    }
-
-    final request = UserSearchRequest(query: query, limit: limit);
-    final message = Message.withType(MessageType.userSearch, request.toBytes());
-    message.flags = ProtocolConstants.flagRequiresAck;
-    
-    await _transport.sendMessage(message);
-    
-    // Wait for search response
-    final responseMessage = await messages.firstWhere(
-      (msg) => msg.type == MessageType.userSearchResult,
-      orElse: () => throw TimeoutException('Search timeout', const Duration(seconds: 10))
-    ).timeout(const Duration(seconds: 10));
-    
-    return UserSearchResponse.fromBytes(responseMessage.payload);
+  /// Send a direct message using the legacy binary-free JSON format (type 3).
+  ///
+  /// For proper private messaging prefer [sendPrivateMessage].
+  Future<void> sendMessage(String content, {int toUserId = 0}) async {
+    _requireAuthenticated();
+    final payloadBytes = utf8.encode(jsonEncode({
+      'RecipientId': toUserId,
+      'Content': content,
+    }));
+    final msg = Message.withType(MessageType.message, payloadBytes);
+    msg.sequenceId = _nextSeqId++;
+    await _transport.sendMessage(msg);
   }
 
-  /// Send a message to a channel
-  Future<ChannelMessageResponse> sendChannelMessage(int channelId, String content, {MessageContentType contentType = MessageContentType.text, int? replyToMessageId}) async {
-    if (!_transport.isConnected) {
-      throw NotConnectedException();
-    }
+  /// Send a private chat message to another user (type 17).
+  Future<PrivateChatMessageResponse> sendPrivateMessage(
+      int toUserId, String content,
+      {MessageContentType contentType = MessageContentType.text}) async {
+    _requireAuthenticated();
 
-    if (!_isAuthenticated) {
-      throw Exception('Client is not authenticated');
-    }
+    final request = PrivateChatMessageRequest(
+      toUserId: toUserId,
+      content: content,
+      contentType: contentType,
+    );
+
+    final msg =
+        Message.withType(MessageType.privateChatMessage, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.privateChatMessage, MessageType.ack});
+    return PrivateChatMessageResponse.fromBytes(response.payload);
+  }
+
+  // ─── Channels ───────────────────────────────────────────────────────────────
+
+  /// Send a message to a channel.
+  Future<ChannelMessageResponse> sendChannelMessage(
+    int channelId,
+    String content, {
+    MessageContentType contentType = MessageContentType.text,
+    int? replyToMessageId,
+  }) async {
+    _requireAuthenticated();
 
     final request = ChannelMessageRequest(
       channelId: channelId,
@@ -237,25 +192,20 @@ class AegisClient {
       replyToMessageId: replyToMessageId,
     );
 
-    final message = Message.withType(MessageType.channelMessage, request.toBytes());
-    message.flags = ProtocolConstants.flagRequiresAck;
-    
-    await _transport.sendMessage(message);
-    
-    final responseMessage = await _waitForMessageTypes({MessageType.ack, MessageType.channelMessage});
-    
-    return ChannelMessageResponse.fromBytes(responseMessage.payload);
+    final msg =
+        Message.withType(MessageType.channelMessage, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.channelMessage, MessageType.ack});
+    return ChannelMessageResponse.fromBytes(response.payload);
   }
 
-  /// Create a new channel
-  Future<ChannelCreateResponse> createChannel(String name, {String? description, ChannelType type = ChannelType.public}) async {
-    if (!_transport.isConnected) {
-      throw NotConnectedException();
-    }
-
-    if (!_isAuthenticated) {
-      throw Exception('Client is not authenticated');
-    }
+  /// Create a new channel.
+  Future<ChannelCreateResponse> createChannel(
+    String name, {
+    String? description,
+    ChannelType type = ChannelType.public,
+  }) async {
+    _requireAuthenticated();
 
     final request = ChannelCreateRequest(
       name: name,
@@ -263,98 +213,266 @@ class AegisClient {
       type: type,
     );
 
-    final message = Message.withType(MessageType.channelCreate, request.toBytes());
-    message.flags = ProtocolConstants.flagRequiresAck;
-    
-    await _transport.sendMessage(message);
-    
-    final responseMessage = await _waitForMessageTypes({MessageType.ack, MessageType.channelCreate});
-    
-    return ChannelCreateResponse.fromBytes(responseMessage.payload);
+    final msg =
+        Message.withType(MessageType.channelCreate, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.channelCreate, MessageType.ack});
+    return ChannelCreateResponse.fromBytes(response.payload);
   }
 
-  /// Join a channel
+  /// Join an existing public channel.
   Future<ChannelJoinResponse> joinChannel(int channelId) async {
-    if (!_transport.isConnected) {
-      throw NotConnectedException();
-    }
-
-    if (!_isAuthenticated) {
-      throw Exception('Client is not authenticated');
-    }
+    _requireAuthenticated();
 
     final request = ChannelJoinRequest(channelId: channelId);
-    final message = Message.withType(MessageType.channelJoin, request.toBytes());
-    message.flags = ProtocolConstants.flagRequiresAck;
-    
-    await _transport.sendMessage(message);
-    
-    final responseMessage = await _waitForMessageTypes({MessageType.ack, MessageType.channelJoin});
-    
-    return ChannelJoinResponse.fromBytes(responseMessage.payload);
+    final msg = Message.withType(MessageType.channelJoin, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.channelJoin, MessageType.ack});
+    return ChannelJoinResponse.fromBytes(response.payload);
   }
 
-  /// Send a private message
-  Future<PrivateChatMessageResponse> sendPrivateMessage(int toUserId, String content, {MessageContentType contentType = MessageContentType.text}) async {
-    if (!_transport.isConnected) {
-      throw NotConnectedException();
-    }
+  /// Edit channel properties (name, description, avatar URL).
+  Future<ChannelEditResponse> updateChannel(
+    int channelId, {
+    String? name,
+    String? description,
+    String? avatarUrl,
+  }) async {
+    _requireAuthenticated();
 
-    if (!_isAuthenticated) {
-      throw Exception('Client is not authenticated');
-    }
-
-    final request = PrivateChatMessageRequest(
-      toUserId: toUserId,
-      content: content,
-      contentType: contentType,
+    final request = ChannelEditRequest(
+      channelId: channelId,
+      name: name,
+      description: description,
+      avatarUrl: avatarUrl,
     );
 
-    final message = Message.withType(MessageType.privateChatMessage, request.toBytes());
-    message.flags = ProtocolConstants.flagRequiresAck;
-    
+    final msg = Message.withType(MessageType.channelEdit, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.channelEditResponse, MessageType.ack});
+    return ChannelEditResponse.fromBytes(response.payload);
+  }
+
+  /// Upload a channel avatar from raw image bytes.
+  ///
+  /// The bytes are base64-encoded into a data URL and stored as the avatar.
+  /// [mimeType] defaults to `'image/jpeg'`.
+  Future<ChannelEditResponse> uploadChannelAvatar(
+    int channelId,
+    Uint8List imageBytes, {
+    String mimeType = 'image/jpeg',
+  }) async {
+    final dataUrl = 'data:$mimeType;base64,${base64Encode(imageBytes)}';
+    return updateChannel(channelId, avatarUrl: dataUrl);
+  }
+
+  // ─── Groups (group chats) ─────────────────────────────────────────────────────
+
+  /// Edit group chat properties (name, description, avatar URL).
+  Future<GroupEditResponse> updateGroup(
+    int groupId, {
+    String? name,
+    String? description,
+    String? avatarUrl,
+  }) async {
+    _requireAuthenticated();
+
+    final request = GroupEditRequest(
+      groupId: groupId,
+      name: name,
+      description: description,
+      avatarUrl: avatarUrl,
+    );
+
+    final msg = Message.withType(MessageType.groupEdit, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.groupEditResponse, MessageType.ack});
+    return GroupEditResponse.fromBytes(response.payload);
+  }
+
+  /// Upload a group chat avatar from raw image bytes.
+  ///
+  /// The bytes are base64-encoded into a data URL and stored as the avatar.
+  /// [mimeType] defaults to `'image/jpeg'`.
+  Future<GroupEditResponse> uploadGroupAvatar(
+    int groupId,
+    Uint8List imageBytes, {
+    String mimeType = 'image/jpeg',
+  }) async {
+    final dataUrl = 'data:$mimeType;base64,${base64Encode(imageBytes)}';
+    return updateGroup(groupId, avatarUrl: dataUrl);
+  }
+
+  // ─── Profile ──────────────────────────────────────────────────────────────────
+
+  /// Get the authenticated user's own profile.
+  Future<ProfileGetResponse> getOwnProfile() async {
+    _requireAuthenticated();
+    final request = ProfileGetRequest();
+    final msg = Message.withType(MessageType.profileGet, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.profileGetResponse});
+    return ProfileGetResponse.fromBytes(response.payload);
+  }
+
+  /// Get another user's profile by ID or username.
+  Future<ProfileGetResponse> getProfile({int? userId, String? username}) async {
+    _requireAuthenticated();
+    final request = ProfileGetRequest(userId: userId, username: username);
+    final msg = Message.withType(MessageType.profileGet, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.profileGetResponse});
+    return ProfileGetResponse.fromBytes(response.payload);
+  }
+
+  /// Update the authenticated user's profile fields.
+  Future<ProfileUpdateResponse> updateProfile({
+    String? displayName,
+    String? avatarUrl,
+    String? bio,
+    String? username,
+  }) async {
+    _requireAuthenticated();
+
+    final request = ProfileUpdateRequest(
+      displayName: displayName,
+      avatarUrl: avatarUrl,
+      bio: bio,
+      username: username,
+    );
+
+    final msg = Message.withType(MessageType.profileUpdate, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.profileUpdateResponse});
+    return ProfileUpdateResponse.fromBytes(response.payload);
+  }
+
+  /// Upload a user avatar from raw image bytes.
+  ///
+  /// The bytes are base64-encoded into a data URL and stored as the avatar.
+  /// [mimeType] defaults to `'image/jpeg'`.
+  Future<ProfileUpdateResponse> uploadUserAvatar(
+    Uint8List imageBytes, {
+    String mimeType = 'image/jpeg',
+  }) async {
+    final dataUrl = 'data:$mimeType;base64,${base64Encode(imageBytes)}';
+    return updateProfile(avatarUrl: dataUrl);
+  }
+
+  // ─── User search ─────────────────────────────────────────────────────────────
+
+  /// Search for users by username prefix.
+  Future<UserSearchResponse> searchUsers(String query,
+      {int limit = 20}) async {
+    _requireAuthenticated();
+
+    final request = UserSearchRequest(query: query, limit: limit);
+    final msg = Message.withType(MessageType.userSearch, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.userSearchResult});
+    return UserSearchResponse.fromBytes(response.payload);
+  }
+
+  // ─── Ping ────────────────────────────────────────────────────────────────────
+
+  /// Send a ping to the server (fire-and-forget).
+  Future<void> ping() async {
+    _requireConnected();
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final msg = Message.withType(MessageType.ping, _int64ToBytes(timestamp));
+    msg.sequenceId = _nextSeqId++;
+    await _transport.sendMessage(msg);
+  }
+
+  // ─── Internal helpers ────────────────────────────────────────────────────────
+
+  /// Assign a sequence ID, subscribe for the matching response, then send.
+  ///
+  /// Subscribing BEFORE the send prevents a race condition where the server
+  /// replies faster than the subscription is established.
+  Future<Message> _sendAndWaitResponse(
+    Message message, {
+    Set<MessageType>? expectedTypes,
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    // Assign sequence ID before subscribing/sending
+    message.sequenceId = _nextSeqId++;
+    message.flags |= ProtocolConstants.flagRequiresAck;
+
+    final seqId = message.sequenceId;
+
+    // Subscribe first (synchronous operation on the broadcast stream)
+    final responseFuture = messages
+        .firstWhere((msg) {
+          if (msg.sequenceId != seqId) return false;
+          if (expectedTypes != null && !expectedTypes.contains(msg.type)) {
+            return false;
+          }
+          return true;
+        })
+        .timeout(timeout, onTimeout: () {
+          throw TimeoutException(
+              'No response for seq=$seqId', timeout);
+        });
+
+    // Now send
     await _transport.sendMessage(message);
-    
-    final responseMessage = await _waitForMessageTypes({MessageType.ack, MessageType.privateChatMessage});
-    
-    return PrivateChatMessageResponse.fromBytes(responseMessage.payload);
+
+    return responseFuture;
   }
 
-  Future<Message> _waitForMessageTypes(Set<MessageType> types) async {
-    return messages.firstWhere(
-      (msg) => types.contains(msg.type),
-      orElse: () => throw TimeoutException('Response timeout', const Duration(seconds: 10)),
-    ).timeout(const Duration(seconds: 10));
+  /// Send the initial handshake after connect.
+  Future<void> _sendHandshake() async {
+    final payload = <int>[];
+    payload.addAll(_int32ToBytes(ProtocolConstants.versionMajor * 1000 +
+        ProtocolConstants.versionMinor)); // client version
+    payload.addAll(_generateNonce()); // 12 cryptographically random bytes
+
+    final msg = Message.withType(MessageType.handshake, payload);
+    msg.sequenceId = _nextSeqId++;
+    await _transport.sendMessage(msg);
   }
 
-  bool _isSuccessfulJsonResponse(List<int> payload) {
+  void _requireConnected() {
+    if (!_transport.isConnected) throw NotConnectedException();
+  }
+
+  void _requireAuthenticated() {
+    _requireConnected();
+    if (!_isAuthenticated) throw Exception('Not authenticated');
+  }
+
+  Map<String, dynamic>? _tryDecodeJson(List<int> payload) {
+    if (payload.isEmpty) return null;
     try {
       final decoded = jsonDecode(utf8.decode(payload));
-      if (decoded is Map<String, dynamic> && decoded.containsKey('Success')) {
-        return decoded['Success'] == true;
-      }
-    } catch (_) {
-      return false;
-    }
-
-    return false;
-  }
-
-  String? _extractErrorMessage(List<int> payload) {
-    try {
-      final decoded = jsonDecode(utf8.decode(payload));
-      if (decoded is Map<String, dynamic>) {
-        return (decoded['Error'] ?? decoded['Message'] ?? decoded['MessageText']) as String?;
-      }
-    } catch (_) {
-      return null;
-    }
-
+      if (decoded is Map<String, dynamic>) return decoded;
+    } catch (_) {}
     return null;
   }
 
-  /// Cleanup resources
-  void dispose() {
-    _transport.dispose();
+  String? _extractErrorMessage(List<int> payload) {
+    final decoded = _tryDecodeJson(payload);
+    if (decoded == null) return null;
+    return (decoded['Error'] ?? decoded['Message'] ?? decoded['MessageText'])
+        as String?;
+  }
+
+  /// Generate 12 cryptographically random bytes for the handshake nonce.
+  List<int> _generateNonce() {
+    final rng = Random.secure();
+    return List<int>.generate(12, (_) => rng.nextInt(256));
+  }
+
+  List<int> _int64ToBytes(int value) {
+    final bytes = ByteData(8)
+      ..setUint64(0, value, Endian.big);
+    return bytes.buffer.asUint8List().toList();
+  }
+
+  List<int> _int32ToBytes(int value) {
+    final bytes = ByteData(4)
+      ..setUint32(0, value, Endian.big);
+    return bytes.buffer.asUint8List().toList();
   }
 }

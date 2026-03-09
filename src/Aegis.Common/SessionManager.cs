@@ -6,12 +6,14 @@ namespace Aegis.Common;
 public class SessionManager
 {
     private readonly ConcurrentDictionary<ulong, SessionInfo> _sessions;
+    private readonly ConcurrentDictionary<ulong, ulong> _userConnections;
     private readonly ISessionCryptoProvider _cryptoProvider;
     private readonly ILogger _logger;
     
     public SessionManager(ISessionCryptoProvider cryptoProvider, ILogger logger)
     {
         _sessions = new ConcurrentDictionary<ulong, SessionInfo>();
+        _userConnections = new ConcurrentDictionary<ulong, ulong>();
         _cryptoProvider = cryptoProvider;
         _logger = logger;
     }
@@ -61,10 +63,21 @@ public class SessionManager
             session.UserId = userId;
             session.Username = username;
             session.IsAuthenticated = true;
+            _userConnections.AddOrUpdate(userId, connectionId, (_, _) => connectionId);
             _logger.Info($"Session authenticated for connection {connectionId}, user {username} (ID: {userId})");
             return true;
         }
         return false;
+    }
+
+    public bool TryGetConnectionIdByUserId(ulong userId, out ulong connectionId)
+    {
+        return _userConnections.TryGetValue(userId, out connectionId);
+    }
+
+    public ulong? GetConnectionIdByUserId(ulong userId)
+    {
+        return _userConnections.TryGetValue(userId, out var connectionId) ? connectionId : null;
     }
     
     public SessionInfo? GetAuthenticatedSession(ulong connectionId)
@@ -80,6 +93,14 @@ public class SessionManager
     {
         if (_sessions.TryRemove(connectionId, out var session))
         {
+            if (session.IsAuthenticated)
+            {
+                if (_userConnections.TryGetValue(session.UserId, out var mappedConnection) && mappedConnection == connectionId)
+                {
+                    _userConnections.TryRemove(session.UserId, out _);
+                }
+            }
+
             ZeroSessionSecrets(session);
             _logger.Info($"Session removed for connection {connectionId}");
         }

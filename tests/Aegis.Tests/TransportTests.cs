@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Aegis.Transport;
 using Aegis.Common.Logging;
+using Aegis.Protocol;
 
 namespace Aegis.Tests;
 
@@ -45,23 +46,24 @@ public class TransportTests
     public async Task TcpServer_ClientConnection_ShouldTriggerEvents()
     {
         using var cts = new CancellationTokenSource(TestTimeoutMs);
+        var port = GetFreeTcpPort();
         
-        // Arrange - use a specific port to avoid binding issues
-        var server = new TcpServer(12345, 100, 1024, false, 300, null, _logger);
+        // Arrange
+        var server = new TcpServer(port, 100, 1024, false, 300, null, _logger);
         var connectedTcs = new TaskCompletionSource<ConnectionContext>();
         var disconnectedTcs = new TaskCompletionSource<ConnectionContext>();
         
         server.OnClientConnected += ctx => connectedTcs.TrySetResult(ctx);
         server.OnClientDisconnected += ctx => disconnectedTcs.TrySetResult(ctx);
         
-        var startTask = Task.Run(() => server.StartAsync(12345), cts.Token);
+        var startTask = Task.Run(() => server.StartAsync(port), cts.Token);
         await Task.Delay(200); // Give server time to start
         
         try
         {
             // Act
             using var client = new TcpClient();
-            await client.ConnectAsync(IPAddress.Loopback, 12345, cts.Token);
+            await client.ConnectAsync(IPAddress.Loopback, port, cts.Token);
             
             var connectedContext = await connectedTcs.Task
                 .WaitAsync(TimeSpan.FromMilliseconds(500), cts.Token);
@@ -160,6 +162,59 @@ public class TransportTests
         Assert.Equal(512, buffer2.Length);
         Assert.Equal(buffer1, buffer2); // Should return same buffer instance
     }
+
+    [Fact]
+    public void ConnectionContext_TryReadNextFrame_ShouldHandlePartialAndCoalescedFrames()
+    {
+        using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        var context = new ConnectionContext(socket, 777ul, 256);
+
+        var msg1 = new Message
+        {
+            Magic = ProtocolConstants.Magic,
+            VersionMajor = ProtocolConstants.VersionMajor,
+            VersionMinor = ProtocolConstants.VersionMinor,
+            Type = MessageType.Ping,
+            SequenceId = 1,
+            Payload = new byte[] { 1, 2, 3 },
+            PayloadLength = 3,
+            Mac = new byte[ProtocolConstants.MacSize]
+        };
+
+        var msg2 = new Message
+        {
+            Magic = ProtocolConstants.Magic,
+            VersionMajor = ProtocolConstants.VersionMajor,
+            VersionMinor = ProtocolConstants.VersionMinor,
+            Type = MessageType.Ping,
+            SequenceId = 2,
+            Payload = new byte[] { 4, 5, 6, 7 },
+            PayloadLength = 4,
+            Mac = new byte[ProtocolConstants.MacSize]
+        };
+
+        var frame1 = new byte[Message.TotalSize(msg1)];
+        var frame2 = new byte[Message.TotalSize(msg2)];
+        MessageEncoder.Encode(msg1, frame1);
+        MessageEncoder.Encode(msg2, frame2);
+
+        var combined = new byte[frame1.Length + frame2.Length];
+        frame1.CopyTo(combined, 0);
+        frame2.CopyTo(combined, frame1.Length);
+
+        var firstChunkSize = 10;
+        context.AppendIncomingData(combined.AsSpan(0, firstChunkSize));
+        Assert.False(context.TryReadNextFrame(out _));
+
+        context.AppendIncomingData(combined.AsSpan(firstChunkSize));
+
+        Assert.True(context.TryReadNextFrame(out var parsedFrame1));
+        Assert.True(context.TryReadNextFrame(out var parsedFrame2));
+        Assert.False(context.TryReadNextFrame(out _));
+
+        Assert.Equal(frame1, parsedFrame1);
+        Assert.Equal(frame2, parsedFrame2);
+    }
     
     [Fact]
     public void ConnectionContext_Constructor_ShouldInitializeCorrectly()
@@ -216,5 +271,15 @@ public class TransportTests
             ErrorMessages.Add(message);
             if (ex != null) ErrorMessages.Add(ex.ToString());
         }
+    }
+
+    private static int GetFreeTcpPort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var endpoint = (IPEndPoint)listener.LocalEndpoint;
+        var port = endpoint.Port;
+        listener.Stop();
+        return port;
     }
 }

@@ -57,7 +57,19 @@ public record ChannelJoinRequest(
 /// </summary>
 public record ChannelJoinResponse(
     bool Success,
+    ChannelSummary? Channel = null,
     string? Message = null
+);
+
+/// <summary>
+/// Minimal channel info returned in join/create responses
+/// </summary>
+public record ChannelSummary(
+    ulong Id,
+    string Name,
+    string? Description,
+    int Type,
+    int MemberCount
 );
 
 /// <summary>
@@ -147,20 +159,11 @@ public class ChannelMessageHandler : IMessageHandler
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, ChannelMessageResponse response)
     {
         var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        var msg = new Aegis.Protocol.Message
-        {
-            Magic = ProtocolConstants.Magic,
-            VersionMajor = ProtocolConstants.VersionMajor,
-            VersionMinor = ProtocolConstants.VersionMinor,
-            Type = MessageType.Ack,
-            SequenceId = sequenceId,
-            PayloadLength = (uint)payload.Length,
-            Payload = payload,
-            Mac = new byte[ProtocolConstants.MacSize]
-        };
-        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length + ProtocolConstants.MacSize];
-        MessageEncoder.Encode(msg, buffer);
-        await _messageSender.SendMessageAsync(context.ConnectionId, buffer);
+        await _messageSender.SendProtocolMessageAsync(
+            context.ConnectionId,
+            (ushort)MessageType.ChannelMessage,
+            sequenceId,
+            payload);
     }
 }
 
@@ -227,20 +230,11 @@ public class ChannelCreateHandler : IMessageHandler
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, ChannelCreateResponse response)
     {
         var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        var msg = new Aegis.Protocol.Message
-        {
-            Magic = ProtocolConstants.Magic,
-            VersionMajor = ProtocolConstants.VersionMajor,
-            VersionMinor = ProtocolConstants.VersionMinor,
-            Type = MessageType.Ack,
-            SequenceId = sequenceId,
-            PayloadLength = (uint)payload.Length,
-            Payload = payload,
-            Mac = new byte[ProtocolConstants.MacSize]
-        };
-        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length + ProtocolConstants.MacSize];
-        MessageEncoder.Encode(msg, buffer);
-        await _messageSender.SendMessageAsync(context.ConnectionId, buffer);
+        await _messageSender.SendProtocolMessageAsync(
+            context.ConnectionId,
+            (ushort)MessageType.ChannelCreate,
+            sequenceId,
+            payload);
     }
 }
 
@@ -299,6 +293,23 @@ public class PrivateChatMessageHandler : IMessageHandler
             var privateMsg = await _messageService.SendPrivateMessageAsync(
                 session.UserId, payload.ToUserId, payload.Content, payload.ContentType);
 
+            // Push the message to the recipient if they are online
+            if (_sessionManager.TryGetConnectionIdByUserId(payload.ToUserId, out var recipientConnId))
+            {
+                var pushPayload = JsonSerializer.SerializeToUtf8Bytes(new IncomingPrivateMessage(
+                    privateMsg.Id,
+                    session.UserId,
+                    session.Username,
+                    payload.Content,
+                    privateMsg.CreatedAt));
+
+                await _messageSender.SendProtocolMessageAsync(
+                    recipientConnId,
+                    (ushort)MessageType.PrivateChatMessage,
+                    message.SequenceId,
+                    pushPayload);
+            }
+
             await SendResponseAsync(context, message.SequenceId, 
                 new PrivateChatMessageResponse(true, privateMsg.Id, "Message sent"));
 
@@ -315,21 +326,110 @@ public class PrivateChatMessageHandler : IMessageHandler
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, PrivateChatMessageResponse response)
     {
         var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        var msg = new Aegis.Protocol.Message
-        {
-            Magic = ProtocolConstants.Magic,
-            VersionMajor = ProtocolConstants.VersionMajor,
-            VersionMinor = ProtocolConstants.VersionMinor,
-            Type = MessageType.Ack,
-            SequenceId = sequenceId,
-            PayloadLength = (uint)payload.Length,
-            Payload = payload,
-            Mac = new byte[ProtocolConstants.MacSize]
-        };
-        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length + ProtocolConstants.MacSize];
-        MessageEncoder.Encode(msg, buffer);
-        await _messageSender.SendMessageAsync(context.ConnectionId, buffer);
+        await _messageSender.SendProtocolMessageAsync(
+            context.ConnectionId,
+            (ushort)MessageType.PrivateChatMessage,
+            sequenceId,
+            payload);
     }
+
+    private sealed record IncomingPrivateMessage(
+        ulong MessageId,
+        ulong FromUserId,
+        string FromUsername,
+        string Content,
+        DateTime CreatedAtUtc);
 }
 
 
+// ===================== CHANNEL JOIN HANDLER =====================
+
+public class ChannelJoinHandler : IMessageHandler
+{
+    public MessageType Type => MessageType.ChannelJoin;
+
+    private readonly IChannelService _channelService;
+    private readonly SessionManager _sessionManager;
+    private readonly IMessageSender _messageSender;
+    private readonly ILogger<ChannelJoinHandler> _logger;
+
+    public ChannelJoinHandler(
+        IChannelService channelService,
+        SessionManager sessionManager,
+        IMessageSender messageSender,
+        ILogger<ChannelJoinHandler> logger)
+    {
+        _channelService = channelService;
+        _sessionManager = sessionManager;
+        _messageSender = messageSender;
+        _logger = logger;
+    }
+
+    public async ValueTask HandleAsync(ConnectionContext context, Aegis.Protocol.Message message)
+    {
+        try
+        {
+            var session = _sessionManager.GetAuthenticatedSession(context.ConnectionId);
+            if (session == null)
+            {
+                await SendResponseAsync(context, message.SequenceId,
+                    new ChannelJoinResponse(false, Message: "Not authenticated"));
+                return;
+            }
+
+            var payload = JsonSerializer.Deserialize<ChannelJoinRequest>(message.Payload);
+            if (payload == null || payload.ChannelId == 0)
+            {
+                await SendResponseAsync(context, message.SequenceId,
+                    new ChannelJoinResponse(false, Message: "Invalid payload"));
+                return;
+            }
+
+            (Channel channel, bool wasAlreadyMember) = await _channelService.JoinChannelAsync(
+                session.UserId, payload.ChannelId);
+
+            var summary = new ChannelSummary(
+                channel.Id,
+                channel.Name,
+                channel.Description,
+                (int)channel.Type,
+                channel.MemberCount);
+
+            await SendResponseAsync(context, message.SequenceId,
+                new ChannelJoinResponse(true, summary,
+                    wasAlreadyMember ? "Already a member" : "Joined channel"));
+
+            _logger.LogInformation(
+                "User {UserId} {Action} channel {ChannelId}",
+                session.UserId,
+                wasAlreadyMember ? "was already a member of" : "joined",
+                payload.ChannelId);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            await SendResponseAsync(context, message.SequenceId,
+                new ChannelJoinResponse(false, Message: ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            await SendResponseAsync(context, message.SequenceId,
+                new ChannelJoinResponse(false, Message: ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error joining channel");
+            await SendResponseAsync(context, message.SequenceId,
+                new ChannelJoinResponse(false, Message: "Internal server error"));
+        }
+    }
+
+    private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, ChannelJoinResponse response)
+    {
+        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
+        await _messageSender.SendProtocolMessageAsync(
+            context.ConnectionId,
+            (ushort)MessageType.ChannelJoin,
+            sequenceId,
+            payload);
+    }
+}

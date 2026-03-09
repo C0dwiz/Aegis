@@ -9,6 +9,9 @@ class AegisLogger {
   /// Set minimum log level
   static set level(LogLevel value) => _level = value;
 
+  /// Get current log level
+  static LogLevel get level => _level;
+
   /// Log debug message
   static void debug(String message) {
     if (_enabled && _level.index <= LogLevel.debug.index) {

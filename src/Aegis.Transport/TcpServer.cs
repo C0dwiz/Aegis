@@ -162,10 +162,15 @@ public class TcpServer : IDisposable
             }
             
             context.UpdateActivity();
-            
-            if (OnMessageReceived != null)
+
+            context.AppendIncomingData(buffer.Span.Slice(0, bytesReceived));
+
+            while (context.TryReadNextFrame(out var frame))
             {
-                await OnMessageReceived(context, buffer.Slice(0, bytesReceived));
+                if (OnMessageReceived != null)
+                {
+                    await OnMessageReceived(context, frame);
+                }
             }
         }
     }

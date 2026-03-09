@@ -5,12 +5,14 @@ import 'message.dart';
 import 'message_encoder.dart';
 import 'exceptions.dart';
 import 'logger.dart';
+import 'protocol_constants.dart';
 
 /// TCP transport layer for Aegis client communication
 class AegisTransport {
   late Socket _socket;
   bool _isConnected = false;
   int _nextSequenceId = 1;
+  Uint8List _pendingBytes = Uint8List(0);
   
   final StreamController<Message> _messageController = StreamController<Message>.broadcast();
   final StreamController<void> _disconnectController = StreamController<void>.broadcast();
@@ -106,35 +108,71 @@ class AegisTransport {
         _handleIncomingData(data);
       },
       onError: (error) {
+        AegisLogger.error('Socket error', error);
         _isConnected = false;
-        _disconnectController.add(null);
+        if (!_disconnectController.isClosed) _disconnectController.add(null);
       },
       onDone: () {
         _isConnected = false;
-        _disconnectController.add(null);
+        if (!_disconnectController.isClosed) _disconnectController.add(null);
       },
     );
   }
 
   /// Handle incoming data and parse messages
   void _handleIncomingData(Uint8List data) {
-    try {
-      final message = MessageEncoder.decode(data);
-      AegisLogger.debug('Received message: ${message.type} (seq: ${message.sequenceId})');
-      _messageController.add(message);
-    } catch (e) {
-      // Log error but don't disconnect - might be corrupted data
-      AegisLogger.error('Error parsing message', e);
+    if (data.isEmpty) {
+      return;
+    }
+
+    final merged = Uint8List(_pendingBytes.length + data.length);
+    merged.setRange(0, _pendingBytes.length, _pendingBytes);
+    merged.setRange(_pendingBytes.length, merged.length, data);
+    _pendingBytes = merged;
+
+    while (_pendingBytes.length >= ProtocolConstants.headerSize) {
+      final payloadLength = (_pendingBytes[17] << 24) |
+          (_pendingBytes[18] << 16) |
+          (_pendingBytes[19] << 8) |
+          _pendingBytes[20];
+
+      if (payloadLength < 0 || payloadLength > ProtocolConstants.maxPayloadSize) {
+        AegisLogger.error('Error parsing message', 'Invalid payload length: $payloadLength');
+        _pendingBytes = Uint8List(0);
+        return;
+      }
+
+      final frameSize = ProtocolConstants.headerSize + payloadLength + ProtocolConstants.macSize;
+      if (_pendingBytes.length < frameSize) {
+        break;
+      }
+
+      try {
+        final frame = Uint8List.fromList(_pendingBytes.sublist(0, frameSize));
+        final message = MessageEncoder.decode(frame);
+        AegisLogger.debug('Received message: ${message.type} (seq: ${message.sequenceId})');
+        if (!_messageController.isClosed) {
+          _messageController.add(message);
+        }
+      } catch (e) {
+        AegisLogger.error('Error parsing message', e);
+        // Skip this frame and continue; do not reset the buffer
+      }
+
+      if (_pendingBytes.length == frameSize) {
+        _pendingBytes = Uint8List(0);
+      } else {
+        _pendingBytes = Uint8List.fromList(_pendingBytes.sublist(frameSize));
+      }
     }
   }
 
   /// Cleanup resources
   void dispose() {
     if (_isConnected) {
-      disconnect();
+      disconnect().ignore(); // best-effort close; errors are swallowed
     }
-    
-    _messageController.close();
-    _disconnectController.close();
+    if (!_messageController.isClosed) _messageController.close();
+    if (!_disconnectController.isClosed) _disconnectController.close();
   }
 }

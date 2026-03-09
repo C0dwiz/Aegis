@@ -168,17 +168,59 @@ public class PendingMessage
 /// </summary>
 public class MessageDeduplicator
 {
-    private readonly ConcurrentDictionary<ulong, HashSet<ulong>> _processedMessages;
+    private const ulong DefaultWindowSize = 1024;
+    private readonly ConcurrentDictionary<ulong, SequenceWindow> _sequenceWindows;
     private readonly ILogger _logger;
     private Timer? _cleanupTimer;
 
     public MessageDeduplicator(ILogger? logger = null)
     {
-        _processedMessages = new ConcurrentDictionary<ulong, HashSet<ulong>>();
+        _sequenceWindows = new ConcurrentDictionary<ulong, SequenceWindow>();
         _logger = logger ?? new NullLogger();
         
         _cleanupTimer = new Timer(CleanupOldEntries, null, 
             TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    public bool TryAcceptSequence(ulong connectionId, ulong sequenceId, out string rejectionReason)
+    {
+        rejectionReason = string.Empty;
+        var window = _sequenceWindows.GetOrAdd(connectionId, _ => new SequenceWindow());
+
+        lock (window.Sync)
+        {
+            if (window.Sequences.Contains(sequenceId))
+            {
+                rejectionReason = "duplicate sequence";
+                return false;
+            }
+
+            if (window.HighestSequenceId > 0 && sequenceId < window.HighestSequenceId)
+            {
+                var delta = window.HighestSequenceId - sequenceId;
+                if (delta >= DefaultWindowSize)
+                {
+                    rejectionReason = $"stale sequence outside sliding window (highest={window.HighestSequenceId}, incoming={sequenceId})";
+                    return false;
+                }
+            }
+
+            if (sequenceId > window.HighestSequenceId)
+            {
+                window.HighestSequenceId = sequenceId;
+            }
+
+            window.Sequences.Add(sequenceId);
+
+            if (window.HighestSequenceId > DefaultWindowSize)
+            {
+                var minAllowed = window.HighestSequenceId - DefaultWindowSize;
+                window.Sequences.RemoveWhere(x => x < minAllowed);
+            }
+
+            window.LastUpdatedAt = DateTime.UtcNow;
+            return true;
+        }
     }
 
     /// <summary>
@@ -186,9 +228,12 @@ public class MessageDeduplicator
     /// </summary>
     public bool IsProcessed(ulong connectionId, ulong sequenceId)
     {
-        if (_processedMessages.TryGetValue(connectionId, out var processed))
+        if (_sequenceWindows.TryGetValue(connectionId, out var window))
         {
-            return processed.Contains(sequenceId);
+            lock (window.Sync)
+            {
+                return window.Sequences.Contains(sequenceId);
+            }
         }
         return false;
     }
@@ -198,13 +243,7 @@ public class MessageDeduplicator
     /// </summary>
     public void MarkAsProcessed(ulong connectionId, ulong sequenceId)
     {
-        _processedMessages.AddOrUpdate(connectionId, 
-            _ => new HashSet<ulong> { sequenceId },
-            (_, set) =>
-            {
-                set.Add(sequenceId);
-                return set;
-            });
+        _ = TryAcceptSequence(connectionId, sequenceId, out _);
     }
 
     /// <summary>
@@ -212,21 +251,28 @@ public class MessageDeduplicator
     /// </summary>
     public void ClearConnection(ulong connectionId)
     {
-        _processedMessages.TryRemove(connectionId, out _);
+        _sequenceWindows.TryRemove(connectionId, out _);
     }
 
     private void CleanupOldEntries(object? state)
     {
-        // Keep only last 1000 sequences per connection
-        const int maxPerConnection = 1000;
-        
-        foreach (var kvp in _processedMessages)
+        var staleThreshold = DateTime.UtcNow.AddMinutes(-10);
+        foreach (var kvp in _sequenceWindows)
         {
-            if (kvp.Value.Count > maxPerConnection)
+            var window = kvp.Value;
+            lock (window.Sync)
             {
-                // Keep only the newest sequences
-                var toKeep = kvp.Value.OrderByDescending(x => x).Take(maxPerConnection).ToHashSet();
-                _processedMessages[kvp.Key] = toKeep;
+                if (window.LastUpdatedAt < staleThreshold)
+                {
+                    _sequenceWindows.TryRemove(kvp.Key, out _);
+                    continue;
+                }
+
+                if (window.HighestSequenceId > DefaultWindowSize)
+                {
+                    var minAllowed = window.HighestSequenceId - DefaultWindowSize;
+                    window.Sequences.RemoveWhere(x => x < minAllowed);
+                }
             }
         }
     }
@@ -234,5 +280,13 @@ public class MessageDeduplicator
     public void Dispose()
     {
         _cleanupTimer?.Dispose();
+    }
+
+    private sealed class SequenceWindow
+    {
+        public object Sync { get; } = new object();
+        public ulong HighestSequenceId { get; set; }
+        public DateTime LastUpdatedAt { get; set; } = DateTime.UtcNow;
+        public HashSet<ulong> Sequences { get; } = new HashSet<ulong>();
     }
 }

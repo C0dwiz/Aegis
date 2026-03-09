@@ -2,12 +2,17 @@ using Aegis.Protocol;
 using Aegis.Transport;
 using Aegis.Common.Logging;
 using Aegis.Common;
+using Aegis.Data.Services;
+using System.Buffers.Binary;
+using System.Text;
+using System.Text.Json;
 
 namespace Aegis.Handlers;
 
 public class MessageHandler : IMessageHandler
 {
     private readonly IAntiSpamClient _antiSpam;
+    private readonly IMessageService _messageService;
     private readonly IMessageSender _messageSender;
     private readonly SessionManager _sessionManager;
     private readonly ILogger _logger;
@@ -17,9 +22,15 @@ public class MessageHandler : IMessageHandler
     
     public Aegis.Protocol.MessageType Type => Aegis.Protocol.MessageType.Message;
     
-    public MessageHandler(IAntiSpamClient antiSpam, IMessageSender messageSender, SessionManager sessionManager, ILogger? logger = null)
+    public MessageHandler(
+        IAntiSpamClient antiSpam,
+        IMessageService messageService,
+        IMessageSender messageSender,
+        SessionManager sessionManager,
+        ILogger? logger = null)
     {
         _antiSpam = antiSpam;
+        _messageService = messageService;
         _messageSender = messageSender;
         _sessionManager = sessionManager;
         _logger = logger ?? new Aegis.Transport.NullLogger();
@@ -43,38 +54,101 @@ public class MessageHandler : IMessageHandler
             return;
         }
         
-        // Обрабатывать и маршрутизировать сообщение получателю
-        await RouteMessageToRecipient(context, message);
+        var delivered = await RouteMessageToRecipient(context, message, session);
+        if (!delivered)
+        {
+            await SendErrorAsync(context, message.SequenceId, "Message delivery failed");
+            return;
+        }
+
         await SendAckAsync(context, message.SequenceId);
     }
     
-    private async Task RouteMessageToRecipient(ConnectionContext context, Message message)
+    private async Task<bool> RouteMessageToRecipient(ConnectionContext context, Message message, SessionInfo senderSession)
     {
         try
         {
-            // Десериализуем payload для определения получателя
-            var messageContent = System.Text.Encoding.UTF8.GetString(message.Payload.ToArray());
-            
-            // TODO: Здесь должна быть логика определения получателя из сообщения
-            // Для примера, предполагаем что сообщение содержит JSON с полем "recipientId"
-            // и само сообщение в поле "content"
-            
-            _logger.Info($"Processing message from connection {context.ConnectionId}: {messageContent}");
-            
-            // В реальной реализации здесь была бы логика:
-            // 1. Определить получателя из сообщения
-            // 2. Найти активное соединение получателя
-            // 3. Отправить сообщение получателю
-            // 4. Сохранить сообщение в базе данных для офлайн пользователей
-            
-            // Сейчас просто логируем сообщение
-            _logger.Info($"Message routed successfully from {context.ConnectionId}");
+            var request = ParseDirectMessageRequest(message.Payload);
+            if (request == null || request.RecipientId == 0 || string.IsNullOrWhiteSpace(request.Content))
+            {
+                _logger.Warning($"Invalid direct message payload from connection {context.ConnectionId}");
+                return false;
+            }
+
+            var saved = await _messageService.SendPrivateMessageAsync(
+                senderSession.UserId,
+                request.RecipientId,
+                request.Content,
+                Aegis.Data.Entities.MessageContentType.Text);
+
+            if (_sessionManager.TryGetConnectionIdByUserId(request.RecipientId, out var recipientConnectionId))
+            {
+                var pushPayload = JsonSerializer.SerializeToUtf8Bytes(new IncomingDirectMessage(
+                    saved.Id,
+                    senderSession.UserId,
+                    senderSession.Username,
+                    request.Content,
+                    saved.CreatedAt));
+
+                await _messageSender.SendProtocolMessageAsync(
+                    recipientConnectionId,
+                    (ushort)Aegis.Protocol.MessageType.PrivateChatMessage,
+                    message.SequenceId,
+                    pushPayload);
+
+                _logger.Info($"Message {saved.Id} delivered from user {senderSession.UserId} to user {request.RecipientId}");
+            }
+            else
+            {
+                _logger.Info($"Recipient {request.RecipientId} is offline; message stored for deferred delivery");
+            }
+
+            return true;
         }
         catch (Exception ex)
         {
             _logger.Error($"Error routing message from connection {context.ConnectionId}", ex);
-            throw;
+            return false;
         }
+    }
+
+    private static DirectMessageRequest? ParseDirectMessageRequest(byte[] payload)
+    {
+        if (payload.Length == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<DirectMessageRequest>(payload, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            if (parsed != null)
+            {
+                return parsed;
+            }
+        }
+        catch
+        {
+            // Fall back to legacy binary format.
+        }
+
+        if (payload.Length < 20)
+        {
+            return null;
+        }
+
+        var recipientId = BinaryPrimitives.ReadUInt64BigEndian(payload.AsSpan(8, 8));
+        var content = Encoding.UTF8.GetString(payload.AsSpan(20));
+
+        return new DirectMessageRequest
+        {
+            RecipientId = recipientId,
+            Content = content
+        };
     }
     
     public bool AckSent => _ackSent;
@@ -145,4 +219,17 @@ public class MessageHandler : IMessageHandler
             throw;
         }
     }
+
+    private sealed class DirectMessageRequest
+    {
+        public ulong RecipientId { get; set; }
+        public string Content { get; set; } = string.Empty;
+    }
+
+    private sealed record IncomingDirectMessage(
+        ulong MessageId,
+        ulong FromUserId,
+        string FromUsername,
+        string Content,
+        DateTime CreatedAtUtc);
 }

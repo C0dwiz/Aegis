@@ -99,8 +99,8 @@ class MessageEncoder {
                         message.payloadLength + 
                         ProtocolConstants.macSize;
     
-    if (data.length < expectedSize) {
-      throw ProtocolError('Incomplete message: expected $expectedSize, got ${data.length}');
+    if (data.length != expectedSize) {
+      throw ProtocolError('Invalid frame size: expected $expectedSize, got ${data.length}');
     }
 
     // Read payload if present

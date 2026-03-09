@@ -1,6 +1,8 @@
+using System.Text.RegularExpressions;
 using Aegis.Data.Entities;
 using Aegis.Data.Repositories;
 using Aegis.Common;
+using Group = Aegis.Data.Entities.Group;
 
 namespace Aegis.Data.Services;
 
@@ -24,11 +26,18 @@ public class UserRegistrationService : IUserRegistrationService
         _cryptoProvider = cryptoProvider;
     }
 
+    internal static readonly Regex UsernameRegex = new(@"^[a-zA-Z0-9][a-zA-Z0-9_.-]{2,31}$", RegexOptions.Compiled);
+
     public async Task<User> RegisterUserAsync(string username, string email, string password, string publicKey)
     {
         if (string.IsNullOrWhiteSpace(username) || username.Length < 3)
             throw new ArgumentException("Username must be at least 3 characters long", nameof(username));
-        
+
+        if (!UsernameRegex.IsMatch(username))
+            throw new ArgumentException(
+                "Username may only contain Latin letters (A-Z, a-z), digits, underscores, hyphens, and dots, and must start with a letter or digit",
+                nameof(username));
+
         if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
             throw new ArgumentException("Invalid email format", nameof(email));
         
@@ -246,6 +255,9 @@ public class UserProfileService : IUserProfileService
         {
             if (username.Length < 3)
                 throw new ArgumentException("Username must be at least 3 characters long");
+            if (!UserRegistrationService.UsernameRegex.IsMatch(username))
+                throw new ArgumentException(
+                    "Username may only contain Latin letters (A-Z, a-z), digits, underscores, hyphens, and dots, and must start with a letter or digit");
             var existing = await _userRepository.GetByUsernameAsync(username);
             if (existing != null)
                 throw new InvalidOperationException("Username is already taken");
@@ -266,6 +278,7 @@ public class UserProfileService : IUserProfileService
 public interface IChannelService
 {
     Task<Channel> CreateChannelAsync(ulong creatorUserId, string name, string? description, ChannelType type);
+    Task<(Channel Channel, bool WasAlreadyMember)> JoinChannelAsync(ulong userId, ulong channelId);
     Task<Channel> UpdateChannelAsync(ulong channelId, ulong userId, string? name, string? description, string? avatarUrl);
     Task<ChannelMember> UpdateMemberRoleAsync(ulong channelId, ulong actorUserId, ulong targetUserId, ChannelMemberRole newRole);
     Task<ChannelMember> UpdateMemberPermissionsAsync(ulong channelId, ulong actorUserId, ulong targetUserId, MemberPermissions permissions);
@@ -329,6 +342,39 @@ public class ChannelService : IChannelService
         await _channelRepository.AddMemberAsync(ownerMember);
 
         return created;
+    }
+
+    public async Task<(Channel Channel, bool WasAlreadyMember)> JoinChannelAsync(ulong userId, ulong channelId)
+    {
+        var channel = await _channelRepository.GetByIdAsync(channelId)
+            ?? throw new InvalidOperationException("Channel not found");
+
+        if (!channel.IsActive)
+            throw new InvalidOperationException("Channel is not active");
+
+        if (channel.Type == ChannelType.Private)
+            throw new UnauthorizedAccessException("Cannot join a private channel without an invitation");
+
+        var existing = await _channelRepository.GetChannelMemberAsync(channelId, userId);
+        if (existing != null)
+            return (channel, true);
+
+        var member = new ChannelMember
+        {
+            ChannelId = channelId,
+            UserId = userId,
+            Role = ChannelMemberRole.Member,
+            JoinedAt = DateTime.UtcNow,
+            IsActive = true,
+            CanSendMessages = true
+        };
+        await _channelRepository.AddMemberAsync(member);
+
+        channel.MemberCount += 1;
+        channel.UpdatedAt = DateTime.UtcNow;
+        await _channelRepository.UpdateAsync(channel);
+
+        return (channel, false);
     }
 
     public async Task<Channel> UpdateChannelAsync(ulong channelId, ulong userId, string? name, string? description, string? avatarUrl)

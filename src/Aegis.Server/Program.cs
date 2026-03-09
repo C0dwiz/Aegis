@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using System.Security.Cryptography;
 using Serilog;
 using Aegis.Common;
 using Aegis.Common.Configuration;
@@ -80,6 +81,8 @@ public static class Program
                     context.Configuration.GetSection(ServerOptions.SectionName));
                 services.Configure<CryptoOptions>(
                     context.Configuration.GetSection(CryptoOptions.SectionName));
+                services.Configure<ProtocolSecurityOptions>(
+                    context.Configuration.GetSection(ProtocolSecurityOptions.SectionName));
                 services.Configure<RateLimitOptions>(
                     context.Configuration.GetSection(RateLimitOptions.SectionName));
                 services.Configure<DatabaseOptions>(
@@ -161,6 +164,7 @@ public static class Program
                 services.AddScoped<IMessageHandler, UserSearchHandler>();
                 services.AddScoped<IMessageHandler, ChannelMessageHandler>();
                 services.AddScoped<IMessageHandler, ChannelCreateHandler>();
+                services.AddScoped<IMessageHandler, ChannelJoinHandler>();
                 services.AddScoped<IMessageHandler, PrivateChatMessageHandler>();
                 services.AddScoped<IMessageHandler, ProfileUpdateHandler>();
                 services.AddScoped<IMessageHandler, ProfileGetHandler>();
@@ -213,6 +217,8 @@ public class AegisMessengerService : BackgroundService
     private readonly Aegis.Crypto.ICryptoProvider _crypto;
     private readonly RateLimiter _rateLimiter;
     private readonly SessionManager _sessionManager;
+    private readonly MessageDeduplicator _messageDeduplicator;
+    private readonly ProtocolSecurityOptions _protocolSecurityOptions;
     private readonly ILogger<AegisMessengerService> _logger;
     private readonly ServerOptions _serverOptions;
 
@@ -222,6 +228,8 @@ public class AegisMessengerService : BackgroundService
         Aegis.Crypto.ICryptoProvider crypto,
         RateLimiter rateLimiter,
         SessionManager sessionManager,
+        MessageDeduplicator messageDeduplicator,
+        Microsoft.Extensions.Options.IOptions<ProtocolSecurityOptions> protocolSecurityOptions,
         ILogger<AegisMessengerService> logger,
         Microsoft.Extensions.Options.IOptions<ServerOptions> serverOptions)
     {
@@ -230,6 +238,8 @@ public class AegisMessengerService : BackgroundService
         _crypto = crypto;
         _rateLimiter = rateLimiter;
         _sessionManager = sessionManager;
+        _messageDeduplicator = messageDeduplicator;
+        _protocolSecurityOptions = protocolSecurityOptions.Value;
         _logger = logger;
         _serverOptions = serverOptions.Value;
     }
@@ -271,6 +281,7 @@ public class AegisMessengerService : BackgroundService
     private void OnClientDisconnected(ConnectionContext context)
     {
         _rateLimiter.RemoveConnection(context.ConnectionId);
+        _messageDeduplicator.ClearConnection(context.ConnectionId);
         _sessionManager.RemoveSession(context.ConnectionId);
         _logger.LogInformation("Client {ConnectionId} disconnected", context.ConnectionId);
     }
@@ -313,6 +324,45 @@ public class AegisMessengerService : BackgroundService
                 return;
             }
 
+            var encryptedPayload = (message.Flags & (byte)MessageFlags.Encrypted) != 0;
+            if (!isHandshake && session.HandshakeEstablished && _protocolSecurityOptions.RequireEncryptedPayloadAfterHandshake && !encryptedPayload)
+            {
+                _logger.LogWarning(
+                    "Rejected unencrypted {MessageType} from connection {ConnectionId} under strict payload encryption policy",
+                    message.Type,
+                    context.ConnectionId);
+                return;
+            }
+
+            if (encryptedPayload)
+            {
+                if (!session.HandshakeEstablished || session.SessionKey.IsEmpty)
+                {
+                    _logger.LogWarning("Rejected encrypted payload from connection {ConnectionId} without established session key", context.ConnectionId);
+                    return;
+                }
+
+                if (!TryDecryptPayload(message.Payload, session.SessionKey.Span, out var decryptedPayload))
+                {
+                    _logger.LogWarning("Failed to decrypt payload for message {SequenceId} from connection {ConnectionId}", message.SequenceId, context.ConnectionId);
+                    return;
+                }
+
+                message.Payload = decryptedPayload;
+                message.PayloadLength = (uint)decryptedPayload.Length;
+                message.Flags = (byte)(message.Flags & ~(byte)MessageFlags.Encrypted);
+            }
+
+            if (!isHandshake && !_messageDeduplicator.TryAcceptSequence(context.ConnectionId, message.SequenceId, out var replayReason))
+            {
+                _logger.LogWarning(
+                    "Rejected replay or stale message {SequenceId} from connection {ConnectionId}: {Reason}",
+                    message.SequenceId,
+                    context.ConnectionId,
+                    replayReason);
+                return;
+            }
+
             _sessionManager.UpdateActivity(context.ConnectionId);
 
             // Create a scope per message so scoped services (DB, repos, handlers) are properly managed
@@ -324,6 +374,37 @@ public class AegisMessengerService : BackgroundService
         {
             _logger.LogError(ex, "Error processing message from connection {ConnectionId}",
                 context.ConnectionId);
+        }
+    }
+
+    private bool TryDecryptPayload(byte[] payload, ReadOnlySpan<byte> key, out byte[] plaintext)
+    {
+        plaintext = Array.Empty<byte>();
+
+        const int nonceSize = 12;
+        const int tagSize = 16;
+        if (payload.Length < nonceSize + tagSize)
+        {
+            return false;
+        }
+
+        var nonce = payload.AsSpan(0, nonceSize);
+        var ciphertext = payload.AsSpan(nonceSize);
+        var plaintextBuffer = new byte[ciphertext.Length - tagSize];
+
+        try
+        {
+            _crypto.Decrypt(ciphertext, key, nonce, plaintextBuffer);
+            plaintext = plaintextBuffer;
+            return true;
+        }
+        catch (CryptographicException)
+        {
+            return false;
+        }
+        catch
+        {
+            return false;
         }
     }
 }

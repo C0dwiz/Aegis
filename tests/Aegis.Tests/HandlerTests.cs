@@ -13,6 +13,7 @@ using Aegis.Data.Entities;
 using Microsoft.Extensions.Logging;
 using Moq;
 using System.Text.Json;
+using System.Text;
 
 namespace Aegis.Tests;
 
@@ -54,11 +55,22 @@ public class HandlerTests
     private readonly TestAntiSpamClient _antiSpam = new TestAntiSpamClient();
     private readonly TestMessageSender _messageSender = new TestMessageSender();
     private readonly AegisCryptoProvider _cryptoProvider = new AegisCryptoProvider();
+    private readonly Mock<IMessageService> _messageServiceMock = new Mock<IMessageService>();
     private readonly SessionManager _sessionManager;
     
     public HandlerTests()
     {
         _sessionManager = new SessionManager(_cryptoProvider, _logger);
+        _messageServiceMock
+            .Setup(s => s.SendPrivateMessageAsync(It.IsAny<ulong>(), It.IsAny<ulong>(), It.IsAny<string>(), It.IsAny<MessageContentType>()))
+            .ReturnsAsync((ulong fromUserId, ulong toUserId, string content, MessageContentType _) => new Aegis.Data.Entities.Message
+            {
+                Id = 100,
+                FromUserId = fromUserId,
+                ToUserId = toUserId,
+                Content = content,
+                CreatedAt = DateTime.UtcNow
+            });
     }
     
     [Fact]
@@ -181,11 +193,17 @@ public class HandlerTests
     public async Task MessageHandler_AllowedMessage_ShouldSendAck()
     {
         // Arrange
-        var handler = new MessageHandler(_antiSpam, _messageSender, _sessionManager, _logger);
+        var handler = new MessageHandler(_antiSpam, _messageServiceMock.Object, _messageSender, _sessionManager, _logger);
         var context = new TestConnectionContext(12345ul);
+        var recipientContext = new TestConnectionContext(54321ul);
         _sessionManager.CreateSession(context.ConnectionId);
         _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32], new byte[32]);
         _sessionManager.AuthenticateSession(context.ConnectionId, 42, "tester");
+        _sessionManager.CreateSession(recipientContext.ConnectionId);
+        _sessionManager.EstablishHandshake(recipientContext.ConnectionId, new byte[32], new byte[32]);
+        _sessionManager.AuthenticateSession(recipientContext.ConnectionId, 24, "recipient");
+
+        var payload = Encoding.UTF8.GetBytes("{\"recipientId\":24,\"content\":\"Hello World!\"}");
         var message = new Aegis.Protocol.Message
         {
             Magic = ProtocolConstants.Magic,
@@ -194,8 +212,8 @@ public class HandlerTests
             Flags = 0,
             Type = MessageType.Message,
             SequenceId = 1,
-            PayloadLength = 12,
-            Payload = "Hello World!"u8.ToArray(),
+            PayloadLength = (uint)payload.Length,
+            Payload = payload,
             Mac = new byte[ProtocolConstants.MacSize]
         };
         
@@ -214,11 +232,13 @@ public class HandlerTests
     public async Task MessageHandler_RejectedMessage_ShouldSendError()
     {
         // Arrange
-        var handler = new MessageHandler(_antiSpam, _messageSender, _sessionManager, _logger);
+        var handler = new MessageHandler(_antiSpam, _messageServiceMock.Object, _messageSender, _sessionManager, _logger);
         var context = new TestConnectionContext(12345ul);
         _sessionManager.CreateSession(context.ConnectionId);
         _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32], new byte[32]);
         _sessionManager.AuthenticateSession(context.ConnectionId, 42, "tester");
+
+        var payload = Encoding.UTF8.GetBytes("{\"recipientId\":24,\"content\":\"Spam message\"}");
         var message = new Aegis.Protocol.Message
         {
             Magic = ProtocolConstants.Magic,
@@ -227,8 +247,8 @@ public class HandlerTests
             Flags = 0,
             Type = MessageType.Message,
             SequenceId = 1,
-            PayloadLength = 12,
-            Payload = "Spam message"u8.ToArray(),
+            PayloadLength = (uint)payload.Length,
+            Payload = payload,
             Mac = new byte[ProtocolConstants.MacSize]
         };
         

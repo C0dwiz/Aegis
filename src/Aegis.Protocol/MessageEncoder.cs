@@ -74,6 +74,10 @@ public static class MessageEncoder
         if (message.PayloadLength > ProtocolConstants.MaxPayloadSize)
             throw new ProtocolError($"Payload too large: {message.PayloadLength}");
         
+        var expectedSize = ProtocolConstants.HeaderSize + checked((int)message.PayloadLength) + ProtocolConstants.MacSize;
+        if (data.Length != expectedSize)
+            throw new ProtocolError($"Invalid frame size: expected {expectedSize}, got {data.Length}");
+
         if (data.Length - offset < message.PayloadLength + ProtocolConstants.MacSize)
             throw new ProtocolError("Incomplete message");
         

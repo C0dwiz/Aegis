@@ -22,6 +22,17 @@ public class CryptoOptions
     public int TagSize { get; set; } = 16;
 }
 
+public class ProtocolSecurityOptions
+{
+    public const string SectionName = "ProtocolSecurity";
+
+    // When true, non-handshake and non-auth flow messages must carry encrypted payloads after handshake.
+    public bool RequireEncryptedPayloadAfterHandshake { get; set; } = false;
+
+    // When true, server encrypts protocol payloads for established sessions.
+    public bool EncryptServerPayloadsAfterHandshake { get; set; } = true;
+}
+
 public class RateLimitOptions
 {
     public const string SectionName = "RateLimit";

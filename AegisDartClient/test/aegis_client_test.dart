@@ -45,6 +45,24 @@ void main() {
         throwsA(isA<ProtocolError>()),
       );
     });
+
+    test('should throw ProtocolError for trailing bytes', () {
+      final originalMessage = Message.withType(
+        MessageType.ping,
+        Uint8List.fromList([1, 2, 3]),
+      );
+      originalMessage.sequenceId = 7;
+
+      final encoded = MessageEncoder.encode(originalMessage);
+      final withTail = Uint8List(encoded.length + 2)
+        ..setRange(0, encoded.length, encoded)
+        ..setRange(encoded.length, encoded.length + 2, [0xAA, 0xBB]);
+
+      expect(
+        () => MessageEncoder.decode(withTail),
+        throwsA(isA<ProtocolError>()),
+      );
+    });
   });
 
   group('Message', () {

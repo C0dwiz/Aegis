@@ -475,6 +475,39 @@ class Channel {
   );
 }
 
+/// Minimal channel info returned in join/create responses
+class ChannelSummary {
+  final int id;
+  final String name;
+  final String? description;
+  final ChannelType type;
+  final int memberCount;
+
+  ChannelSummary({
+    required this.id,
+    required this.name,
+    this.description,
+    required this.type,
+    required this.memberCount,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'Id': id,
+    'Name': name,
+    if (description != null) 'Description': description,
+    'Type': type.value,
+    'MemberCount': memberCount,
+  };
+
+  factory ChannelSummary.fromJson(Map<String, dynamic> json) => ChannelSummary(
+    id: json['Id'] as int,
+    name: json['Name'] as String,
+    description: json['Description'] as String?,
+    type: ChannelType.fromValue(json['Type'] as int? ?? 0),
+    memberCount: json['MemberCount'] as int? ?? 0,
+  );
+}
+
 /// Channel join request payload
 class ChannelJoinRequest {
   final int channelId;
@@ -497,7 +530,7 @@ class ChannelJoinRequest {
 /// Channel join response payload
 class ChannelJoinResponse {
   final bool success;
-  final Channel? channel;
+  final ChannelSummary? channel;
   final String? message;
 
   ChannelJoinResponse({
@@ -514,7 +547,9 @@ class ChannelJoinResponse {
 
   factory ChannelJoinResponse.fromJson(Map<String, dynamic> json) => ChannelJoinResponse(
     success: json['Success'] as bool,
-    channel: json['Channel'] != null ? Channel.fromJson(json['Channel'] as Map<String, dynamic>) : null,
+    channel: json['Channel'] != null
+        ? ChannelSummary.fromJson(json['Channel'] as Map<String, dynamic>)
+        : null,
     message: json['Message'] as String?,
   );
 
@@ -581,8 +616,8 @@ class PrivateChatMessageResponse {
   }
 }
 
-/// Message entity
-class Message {
+/// Message entity (stored/delivered message, not the wire-level frame)
+class ChatMessage {
   final int id;
   final int fromUserId;
   final int toUserId;
@@ -595,7 +630,7 @@ class Message {
   final DateTime? deliveredAt;
   final DateTime? readAt;
 
-  Message({
+  ChatMessage({
     required this.id,
     required this.fromUserId,
     required this.toUserId,
@@ -623,7 +658,7 @@ class Message {
     if (readAt != null) 'ReadAt': readAt!.toIso8601String(),
   };
 
-  factory Message.fromJson(Map<String, dynamic> json) => Message(
+  factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
     id: json['Id'] as int,
     fromUserId: json['FromUserId'] as int,
     toUserId: json['ToUserId'] as int,
@@ -647,7 +682,7 @@ class PrivateChat {
   final DateTime? lastActivityAt;
   final int? lastMessageId;
   final bool isActive;
-  final Message? lastMessage;
+  final ChatMessage? lastMessage;
 
   PrivateChat({
     required this.id,
@@ -679,6 +714,238 @@ class PrivateChat {
     lastActivityAt: json['LastActivityAt'] != null ? DateTime.parse(json['LastActivityAt'] as String) : null,
     lastMessageId: json['LastMessageId'] as int?,
     isActive: json['IsActive'] as bool? ?? true,
-    lastMessage: json['LastMessage'] != null ? Message.fromJson(json['LastMessage'] as Map<String, dynamic>) : null,
+    lastMessage: json['LastMessage'] != null ? ChatMessage.fromJson(json['LastMessage'] as Map<String, dynamic>) : null,
   );
+}
+
+// ─── Profile payloads ────────────────────────────────────────────────────────
+
+/// Profile data returned by the server
+class ProfileData {
+  final int id;
+  final String username;
+  final String? displayName;
+  final String? avatarUrl;
+  final String? bio;
+  final String? email;
+  final DateTime createdAt;
+  final DateTime? lastSeenAt;
+
+  ProfileData({
+    required this.id,
+    required this.username,
+    this.displayName,
+    this.avatarUrl,
+    this.bio,
+    this.email,
+    required this.createdAt,
+    this.lastSeenAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'Id': id,
+    'Username': username,
+    if (displayName != null) 'DisplayName': displayName,
+    if (avatarUrl != null) 'AvatarUrl': avatarUrl,
+    if (bio != null) 'Bio': bio,
+    if (email != null) 'Email': email,
+    'CreatedAt': createdAt.toIso8601String(),
+    if (lastSeenAt != null) 'LastSeenAt': lastSeenAt!.toIso8601String(),
+  };
+
+  factory ProfileData.fromJson(Map<String, dynamic> json) => ProfileData(
+    id: json['Id'] as int,
+    username: json['Username'] as String,
+    displayName: json['DisplayName'] as String?,
+    avatarUrl: json['AvatarUrl'] as String?,
+    bio: json['Bio'] as String?,
+    email: json['Email'] as String?,
+    createdAt: DateTime.parse(json['CreatedAt'] as String),
+    lastSeenAt: json['LastSeenAt'] != null
+        ? DateTime.parse(json['LastSeenAt'] as String)
+        : null,
+  );
+}
+
+/// Request to update the authenticated user's profile
+class ProfileUpdateRequest {
+  final String? displayName;
+  final String? avatarUrl;
+  final String? bio;
+  final String? username;
+
+  ProfileUpdateRequest({
+    this.displayName,
+    this.avatarUrl,
+    this.bio,
+    this.username,
+  });
+
+  Map<String, dynamic> toJson() => {
+    if (displayName != null) 'DisplayName': displayName,
+    if (avatarUrl != null) 'AvatarUrl': avatarUrl,
+    if (bio != null) 'Bio': bio,
+    if (username != null) 'Username': username,
+  };
+
+  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+}
+
+/// Response to a profile update
+class ProfileUpdateResponse {
+  final bool success;
+  final String? message;
+  final ProfileData? profile;
+
+  ProfileUpdateResponse({
+    required this.success,
+    this.message,
+    this.profile,
+  });
+
+  factory ProfileUpdateResponse.fromJson(Map<String, dynamic> json) =>
+      ProfileUpdateResponse(
+        success: json['Success'] as bool,
+        message: json['Message'] as String?,
+        profile: json['Profile'] != null
+            ? ProfileData.fromJson(json['Profile'] as Map<String, dynamic>)
+            : null,
+      );
+
+  factory ProfileUpdateResponse.fromBytes(List<int> bytes) {
+    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    return ProfileUpdateResponse.fromJson(json);
+  }
+}
+
+/// Request to get a user's profile
+class ProfileGetRequest {
+  final int? userId;
+  final String? username;
+
+  ProfileGetRequest({this.userId, this.username});
+
+  Map<String, dynamic> toJson() => {
+    if (userId != null) 'UserId': userId,
+    if (username != null) 'Username': username,
+  };
+
+  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+}
+
+/// Response to a profile get request
+class ProfileGetResponse {
+  final bool success;
+  final ProfileData? profile;
+  final String? message;
+
+  ProfileGetResponse({
+    required this.success,
+    this.profile,
+    this.message,
+  });
+
+  factory ProfileGetResponse.fromJson(Map<String, dynamic> json) =>
+      ProfileGetResponse(
+        success: json['Success'] as bool,
+        profile: json['Profile'] != null
+            ? ProfileData.fromJson(json['Profile'] as Map<String, dynamic>)
+            : null,
+        message: json['Message'] as String?,
+      );
+
+  factory ProfileGetResponse.fromBytes(List<int> bytes) {
+    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    return ProfileGetResponse.fromJson(json);
+  }
+}
+
+// ─── Channel edit payloads ────────────────────────────────────────────────────
+
+/// Request to edit a channel (name, description, avatar)
+class ChannelEditRequest {
+  final int channelId;
+  final String? name;
+  final String? description;
+  final String? avatarUrl;
+
+  ChannelEditRequest({
+    required this.channelId,
+    this.name,
+    this.description,
+    this.avatarUrl,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'ChannelId': channelId,
+    if (name != null) 'Name': name,
+    if (description != null) 'Description': description,
+    if (avatarUrl != null) 'AvatarUrl': avatarUrl,
+  };
+
+  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+}
+
+/// Response to a channel edit request
+class ChannelEditResponse {
+  final bool success;
+  final String? message;
+
+  ChannelEditResponse({required this.success, this.message});
+
+  factory ChannelEditResponse.fromJson(Map<String, dynamic> json) =>
+      ChannelEditResponse(
+        success: json['Success'] as bool,
+        message: json['Message'] as String?,
+      );
+
+  factory ChannelEditResponse.fromBytes(List<int> bytes) {
+    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    return ChannelEditResponse.fromJson(json);
+  }
+}
+
+// ─── Group edit payloads ──────────────────────────────────────────────────────
+
+/// Request to edit a group chat (name, description, avatar)
+class GroupEditRequest {
+  final int groupId;
+  final String? name;
+  final String? description;
+  final String? avatarUrl;
+
+  GroupEditRequest({
+    required this.groupId,
+    this.name,
+    this.description,
+    this.avatarUrl,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'GroupId': groupId,
+    if (name != null) 'Name': name,
+    if (description != null) 'Description': description,
+    if (avatarUrl != null) 'AvatarUrl': avatarUrl,
+  };
+
+  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+}
+
+/// Response to a group edit request
+class GroupEditResponse {
+  final bool success;
+  final String? message;
+
+  GroupEditResponse({required this.success, this.message});
+
+  factory GroupEditResponse.fromJson(Map<String, dynamic> json) =>
+      GroupEditResponse(
+        success: json['Success'] as bool,
+        message: json['Message'] as String?,
+      );
+
+  factory GroupEditResponse.fromBytes(List<int> bytes) {
+    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    return GroupEditResponse.fromJson(json);
+  }
 }
