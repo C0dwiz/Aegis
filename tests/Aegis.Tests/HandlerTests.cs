@@ -433,6 +433,7 @@ public class HandlerTests
         var privateChatHandler = new PrivateChatMessageHandler(
             new Mock<IMessageService>().Object,
             mockSearchService.Object,
+            new Mock<IBotManagementService>().Object,
             _sessionManager,
             _messageSender,
             new Mock<Microsoft.Extensions.Logging.ILogger<PrivateChatMessageHandler>>().Object);

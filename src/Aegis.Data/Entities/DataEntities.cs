@@ -33,6 +33,55 @@ public class User
     public ICollection<PrivateChat> PrivateChats1 { get; set; } = new List<PrivateChat>();
     public ICollection<PrivateChat> PrivateChats2 { get; set; } = new List<PrivateChat>();
     public ICollection<Device> Devices { get; set; } = new List<Device>();
+    public ICollection<Bot> OwnedBots { get; set; } = new List<Bot>();
+    public ICollection<Bot> BotAccounts { get; set; } = new List<Bot>();
+}
+
+public class Bot
+{
+    public ulong Id { get; set; }
+    public ulong OwnerUserId { get; set; }
+    public ulong UserId { get; set; }
+    public string Username { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public User? OwnerUser { get; set; }
+    public User? User { get; set; }
+    public ICollection<BotToken> Tokens { get; set; } = new List<BotToken>();
+}
+
+public class BotToken
+{
+    public ulong Id { get; set; }
+    public ulong BotId { get; set; }
+    public string TokenHash { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? RevokedAt { get; set; }
+    public DateTime? LastUsedAt { get; set; }
+
+    public Bot? Bot { get; set; }
+}
+
+public class BotConversationState
+{
+    public ulong UserId { get; set; }
+    public BotConversationStep Step { get; set; } = BotConversationStep.Idle;
+    public string? DraftDisplayName { get; set; }
+    public string? DraftUsername { get; set; }
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    public User? User { get; set; }
+}
+
+public enum BotConversationStep
+{
+    Idle = 0,
+    AwaitingDisplayName = 1,
+    AwaitingUsername = 2,
+    AwaitingTokenUsername = 3,
+    AwaitingRevokeUsername = 4
 }
 
 /// <summary>

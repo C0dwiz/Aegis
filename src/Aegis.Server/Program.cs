@@ -58,6 +58,9 @@ public static class Program
 
         await dbContext.Database.MigrateAsync();
 
+        var botManagementService = scope.ServiceProvider.GetRequiredService<IBotManagementService>();
+        await botManagementService.EnsureBotFatherExistsAsync();
+
         logger.LogInformation("Database schema is ready");
     }
 
@@ -110,6 +113,9 @@ public static class Program
                 services.AddScoped<IChannelRepository, ChannelRepository>();
                 services.AddScoped<IPrivateChatRepository, PrivateChatRepository>();
                 services.AddScoped<IGroupRepository, GroupRepository>();
+                services.AddScoped<IBotRepository, BotRepository>();
+                services.AddScoped<IBotTokenRepository, BotTokenRepository>();
+                services.AddScoped<IBotConversationStateRepository, BotConversationStateRepository>();
 
                 // Register services
                 services.AddScoped<IUserRegistrationService, UserRegistrationService>();
@@ -119,6 +125,7 @@ public static class Program
                 services.AddScoped<IChannelService, ChannelService>();
                 services.AddScoped<IGroupService, GroupService>();
                 services.AddScoped<IMessageService, MessageService>();
+                services.AddScoped<IBotManagementService, BotManagementService>();
 
                 // Register core services (singletons - no DB dependencies)
                 services.AddSingleton<Aegis.Common.Logging.ILogger>(_ =>

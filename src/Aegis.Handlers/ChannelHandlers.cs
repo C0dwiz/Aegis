@@ -282,6 +282,7 @@ public class PrivateChatMessageHandler : IMessageHandler
     
     private readonly IMessageService _messageService;
     private readonly IUserSearchService _userSearchService;
+    private readonly IBotManagementService _botManagementService;
     private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;
     private readonly ILogger<PrivateChatMessageHandler> _logger;
@@ -289,12 +290,14 @@ public class PrivateChatMessageHandler : IMessageHandler
     public PrivateChatMessageHandler(
         IMessageService messageService,
         IUserSearchService userSearchService,
+        IBotManagementService botManagementService,
         SessionManager sessionManager,
         IMessageSender messageSender,
         ILogger<PrivateChatMessageHandler> logger)
     {
         _messageService = messageService;
         _userSearchService = userSearchService;
+        _botManagementService = botManagementService;
         _sessionManager = sessionManager;
         _messageSender = messageSender;
         _logger = logger;
@@ -315,6 +318,34 @@ public class PrivateChatMessageHandler : IMessageHandler
             if (payload == null)
             {
                 await SendResponseAsync(context, message.SequenceId, new PrivateChatMessageResponse(false, MessageText: "Invalid payload"));
+                return;
+            }
+
+            // Intercept messages sent to BotFather and execute command flow.
+            if (await _botManagementService.IsBotFatherAsync(payload.ToUserId))
+            {
+                var replies = await _botManagementService.ProcessBotFatherMessageAsync(session.UserId, payload.Content);
+                foreach (var reply in replies)
+                {
+                    var eventPayload = JsonSerializer.SerializeToUtf8Bytes(new PrivateChatMessageEventPayload(
+                        Id: 0,
+                        FromUserId: payload.ToUserId,
+                        ToUserId: session.UserId,
+                        Content: reply,
+                        ContentType: MessageContentType.Text,
+                        CreatedAt: DateTime.UtcNow,
+                        FromUsername: "BotFather",
+                        Username: "BotFather"));
+
+                    await _messageSender.SendProtocolMessageAsync(
+                        context.ConnectionId,
+                        (ushort)MessageType.PrivateChatMessageEvent,
+                        0,
+                        eventPayload);
+                }
+
+                await SendResponseAsync(context, message.SequenceId,
+                    new PrivateChatMessageResponse(true, 0, "BotFather command processed"));
                 return;
             }
 

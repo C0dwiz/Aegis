@@ -32,6 +32,9 @@ public class AegisDbContext : DbContext
     public DbSet<ChannelMember> ChannelMembers { get; set; }
     public DbSet<ChannelMessage> ChannelMessages { get; set; }
     public DbSet<PrivateChat> PrivateChats { get; set; }
+    public DbSet<Bot> Bots { get; set; }
+    public DbSet<BotToken> BotTokens { get; set; }
+    public DbSet<BotConversationState> BotConversationStates { get; set; }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
@@ -182,6 +185,35 @@ public class AegisDbContext : DbContext
             entity.HasOne(e => e.LastMessage).WithMany().HasForeignKey(e => e.LastMessageId)
                 .OnDelete(DeleteBehavior.SetNull);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
+        });
+
+        // Bot configuration
+        modelBuilder.Entity<Bot>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.Username).IsUnique();
+            entity.HasOne(e => e.OwnerUser).WithMany(u => u.OwnedBots).HasForeignKey(e => e.OwnerUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.User).WithMany(u => u.BotAccounts).HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
+        });
+
+        modelBuilder.Entity<BotToken>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.TokenHash).IsUnique();
+            entity.HasOne(e => e.Bot).WithMany(b => b.Tokens).HasForeignKey(e => e.BotId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
+        });
+
+        modelBuilder.Entity<BotConversationState>(entity =>
+        {
+            entity.HasKey(e => e.UserId);
+            entity.HasOne(e => e.User).WithMany().HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
     }
 }

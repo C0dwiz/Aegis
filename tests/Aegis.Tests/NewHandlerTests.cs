@@ -23,6 +23,7 @@ public class NewHandlerTests : IDisposable
     private readonly Mock<IUserRegistrationService> _mockRegistrationService;
     private readonly Mock<IUserSearchService> _mockSearchService;
     private readonly Mock<IMessageService> _mockMessageService;
+    private readonly Mock<IBotManagementService> _mockBotManagementService;
     private readonly Mock<IChannelService> _mockChannelService;
     private readonly Mock<IChannelRepository> _mockChannelRepository;
     private readonly Mock<IMessageSender> _mockMessageSender;
@@ -51,6 +52,7 @@ public class NewHandlerTests : IDisposable
         _mockRegistrationService = new Mock<IUserRegistrationService>();
         _mockSearchService = new Mock<IUserSearchService>();
         _mockMessageService = new Mock<IMessageService>();
+        _mockBotManagementService = new Mock<IBotManagementService>();
         _mockChannelService = new Mock<IChannelService>();
         _mockChannelRepository = new Mock<IChannelRepository>();
         _mockMessageSender = new Mock<IMessageSender>();
@@ -69,7 +71,13 @@ public class NewHandlerTests : IDisposable
         _searchHandler = new UserSearchHandler(_mockSearchService.Object, _sessionManager, _mockMessageSender.Object, _rateLimiter, _mockSearchLogger.Object);
         _channelMessageHandler = new ChannelMessageHandler(_mockMessageService.Object, _mockChannelRepository.Object, _sessionManager, _mockMessageSender.Object, _mockChannelLogger.Object);
         _channelCreateHandler = new ChannelCreateHandler(_mockChannelService.Object, _sessionManager, _mockMessageSender.Object, _mockChannelCreateLogger.Object);
-        _privateChatMessageHandler = new PrivateChatMessageHandler(_mockMessageService.Object, _mockSearchService.Object, _sessionManager, _mockMessageSender.Object, _mockPrivateChatLogger.Object);
+        _privateChatMessageHandler = new PrivateChatMessageHandler(
+            _mockMessageService.Object,
+            _mockSearchService.Object,
+            _mockBotManagementService.Object,
+            _sessionManager,
+            _mockMessageSender.Object,
+            _mockPrivateChatLogger.Object);
     }
 
     [Fact]

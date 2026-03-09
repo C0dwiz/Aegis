@@ -21,6 +21,7 @@
     <ProjectReference Include="..\..\src\Aegis.Transport\Aegis.Transport.csproj" />
     <ProjectReference Include="..\..\src\Aegis.Data\Aegis.Data.csproj" />
     <ProjectReference Include="..\..\src\Aegis.Handlers\Aegis.Handlers.csproj" />
+    <ProjectReference Include="..\..\src\Aegis.BotApi\Aegis.BotApi.csproj" />
   </ItemGroup>
   
   <ItemGroup>

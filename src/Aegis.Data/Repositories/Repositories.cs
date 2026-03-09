@@ -123,6 +123,154 @@ public class UserRepository : Repository<User>, IUserRepository
     }
 }
 
+// ===================== BOT REPOSITORIES =====================
+
+public interface IBotRepository : IRepository<Bot>
+{
+    Task<Bot?> GetByUsernameAsync(string username);
+    Task<Bot?> GetByUserIdAsync(ulong userId);
+    Task<IEnumerable<Bot>> GetByOwnerUserIdAsync(ulong ownerUserId);
+}
+
+public class BotRepository : Repository<Bot>, IBotRepository
+{
+    private readonly AegisDbContext _context;
+
+    public BotRepository(AegisDbContext context) : base(context)
+    {
+        _context = context;
+    }
+
+    public async Task<Bot?> GetByUsernameAsync(string username)
+    {
+        return await _context.Bots
+            .Include(b => b.User)
+            .Include(b => b.OwnerUser)
+            .FirstOrDefaultAsync(b => b.Username == username && b.IsActive);
+    }
+
+    public async Task<Bot?> GetByUserIdAsync(ulong userId)
+    {
+        return await _context.Bots
+            .Include(b => b.User)
+            .Include(b => b.OwnerUser)
+            .FirstOrDefaultAsync(b => b.UserId == userId && b.IsActive);
+    }
+
+    public async Task<IEnumerable<Bot>> GetByOwnerUserIdAsync(ulong ownerUserId)
+    {
+        return await _context.Bots
+            .Include(b => b.User)
+            .Where(b => b.OwnerUserId == ownerUserId && b.IsActive)
+            .OrderBy(b => b.Username)
+            .ToListAsync();
+    }
+}
+
+public interface IBotTokenRepository : IRepository<BotToken>
+{
+    Task<BotToken?> GetActiveByTokenHashAsync(string tokenHash);
+    Task<BotToken?> GetLatestActiveByBotIdAsync(ulong botId);
+    Task RevokeAllActiveByBotIdAsync(ulong botId);
+}
+
+public class BotTokenRepository : Repository<BotToken>, IBotTokenRepository
+{
+    private readonly AegisDbContext _context;
+
+    public BotTokenRepository(AegisDbContext context) : base(context)
+    {
+        _context = context;
+    }
+
+    public async Task<BotToken?> GetActiveByTokenHashAsync(string tokenHash)
+    {
+        return await _context.BotTokens
+            .Include(t => t.Bot)
+            .ThenInclude(b => b!.User)
+            .FirstOrDefaultAsync(t => t.TokenHash == tokenHash && t.RevokedAt == null && t.Bot!.IsActive);
+    }
+
+    public async Task<BotToken?> GetLatestActiveByBotIdAsync(ulong botId)
+    {
+        return await _context.BotTokens
+            .Where(t => t.BotId == botId && t.RevokedAt == null)
+            .OrderByDescending(t => t.CreatedAt)
+            .FirstOrDefaultAsync();
+    }
+
+    public async Task RevokeAllActiveByBotIdAsync(ulong botId)
+    {
+        var now = DateTime.UtcNow;
+        var tokens = await _context.BotTokens
+            .Where(t => t.BotId == botId && t.RevokedAt == null)
+            .ToListAsync();
+
+        foreach (var token in tokens)
+        {
+            token.RevokedAt = now;
+        }
+
+        await _context.SaveChangesAsync();
+    }
+}
+
+public interface IBotConversationStateRepository
+{
+    Task<BotConversationState> GetOrCreateAsync(ulong userId);
+    Task<BotConversationState> UpdateAsync(BotConversationState state);
+    Task ResetAsync(ulong userId);
+}
+
+public class BotConversationStateRepository : IBotConversationStateRepository
+{
+    private readonly AegisDbContext _context;
+
+    public BotConversationStateRepository(AegisDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<BotConversationState> GetOrCreateAsync(ulong userId)
+    {
+        var state = await _context.BotConversationStates.FirstOrDefaultAsync(x => x.UserId == userId);
+        if (state != null)
+        {
+            return state;
+        }
+
+        state = new BotConversationState
+        {
+            UserId = userId,
+            Step = BotConversationStep.Idle,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        _context.BotConversationStates.Add(state);
+        await _context.SaveChangesAsync();
+        return state;
+    }
+
+    public async Task<BotConversationState> UpdateAsync(BotConversationState state)
+    {
+        state.UpdatedAt = DateTime.UtcNow;
+        _context.BotConversationStates.Update(state);
+        await _context.SaveChangesAsync();
+        return state;
+    }
+
+    public async Task ResetAsync(ulong userId)
+    {
+        var state = await GetOrCreateAsync(userId);
+        state.Step = BotConversationStep.Idle;
+        state.DraftDisplayName = null;
+        state.DraftUsername = null;
+        state.UpdatedAt = DateTime.UtcNow;
+        _context.BotConversationStates.Update(state);
+        await _context.SaveChangesAsync();
+    }
+}
+
 // ===================== SESSION REPOSITORY =====================
 
 public interface ISessionRepository : IRepository<Session>
