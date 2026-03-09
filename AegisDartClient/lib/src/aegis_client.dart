@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'message.dart';
 import 'message_type.dart';
 import 'message_payloads.dart';
+import 'event_dispatcher.dart';
 import 'transport.dart';
 import 'exceptions.dart';
 import 'protocol_constants.dart';
@@ -15,12 +16,21 @@ class AegisClient {
   bool _isAuthenticated = false;
   int? _userId;
   String? _username;
+  late final AegisEventDispatcher events;
 
   // Per-client sequence-ID counter so responses can be matched unambiguously.
   int _nextSeqId = 1;
 
   /// Stream of incoming messages (unsolicited pushes from the server)
   Stream<Message> get messages => _transport.messages;
+
+  /// Typed stream of incoming private message events.
+  Stream<PrivateChatMessageEvent> get privateMessageEvents =>
+      events.privateMessageEvents;
+
+  /// Typed stream of incoming channel message events.
+  Stream<ChannelMessageEvent> get channelMessageEvents =>
+      events.channelMessageEvents;
 
   /// Stream of disconnect events
   Stream<void> get disconnects => _transport.disconnects;
@@ -40,6 +50,7 @@ class AegisClient {
   /// Create a new Aegis client
   AegisClient() {
     _transport = AegisTransport();
+    events = AegisEventDispatcher(_transport.messages);
   }
 
   // ─── Connection ────────────────────────────────────────────────────────────
@@ -60,6 +71,7 @@ class AegisClient {
 
   /// Release all resources.
   void dispose() {
+    events.dispose().ignore();
     _transport.dispose();
   }
 
@@ -172,6 +184,77 @@ class AegisClient {
     final response = await _sendAndWaitResponse(msg,
         expectedTypes: {MessageType.privateChatMessage, MessageType.ack});
     return PrivateChatMessageResponse.fromBytes(response.payload);
+  }
+
+  /// Get all chats for the authenticated user.
+  Future<ChatListResponse> getChatList() async {
+    _requireAuthenticated();
+
+    final request = ChatListRequest();
+    final msg = Message.withType(MessageType.chatListRequest, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.chatListResponse});
+    return ChatListResponse.fromBytes(response.payload);
+  }
+
+  /// Get private chat history with a peer.
+  Future<PrivateChatHistoryResponse> getPrivateHistory(
+    int peerUserId, {
+    int limit = 50,
+    int? beforeMessageId,
+  }) async {
+    _requireAuthenticated();
+
+    final request = PrivateChatHistoryRequest(
+      peerUserId: peerUserId,
+      limit: limit,
+      beforeMessageId: beforeMessageId,
+    );
+
+    final msg = Message.withType(
+      MessageType.privateChatHistoryRequest,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.privateChatHistoryResponse});
+    return PrivateChatHistoryResponse.fromBytes(response.payload);
+  }
+
+  /// Get channel history.
+  Future<ChannelHistoryResponse> getChannelHistory(
+    int channelId, {
+    int limit = 50,
+    int? beforeMessageId,
+  }) async {
+    _requireAuthenticated();
+
+    final request = ChannelHistoryRequest(
+      channelId: channelId,
+      limit: limit,
+      beforeMessageId: beforeMessageId,
+    );
+
+    final msg = Message.withType(
+      MessageType.channelHistoryRequest,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.channelHistoryResponse});
+    return ChannelHistoryResponse.fromBytes(response.payload);
+  }
+
+  /// Register a callback for private message events.
+  StreamSubscription<PrivateChatMessageEvent> onPrivateMessageEvent(
+    void Function(PrivateChatMessageEvent event) handler,
+  ) {
+    return privateMessageEvents.listen(handler);
+  }
+
+  /// Register a callback for channel message events.
+  StreamSubscription<ChannelMessageEvent> onChannelMessageEvent(
+    void Function(ChannelMessageEvent event) handler,
+  ) {
+    return channelMessageEvents.listen(handler);
   }
 
   // ─── Channels ───────────────────────────────────────────────────────────────

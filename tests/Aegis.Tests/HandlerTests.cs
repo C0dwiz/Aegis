@@ -138,6 +138,8 @@ public class HandlerTests
             new RateLimiter(new Aegis.Common.Configuration.RateLimitOptions()),
             _sessionManager,
             _messageSender,
+            new Mock<IMessageRepository>().Object,
+            new Mock<IUserSearchService>().Object,
             new Mock<Microsoft.Extensions.Logging.ILogger<AuthHandler>>().Object);
         var context = new TestConnectionContext(12345ul);
         var message = new Aegis.Protocol.Message
@@ -344,6 +346,7 @@ public class HandlerTests
         var searchHandler = new UserSearchHandler(mockSearchService.Object, _sessionManager, _messageSender, rateLimiter, new Mock<ILogger<UserSearchHandler>>().Object);
         var channelHandler = new ChannelMessageHandler(
             new Mock<IMessageService>().Object,
+            new Mock<IChannelRepository>().Object,
             _sessionManager,
             _messageSender,
             new Mock<Microsoft.Extensions.Logging.ILogger<ChannelMessageHandler>>().Object);
@@ -418,6 +421,7 @@ public class HandlerTests
         var searchHandler = new UserSearchHandler(mockSearchService.Object, _sessionManager, _messageSender, rateLimiter, new Mock<ILogger<UserSearchHandler>>().Object);
         var channelHandler = new ChannelMessageHandler(
             new Mock<IMessageService>().Object,
+            new Mock<IChannelRepository>().Object,
             _sessionManager,
             _messageSender,
             new Mock<Microsoft.Extensions.Logging.ILogger<ChannelMessageHandler>>().Object);

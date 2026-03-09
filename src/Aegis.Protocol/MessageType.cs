@@ -54,7 +54,17 @@ public enum MessageType : ushort
     GroupMessageResponse = 39,
 
     // Group management
-    GroupCreateResponse = 40
+    GroupCreateResponse = 40,
+
+    // Chat bootstrap APIs and server-side events
+    ChatListRequest = 41,
+    ChatListResponse = 42,
+    PrivateChatHistoryRequest = 43,
+    PrivateChatHistoryResponse = 44,
+    ChannelHistoryRequest = 45,
+    ChannelHistoryResponse = 46,
+    PrivateChatMessageEvent = 47,
+    ChannelMessageEvent = 48
 }
 
 /// <summary>

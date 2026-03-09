@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Aegis.Common;
 using Aegis.Data.Entities;
+using Aegis.Data.Repositories;
 using Aegis.Data.Services;
 using Aegis.Protocol;
 using Aegis.Transport;
@@ -97,17 +98,20 @@ public class ChannelMessageHandler : IMessageHandler
     public MessageType Type => MessageType.ChannelMessage;
     
     private readonly IMessageService _messageService;
+    private readonly IChannelRepository _channelRepository;
     private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;
     private readonly ILogger<ChannelMessageHandler> _logger;
 
     public ChannelMessageHandler(
         IMessageService messageService,
+        IChannelRepository channelRepository,
         SessionManager sessionManager,
         IMessageSender messageSender,
         ILogger<ChannelMessageHandler> logger)
     {
         _messageService = messageService;
+        _channelRepository = channelRepository;
         _sessionManager = sessionManager;
         _messageSender = messageSender;
         _logger = logger;
@@ -134,6 +138,38 @@ public class ChannelMessageHandler : IMessageHandler
             var channelMsg = await _messageService.SendChannelMessageAsync(
                 payload.ChannelId, session.UserId, payload.Content,
                 payload.ContentType, payload.ReplyToMessageId);
+
+            var channel = await _channelRepository.GetByIdAsync(payload.ChannelId);
+            var channelMembers = await _channelRepository.GetChannelMembersAsync(payload.ChannelId);
+
+            var eventPayload = JsonSerializer.SerializeToUtf8Bytes(new ChannelMessageEventPayload(
+                Id: channelMsg.Id,
+                ChannelId: payload.ChannelId,
+                FromUserId: session.UserId,
+                Content: channelMsg.Content,
+                ContentType: channelMsg.ContentType,
+                CreatedAt: channelMsg.CreatedAt,
+                FromUsername: session.Username,
+                ChannelName: channel?.Name));
+
+            foreach (var member in channelMembers)
+            {
+                if (member.UserId == session.UserId)
+                {
+                    continue;
+                }
+
+                if (!_sessionManager.TryGetConnectionIdByUserId(member.UserId, out var recipientConnectionId))
+                {
+                    continue;
+                }
+
+                await _messageSender.SendProtocolMessageAsync(
+                    recipientConnectionId,
+                    (ushort)MessageType.ChannelMessageEvent,
+                    0,
+                    eventPayload);
+            }
 
             await SendResponseAsync(context, message.SequenceId, 
                 new ChannelMessageResponse(true, channelMsg.Id, "Message sent"));
@@ -296,17 +332,20 @@ public class PrivateChatMessageHandler : IMessageHandler
             // Push the message to the recipient if they are online
             if (_sessionManager.TryGetConnectionIdByUserId(payload.ToUserId, out var recipientConnId))
             {
-                var pushPayload = JsonSerializer.SerializeToUtf8Bytes(new IncomingPrivateMessage(
-                    privateMsg.Id,
-                    session.UserId,
-                    session.Username,
-                    payload.Content,
-                    privateMsg.CreatedAt));
+                var pushPayload = JsonSerializer.SerializeToUtf8Bytes(new PrivateChatMessageEventPayload(
+                    Id: privateMsg.Id,
+                    FromUserId: session.UserId,
+                    ToUserId: payload.ToUserId,
+                    Content: privateMsg.Content,
+                    ContentType: privateMsg.ContentType,
+                    CreatedAt: privateMsg.CreatedAt,
+                    FromUsername: session.Username,
+                    Username: session.Username));
 
                 await _messageSender.SendProtocolMessageAsync(
                     recipientConnId,
-                    (ushort)MessageType.PrivateChatMessage,
-                    message.SequenceId,
+                    (ushort)MessageType.PrivateChatMessageEvent,
+                    0,
                     pushPayload);
             }
 
@@ -332,13 +371,6 @@ public class PrivateChatMessageHandler : IMessageHandler
             sequenceId,
             payload);
     }
-
-    private sealed record IncomingPrivateMessage(
-        ulong MessageId,
-        ulong FromUserId,
-        string FromUsername,
-        string Content,
-        DateTime CreatedAtUtc);
 }
 
 

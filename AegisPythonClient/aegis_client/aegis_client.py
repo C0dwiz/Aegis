@@ -13,15 +13,23 @@ from .exceptions import AuthenticationException, NotConnectedException, Protocol
 from .message import Message, MessageFlags, MessageType
 from .message_payloads import (
     AuthResponse,
+    ChannelHistoryRequest,
+    ChannelHistoryResponse,
+    ChannelMessageEvent,
     ChannelCreateRequest,
     ChannelCreateResponse,
     ChannelJoinRequest,
     ChannelJoinResponse,
     ChannelMessageRequest,
     ChannelMessageResponse,
+    ChatListRequest,
+    ChatListResponse,
     ChannelType,
     HandshakeResponse,
     MessageContentType,
+    PrivateChatHistoryRequest,
+    PrivateChatHistoryResponse,
+    PrivateChatMessageEvent,
     PrivateChatMessageRequest,
     PrivateChatMessageResponse,
     RegistrationRequest,
@@ -30,7 +38,7 @@ from .message_payloads import (
     UserSearchResponse,
 )
 from .protocol_constants import ProtocolConstants
-from .transport import AegisTransport
+from .transport import AegisTransport, EventHook
 
 
 class AegisClient:
@@ -45,6 +53,9 @@ class AegisClient:
         self._session_key: Optional[bytes] = None
         self._mac_key: Optional[bytes] = None
         self._handshake_complete = False
+        self._private_message_events = EventHook()
+        self._channel_message_events = EventHook()
+        self._transport.add_message_listener(self._route_incoming_event)
 
     @property
     def messages(self):
@@ -53,6 +64,14 @@ class AegisClient:
     @property
     def disconnects(self):
         return self._transport.disconnects
+
+    @property
+    def private_message_events(self):
+        return self._private_message_events
+
+    @property
+    def channel_message_events(self):
+        return self._channel_message_events
 
     @property
     def is_connected(self) -> bool:
@@ -64,6 +83,12 @@ class AegisClient:
 
     def add_message_listener(self, listener) -> None:
         self._transport.add_message_listener(listener)
+
+    def add_private_message_event_listener(self, listener) -> None:
+        self._private_message_events.add_listener(listener)
+
+    def add_channel_message_event_listener(self, listener) -> None:
+        self._channel_message_events.add_listener(listener)
 
     def add_disconnect_listener(self, listener) -> None:
         self._transport.add_disconnect_listener(listener)
@@ -157,6 +182,65 @@ class AegisClient:
         sequence_id = self._send_request(MessageType.PRIVATE_CHAT_MESSAGE, request.to_bytes(), MessageFlags.REQUIRES_ACK)
         response_message = self._wait_for_response(sequence_id, (MessageType.ACK,), timeout=10)
         return PrivateChatMessageResponse.from_bytes(response_message.payload)
+
+    def get_chat_list(self) -> ChatListResponse:
+        if not self._transport.is_connected:
+            raise NotConnectedException()
+        if not self._is_authenticated:
+            raise AuthenticationException("Client is not authenticated")
+
+        request = ChatListRequest()
+        sequence_id = self._send_request(MessageType.CHAT_LIST_REQUEST, request.to_bytes(), MessageFlags.REQUIRES_ACK)
+        response_message = self._wait_for_response(sequence_id, (MessageType.CHAT_LIST_RESPONSE,), timeout=10)
+        return ChatListResponse.from_bytes(response_message.payload)
+
+    def get_private_history(
+        self,
+        peer_user_id: int,
+        limit: int = 50,
+        before_message_id: Optional[int] = None,
+    ) -> PrivateChatHistoryResponse:
+        if not self._transport.is_connected:
+            raise NotConnectedException()
+        if not self._is_authenticated:
+            raise AuthenticationException("Client is not authenticated")
+
+        request = PrivateChatHistoryRequest(
+            peer_user_id=peer_user_id,
+            limit=limit,
+            before_message_id=before_message_id,
+        )
+        sequence_id = self._send_request(
+            MessageType.PRIVATE_CHAT_HISTORY_REQUEST,
+            request.to_bytes(),
+            MessageFlags.REQUIRES_ACK,
+        )
+        response_message = self._wait_for_response(sequence_id, (MessageType.PRIVATE_CHAT_HISTORY_RESPONSE,), timeout=10)
+        return PrivateChatHistoryResponse.from_bytes(response_message.payload)
+
+    def get_channel_history(
+        self,
+        channel_id: int,
+        limit: int = 50,
+        before_message_id: Optional[int] = None,
+    ) -> ChannelHistoryResponse:
+        if not self._transport.is_connected:
+            raise NotConnectedException()
+        if not self._is_authenticated:
+            raise AuthenticationException("Client is not authenticated")
+
+        request = ChannelHistoryRequest(
+            channel_id=channel_id,
+            limit=limit,
+            before_message_id=before_message_id,
+        )
+        sequence_id = self._send_request(
+            MessageType.CHANNEL_HISTORY_REQUEST,
+            request.to_bytes(),
+            MessageFlags.REQUIRES_ACK,
+        )
+        response_message = self._wait_for_response(sequence_id, (MessageType.CHANNEL_HISTORY_RESPONSE,), timeout=10)
+        return ChannelHistoryResponse.from_bytes(response_message.payload)
 
     def send_message(self, text: str, to_user_id: Optional[int] = None) -> None:
         if not self._transport.is_connected:
@@ -321,3 +405,17 @@ class AegisClient:
             self._pending_messages.append(message)
 
         return None
+
+    def _route_incoming_event(self, message: Message) -> None:
+        if message.type == MessageType.PRIVATE_CHAT_MESSAGE_EVENT:
+            try:
+                event = PrivateChatMessageEvent.from_bytes(message.payload)
+                self._private_message_events.emit(event)
+            except Exception:
+                return
+        elif message.type == MessageType.CHANNEL_MESSAGE_EVENT:
+            try:
+                event = ChannelMessageEvent.from_bytes(message.payload)
+                self._channel_message_events.emit(event)
+            except Exception:
+                return

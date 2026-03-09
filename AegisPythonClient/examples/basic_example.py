@@ -27,12 +27,28 @@ def main():
         print("Подключено успешно, handshake завершен.")
 
         def handle_message(message):
-            print(f"[event] Получено сообщение: {message.type.name} seq={message.sequence_id}")
+            print(f"[event/raw] type={message.type.name} seq={message.sequence_id}")
+
+        def handle_private_event(event):
+            print(
+                "[event/private] "
+                f"id={event.id} from={event.from_user_id} "
+                f"content={event.content!r}"
+            )
+
+        def handle_channel_event(event):
+            print(
+                "[event/channel] "
+                f"id={event.id} channel={event.channel_id} "
+                f"content={event.content!r}"
+            )
 
         def handle_disconnect():
             print("Отключено от сервера")
 
         client.messages.listen = handle_message
+        client.add_private_message_event_listener(handle_private_event)
+        client.add_channel_message_event_listener(handle_channel_event)
         client.disconnects.listen = handle_disconnect
 
         print("\n--- Регистрация пользователя ---")
@@ -74,6 +90,15 @@ def main():
         print("Канал создан успешно!")
         print(f"  ID: {channel_response.channel_id}")
 
+        print("\n--- get_chat_list ---")
+        chat_list = client.get_chat_list()
+        print(f"ChatList success: {chat_list.success}, chats: {len(chat_list.chats)}")
+        for chat in chat_list.chats[:5]:
+            print(
+                f"  - chatId={chat.chat_id} type={chat.type} "
+                f"title={chat.title!r} unread={chat.unread_count}"
+            )
+
         message_response = client.send_channel_message(
             channel_response.channel_id,
             "Hello from Python client!",
@@ -89,6 +114,15 @@ def main():
         print("\n--- Базовое сообщение ---")
         client.send_message("Hello from Python client! (legacy method)")
         print("Базовое сообщение отправлено!")
+
+        print("\n--- Private event demo (message to self) ---")
+        if auth_response.user_id > 0:
+            pm = client.send_private_message(
+                auth_response.user_id,
+                "Self private message for event subscription demo",
+                content_type=MessageContentType.TEXT,
+            )
+            print(f"Private send success: {pm.success}, id={pm.message_id}")
 
         print("\n--- Ping ---")
         client.ping()

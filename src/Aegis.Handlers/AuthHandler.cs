@@ -1,6 +1,7 @@
 using Aegis.Protocol;
 using Aegis.Transport;
 using Aegis.Common;
+using Aegis.Data.Repositories;
 using Aegis.Data.Services;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -30,6 +31,8 @@ public class AuthHandler : IMessageHandler
     private readonly RateLimiter _rateLimiter;
     private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;
+    private readonly IMessageRepository _messageRepository;
+    private readonly IUserSearchService _userSearchService;
     private readonly ILogger<AuthHandler> _logger;
     
     public MessageType Type => MessageType.Auth;
@@ -39,12 +42,16 @@ public class AuthHandler : IMessageHandler
         RateLimiter rateLimiter,
         SessionManager sessionManager,
         IMessageSender messageSender,
+        IMessageRepository messageRepository,
+        IUserSearchService userSearchService,
         ILogger<AuthHandler> logger)
     {
         _authService = authService;
         _rateLimiter = rateLimiter;
         _sessionManager = sessionManager;
         _messageSender = messageSender;
+        _messageRepository = messageRepository;
+        _userSearchService = userSearchService;
         _logger = logger;
     }
     
@@ -90,6 +97,8 @@ public class AuthHandler : IMessageHandler
                         Username = session.User.Username,
                         SessionToken = string.Empty
                     });
+
+                    await DeliverUndeliveredMessagesAsync(context.ConnectionId, session.UserId);
                     return;
                 }
                 await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
@@ -138,6 +147,8 @@ public class AuthHandler : IMessageHandler
                 Username = user.Username,
                 SessionToken = string.Empty
             });
+
+            await DeliverUndeliveredMessagesAsync(context.ConnectionId, user.Id);
         }
         catch (JsonException ex)
         {
@@ -156,6 +167,54 @@ public class AuthHandler : IMessageHandler
                 Success = false,
                 Error = "Internal server error"
             });
+        }
+    }
+
+    private async Task DeliverUndeliveredMessagesAsync(ulong connectionId, ulong userId)
+    {
+        try
+        {
+            var undelivered = (await _messageRepository.GetUndeliveredMessagesAsync(userId)).ToList();
+            if (undelivered.Count == 0)
+            {
+                return;
+            }
+
+            var senderNames = new Dictionary<ulong, string>();
+            foreach (var senderId in undelivered.Select(m => m.FromUserId).Distinct())
+            {
+                var sender = await _userSearchService.FindUserByIdAsync(senderId);
+                if (sender != null)
+                {
+                    senderNames[senderId] = sender.Username;
+                }
+            }
+
+            foreach (var message in undelivered.OrderBy(m => m.CreatedAt))
+            {
+                var payload = JsonSerializer.SerializeToUtf8Bytes(new PrivateChatMessageEventPayload(
+                    Id: message.Id,
+                    FromUserId: message.FromUserId,
+                    ToUserId: message.ToUserId,
+                    Content: message.Content,
+                    ContentType: message.ContentType,
+                    CreatedAt: message.CreatedAt,
+                    FromUsername: senderNames.GetValueOrDefault(message.FromUserId),
+                    Username: senderNames.GetValueOrDefault(message.FromUserId)));
+
+                await _messageSender.SendProtocolMessageAsync(
+                    connectionId,
+                    (ushort)MessageType.PrivateChatMessageEvent,
+                    0,
+                    payload);
+            }
+
+            await _messageRepository.MarkMessagesDeliveredAsync(undelivered.Select(x => x.Id));
+            _logger.LogInformation("Delivered {Count} pending messages to user {UserId}", undelivered.Count, userId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to deliver pending messages to user {UserId}", userId);
         }
     }
     

@@ -50,7 +50,17 @@ enum MessageType {
   // Group messaging
   groupMessageSend(38),
   groupMessageResponse(39),
-  groupCreateResponse(40);
+  groupCreateResponse(40),
+
+  // Chat bootstrap APIs and server-side events
+  chatListRequest(41),
+  chatListResponse(42),
+  privateChatHistoryRequest(43),
+  privateChatHistoryResponse(44),
+  channelHistoryRequest(45),
+  channelHistoryResponse(46),
+  privateChatMessageEvent(47),
+  channelMessageEvent(48);
 
   const MessageType(this.value);
   final int value;

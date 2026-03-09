@@ -616,6 +616,332 @@ class PrivateChatMessageResponse {
   }
 }
 
+/// Chat list request payload
+class ChatListRequest {
+  Map<String, dynamic> toJson() => <String, dynamic>{};
+  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+}
+
+/// Chat list response item
+class ChatListItem {
+  final int chatId;
+  final String type;
+  final String title;
+  final String? avatarUrl;
+  final String? lastMessage;
+  final DateTime? lastMessageAt;
+  final int unreadCount;
+  final int? peerUserId;
+  final int? channelId;
+
+  ChatListItem({
+    required this.chatId,
+    required this.type,
+    required this.title,
+    this.avatarUrl,
+    this.lastMessage,
+    this.lastMessageAt,
+    this.unreadCount = 0,
+    this.peerUserId,
+    this.channelId,
+  });
+
+  factory ChatListItem.fromJson(Map<String, dynamic> json) => ChatListItem(
+    chatId: json['ChatId'] as int,
+    type: json['Type'] as String,
+    title: json['Title'] as String,
+    avatarUrl: json['AvatarUrl'] as String?,
+    lastMessage: json['LastMessage'] as String?,
+    lastMessageAt: json['LastMessageAt'] != null
+        ? DateTime.parse(json['LastMessageAt'] as String)
+        : null,
+    unreadCount: json['UnreadCount'] as int? ?? 0,
+    peerUserId: json['PeerUserId'] as int?,
+    channelId: json['ChannelId'] as int?,
+  );
+}
+
+/// Chat list response payload
+class ChatListResponse {
+  final bool success;
+  final List<ChatListItem> chats;
+  final String? message;
+
+  ChatListResponse({
+    required this.success,
+    required this.chats,
+    this.message,
+  });
+
+  factory ChatListResponse.fromJson(Map<String, dynamic> json) => ChatListResponse(
+    success: json['Success'] as bool,
+    chats: (json['Chats'] as List<dynamic>? ?? const <dynamic>[])
+        .map((item) => ChatListItem.fromJson(item as Map<String, dynamic>))
+        .toList(),
+    message: json['Message'] as String?,
+  );
+
+  factory ChatListResponse.fromBytes(List<int> bytes) {
+    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    return ChatListResponse.fromJson(json);
+  }
+}
+
+/// Private chat history request payload
+class PrivateChatHistoryRequest {
+  final int peerUserId;
+  final int limit;
+  final int? beforeMessageId;
+
+  PrivateChatHistoryRequest({
+    required this.peerUserId,
+    this.limit = 50,
+    this.beforeMessageId,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'PeerUserId': peerUserId,
+    'Limit': limit,
+    if (beforeMessageId != null) 'BeforeMessageId': beforeMessageId,
+  };
+
+  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+}
+
+/// Private history message item
+class PrivateChatHistoryItem {
+  final int id;
+  final int fromUserId;
+  final int toUserId;
+  final String content;
+  final MessageContentType contentType;
+  final DateTime createdAt;
+  final String? fromUsername;
+  final String? username;
+
+  PrivateChatHistoryItem({
+    required this.id,
+    required this.fromUserId,
+    required this.toUserId,
+    required this.content,
+    required this.contentType,
+    required this.createdAt,
+    this.fromUsername,
+    this.username,
+  });
+
+  factory PrivateChatHistoryItem.fromJson(Map<String, dynamic> json) =>
+      PrivateChatHistoryItem(
+        id: json['Id'] as int,
+        fromUserId: json['FromUserId'] as int,
+        toUserId: json['ToUserId'] as int,
+        content: json['Content'] as String,
+        contentType: MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
+        createdAt: DateTime.parse(json['CreatedAt'] as String),
+        fromUsername: json['FromUsername'] as String?,
+        username: json['Username'] as String?,
+      );
+}
+
+/// Private chat history response payload
+class PrivateChatHistoryResponse {
+  final bool success;
+  final int peerUserId;
+  final List<PrivateChatHistoryItem> messages;
+  final String? message;
+
+  PrivateChatHistoryResponse({
+    required this.success,
+    required this.peerUserId,
+    required this.messages,
+    this.message,
+  });
+
+  factory PrivateChatHistoryResponse.fromJson(Map<String, dynamic> json) =>
+      PrivateChatHistoryResponse(
+        success: json['Success'] as bool,
+        peerUserId: json['PeerUserId'] as int? ?? 0,
+        messages: (json['Messages'] as List<dynamic>? ?? const <dynamic>[])
+            .map((item) => PrivateChatHistoryItem.fromJson(item as Map<String, dynamic>))
+            .toList(),
+        message: json['Message'] as String?,
+      );
+
+  factory PrivateChatHistoryResponse.fromBytes(List<int> bytes) {
+    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    return PrivateChatHistoryResponse.fromJson(json);
+  }
+}
+
+/// Channel history request payload
+class ChannelHistoryRequest {
+  final int channelId;
+  final int limit;
+  final int? beforeMessageId;
+
+  ChannelHistoryRequest({
+    required this.channelId,
+    this.limit = 50,
+    this.beforeMessageId,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'ChannelId': channelId,
+    'Limit': limit,
+    if (beforeMessageId != null) 'BeforeMessageId': beforeMessageId,
+  };
+
+  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+}
+
+/// Channel history message item
+class ChannelHistoryItem {
+  final int id;
+  final int channelId;
+  final int fromUserId;
+  final String content;
+  final MessageContentType contentType;
+  final DateTime createdAt;
+  final String? fromUsername;
+  final String? channelName;
+
+  ChannelHistoryItem({
+    required this.id,
+    required this.channelId,
+    required this.fromUserId,
+    required this.content,
+    required this.contentType,
+    required this.createdAt,
+    this.fromUsername,
+    this.channelName,
+  });
+
+  factory ChannelHistoryItem.fromJson(Map<String, dynamic> json) =>
+      ChannelHistoryItem(
+        id: json['Id'] as int,
+        channelId: json['ChannelId'] as int,
+        fromUserId: json['FromUserId'] as int,
+        content: json['Content'] as String,
+        contentType: MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
+        createdAt: DateTime.parse(json['CreatedAt'] as String),
+        fromUsername: json['FromUsername'] as String?,
+        channelName: json['ChannelName'] as String?,
+      );
+}
+
+/// Channel history response payload
+class ChannelHistoryResponse {
+  final bool success;
+  final int channelId;
+  final String? channelName;
+  final List<ChannelHistoryItem> messages;
+  final String? message;
+
+  ChannelHistoryResponse({
+    required this.success,
+    required this.channelId,
+    this.channelName,
+    required this.messages,
+    this.message,
+  });
+
+  factory ChannelHistoryResponse.fromJson(Map<String, dynamic> json) =>
+      ChannelHistoryResponse(
+        success: json['Success'] as bool,
+        channelId: json['ChannelId'] as int? ?? 0,
+        channelName: json['ChannelName'] as String?,
+        messages: (json['Messages'] as List<dynamic>? ?? const <dynamic>[])
+            .map((item) => ChannelHistoryItem.fromJson(item as Map<String, dynamic>))
+            .toList(),
+        message: json['Message'] as String?,
+      );
+
+  factory ChannelHistoryResponse.fromBytes(List<int> bytes) {
+    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    return ChannelHistoryResponse.fromJson(json);
+  }
+}
+
+/// Incoming private message event payload
+class PrivateChatMessageEvent {
+  final int id;
+  final int fromUserId;
+  final int toUserId;
+  final String content;
+  final MessageContentType contentType;
+  final DateTime createdAt;
+  final String? fromUsername;
+  final String? username;
+
+  PrivateChatMessageEvent({
+    required this.id,
+    required this.fromUserId,
+    required this.toUserId,
+    required this.content,
+    required this.contentType,
+    required this.createdAt,
+    this.fromUsername,
+    this.username,
+  });
+
+  factory PrivateChatMessageEvent.fromJson(Map<String, dynamic> json) =>
+      PrivateChatMessageEvent(
+        id: json['Id'] as int,
+        fromUserId: json['FromUserId'] as int,
+        toUserId: json['ToUserId'] as int,
+        content: json['Content'] as String,
+        contentType: MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
+        createdAt: DateTime.parse(json['CreatedAt'] as String),
+        fromUsername: json['FromUsername'] as String?,
+        username: json['Username'] as String?,
+      );
+
+  factory PrivateChatMessageEvent.fromBytes(List<int> bytes) {
+    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    return PrivateChatMessageEvent.fromJson(json);
+  }
+}
+
+/// Incoming channel message event payload
+class ChannelMessageEvent {
+  final int id;
+  final int channelId;
+  final int fromUserId;
+  final String content;
+  final MessageContentType contentType;
+  final DateTime createdAt;
+  final String? fromUsername;
+  final String? channelName;
+
+  ChannelMessageEvent({
+    required this.id,
+    required this.channelId,
+    required this.fromUserId,
+    required this.content,
+    required this.contentType,
+    required this.createdAt,
+    this.fromUsername,
+    this.channelName,
+  });
+
+  factory ChannelMessageEvent.fromJson(Map<String, dynamic> json) =>
+      ChannelMessageEvent(
+        id: json['Id'] as int,
+        channelId: json['ChannelId'] as int,
+        fromUserId: json['FromUserId'] as int,
+        content: json['Content'] as String,
+        contentType: MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
+        createdAt: DateTime.parse(json['CreatedAt'] as String),
+        fromUsername: json['FromUsername'] as String?,
+        channelName: json['ChannelName'] as String?,
+      );
+
+  factory ChannelMessageEvent.fromBytes(List<int> bytes) {
+    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    return ChannelMessageEvent.fromJson(json);
+  }
+}
+
 /// Message entity (stored/delivered message, not the wire-level frame)
 class ChatMessage {
   final int id;

@@ -166,6 +166,9 @@ public static class Program
                 services.AddScoped<IMessageHandler, ChannelCreateHandler>();
                 services.AddScoped<IMessageHandler, ChannelJoinHandler>();
                 services.AddScoped<IMessageHandler, PrivateChatMessageHandler>();
+                services.AddScoped<IMessageHandler, ChatListHandler>();
+                services.AddScoped<IMessageHandler, PrivateChatHistoryHandler>();
+                services.AddScoped<IMessageHandler, ChannelHistoryHandler>();
                 services.AddScoped<IMessageHandler, ProfileUpdateHandler>();
                 services.AddScoped<IMessageHandler, ProfileGetHandler>();
                 services.AddScoped<IMessageHandler, MessageEditHandler>();

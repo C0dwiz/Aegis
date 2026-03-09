@@ -9,6 +9,7 @@ using Aegis.Handlers;
 using Aegis.Common;
 using Aegis.Common.Configuration;
 using Aegis.Data;
+using Aegis.Data.Repositories;
 using System.Text.Json;
 using Xunit;
 using Microsoft.EntityFrameworkCore.InMemory;
@@ -23,6 +24,7 @@ public class NewHandlerTests : IDisposable
     private readonly Mock<IUserSearchService> _mockSearchService;
     private readonly Mock<IMessageService> _mockMessageService;
     private readonly Mock<IChannelService> _mockChannelService;
+    private readonly Mock<IChannelRepository> _mockChannelRepository;
     private readonly Mock<IMessageSender> _mockMessageSender;
     private readonly RateLimiter _rateLimiter;
     private readonly SessionManager _sessionManager;
@@ -50,6 +52,7 @@ public class NewHandlerTests : IDisposable
         _mockSearchService = new Mock<IUserSearchService>();
         _mockMessageService = new Mock<IMessageService>();
         _mockChannelService = new Mock<IChannelService>();
+        _mockChannelRepository = new Mock<IChannelRepository>();
         _mockMessageSender = new Mock<IMessageSender>();
         _rateLimiter = new RateLimiter(new RateLimitOptions());
 
@@ -64,7 +67,7 @@ public class NewHandlerTests : IDisposable
 
         _registrationHandler = new RegistrationHandler(_mockRegistrationService.Object, _mockMessageSender.Object, _rateLimiter, _mockRegistrationLogger.Object);
         _searchHandler = new UserSearchHandler(_mockSearchService.Object, _sessionManager, _mockMessageSender.Object, _rateLimiter, _mockSearchLogger.Object);
-        _channelMessageHandler = new ChannelMessageHandler(_mockMessageService.Object, _sessionManager, _mockMessageSender.Object, _mockChannelLogger.Object);
+        _channelMessageHandler = new ChannelMessageHandler(_mockMessageService.Object, _mockChannelRepository.Object, _sessionManager, _mockMessageSender.Object, _mockChannelLogger.Object);
         _channelCreateHandler = new ChannelCreateHandler(_mockChannelService.Object, _sessionManager, _mockMessageSender.Object, _mockChannelCreateLogger.Object);
         _privateChatMessageHandler = new PrivateChatMessageHandler(_mockMessageService.Object, _mockSearchService.Object, _sessionManager, _mockMessageSender.Object, _mockPrivateChatLogger.Object);
     }

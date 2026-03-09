@@ -13,6 +13,7 @@ export 'src/message_type.dart';
 export 'src/message_payloads.dart';
 export 'src/message_encoder.dart';
 export 'src/protocol_constants.dart';
+export 'src/event_dispatcher.dart';
 
 // Transport layer
 export 'src/transport.dart';

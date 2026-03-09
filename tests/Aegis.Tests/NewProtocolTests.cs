@@ -21,6 +21,14 @@ public class NewProtocolTests
         Assert.Equal(19, (int)MessageType.UserSearchResult);
         Assert.Equal(20, (int)MessageType.Register);
         Assert.Equal(21, (int)MessageType.RegisterResponse);
+        Assert.Equal(41, (int)MessageType.ChatListRequest);
+        Assert.Equal(42, (int)MessageType.ChatListResponse);
+        Assert.Equal(43, (int)MessageType.PrivateChatHistoryRequest);
+        Assert.Equal(44, (int)MessageType.PrivateChatHistoryResponse);
+        Assert.Equal(45, (int)MessageType.ChannelHistoryRequest);
+        Assert.Equal(46, (int)MessageType.ChannelHistoryResponse);
+        Assert.Equal(47, (int)MessageType.PrivateChatMessageEvent);
+        Assert.Equal(48, (int)MessageType.ChannelMessageEvent);
     }
 
     [Fact]

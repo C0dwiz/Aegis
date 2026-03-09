@@ -182,8 +182,11 @@ public class SessionRepository : Repository<Session>, ISessionRepository
 public interface IMessageRepository : IRepository<Message>
 {
     Task<IEnumerable<Message>> GetConversationAsync(ulong userId1, ulong userId2, int limit = 50);
+    Task<IEnumerable<Message>> GetConversationBeforeAsync(ulong userId1, ulong userId2, ulong? beforeMessageId, int limit = 50);
     Task<IEnumerable<Message>> GetUndeliveredMessagesAsync(ulong userId);
     Task<IEnumerable<Message>> GetUnreadMessagesAsync(ulong userId);
+    Task<IDictionary<ulong, int>> GetUnreadCountsBySenderAsync(ulong userId);
+    Task MarkMessagesDeliveredAsync(IEnumerable<ulong> messageIds);
     Task<Message?> GetMessageForEditAsync(ulong messageId, ulong userId);
 }
 
@@ -207,6 +210,24 @@ public class MessageRepository : Repository<Message>, IMessageRepository
             .ToListAsync();
     }
 
+    public async Task<IEnumerable<Message>> GetConversationBeforeAsync(ulong userId1, ulong userId2, ulong? beforeMessageId, int limit = 50)
+    {
+        var query = _context.Messages
+            .Where(m => !m.IsDeleted &&
+                ((m.FromUserId == userId1 && m.ToUserId == userId2) ||
+                 (m.FromUserId == userId2 && m.ToUserId == userId1)));
+
+        if (beforeMessageId.HasValue)
+        {
+            query = query.Where(m => m.Id < beforeMessageId.Value);
+        }
+
+        return await query
+            .OrderByDescending(m => m.CreatedAt)
+            .Take(limit)
+            .ToListAsync();
+    }
+
     public async Task<IEnumerable<Message>> GetUndeliveredMessagesAsync(ulong userId)
     {
         return await _context.Messages
@@ -219,6 +240,37 @@ public class MessageRepository : Repository<Message>, IMessageRepository
         return await _context.Messages
             .Where(m => m.ToUserId == userId && !m.IsRead && !m.IsDeleted)
             .ToListAsync();
+    }
+
+    public async Task<IDictionary<ulong, int>> GetUnreadCountsBySenderAsync(ulong userId)
+    {
+        return await _context.Messages
+            .Where(m => m.ToUserId == userId && !m.IsRead && !m.IsDeleted)
+            .GroupBy(m => m.FromUserId)
+            .Select(g => new { SenderId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.SenderId, x => x.Count);
+    }
+
+    public async Task MarkMessagesDeliveredAsync(IEnumerable<ulong> messageIds)
+    {
+        var ids = messageIds.Distinct().ToArray();
+        if (ids.Length == 0)
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        var messages = await _context.Messages
+            .Where(m => ids.Contains(m.Id) && !m.IsDelivered)
+            .ToListAsync();
+
+        foreach (var message in messages)
+        {
+            message.IsDelivered = true;
+            message.DeliveredAt = now;
+        }
+
+        await _context.SaveChangesAsync();
     }
 
     public async Task<Message?> GetMessageForEditAsync(ulong messageId, ulong userId)
@@ -237,6 +289,9 @@ public interface IChannelRepository : IRepository<Channel>
     Task<bool> IsUserMemberAsync(ulong channelId, ulong userId);
     Task<ChannelMember?> GetChannelMemberAsync(ulong channelId, ulong userId);
     Task<IEnumerable<ChannelMessage>> GetChannelMessagesAsync(ulong channelId, int limit = 50);
+    Task<IEnumerable<ChannelMessage>> GetChannelMessagesBeforeAsync(ulong channelId, ulong? beforeMessageId, int limit = 50);
+    Task<ChannelMessage?> GetLatestChannelMessageAsync(ulong channelId);
+    Task<int> GetUnreadCountAsync(ulong channelId, DateTime? lastReadAtUtc);
     Task<ChannelMember> AddMemberAsync(ChannelMember member);
     Task<ChannelMember> UpdateMemberAsync(ChannelMember member);
     Task<ChannelMessage> AddChannelMessageAsync(ChannelMessage message);
@@ -293,6 +348,46 @@ public class ChannelRepository : Repository<Channel>, IChannelRepository
             .OrderByDescending(cm => cm.CreatedAt)
             .Take(limit)
             .ToListAsync();
+    }
+
+    public async Task<IEnumerable<ChannelMessage>> GetChannelMessagesBeforeAsync(ulong channelId, ulong? beforeMessageId, int limit = 50)
+    {
+        var query = _context.ChannelMessages
+            .Include(cm => cm.FromUser)
+            .Include(cm => cm.ReplyToMessage)
+            .Where(cm => cm.ChannelId == channelId && !cm.IsDeleted);
+
+        if (beforeMessageId.HasValue)
+        {
+            query = query.Where(cm => cm.Id < beforeMessageId.Value);
+        }
+
+        return await query
+            .OrderByDescending(cm => cm.CreatedAt)
+            .Take(limit)
+            .ToListAsync();
+    }
+
+    public async Task<ChannelMessage?> GetLatestChannelMessageAsync(ulong channelId)
+    {
+        return await _context.ChannelMessages
+            .Include(cm => cm.FromUser)
+            .Where(cm => cm.ChannelId == channelId && !cm.IsDeleted)
+            .OrderByDescending(cm => cm.CreatedAt)
+            .FirstOrDefaultAsync();
+    }
+
+    public async Task<int> GetUnreadCountAsync(ulong channelId, DateTime? lastReadAtUtc)
+    {
+        var query = _context.ChannelMessages
+            .Where(cm => cm.ChannelId == channelId && !cm.IsDeleted);
+
+        if (lastReadAtUtc.HasValue)
+        {
+            query = query.Where(cm => cm.CreatedAt > lastReadAtUtc.Value);
+        }
+
+        return await query.CountAsync();
     }
 
     public async Task<ChannelMember> AddMemberAsync(ChannelMember member)

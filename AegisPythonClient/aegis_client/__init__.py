@@ -13,6 +13,10 @@ from .message_payloads import (
     ChannelCreateRequest, ChannelCreateResponse,
     ChannelMessageRequest, ChannelMessageResponse,
     PrivateChatMessageRequest, PrivateChatMessageResponse,
+    ChatListRequest, ChatListResponse, ChatListItem,
+    PrivateChatHistoryRequest, PrivateChatHistoryResponse, PrivateChatHistoryItem,
+    ChannelHistoryRequest, ChannelHistoryResponse, ChannelHistoryItem,
+    PrivateChatMessageEvent, ChannelMessageEvent,
     MessageContentType, ChannelType
 )
 from .exceptions import (
@@ -31,6 +35,10 @@ __all__ = [
     "ChannelCreateRequest", "ChannelCreateResponse",
     "ChannelMessageRequest", "ChannelMessageResponse",
     "PrivateChatMessageRequest", "PrivateChatMessageResponse",
+    "ChatListRequest", "ChatListResponse", "ChatListItem",
+    "PrivateChatHistoryRequest", "PrivateChatHistoryResponse", "PrivateChatHistoryItem",
+    "ChannelHistoryRequest", "ChannelHistoryResponse", "ChannelHistoryItem",
+    "PrivateChatMessageEvent", "ChannelMessageEvent",
     "MessageContentType", "ChannelType",
     "AegisException", "ConnectionException", 
     "NotConnectedException", "TimeoutException", "ProtocolError",
