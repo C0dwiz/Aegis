@@ -5,11 +5,33 @@ namespace Aegis.BotApi.Contracts;
 
 public sealed record SendMessageRequest(
     [property: JsonPropertyName("chat_id")] string ChatId,
-    [property: JsonPropertyName("text")] string Text,
+    [property: JsonPropertyName("text")] string? Text,
     [property: JsonPropertyName("parse_mode")] string? ParseMode = null,
     [property: JsonPropertyName("reply_markup")] ReplyMarkupRequest? ReplyMarkup = null,
+    [property: JsonPropertyName("photo_base64")] string? PhotoBase64 = null,
+    [property: JsonPropertyName("file_base64")] string? FileBase64 = null,
+    [property: JsonPropertyName("file_name")] string? FileName = null,
+    [property: JsonPropertyName("mime_type")] string? MimeType = null,
     MessageContentType ContentType = MessageContentType.Text,
     [property: JsonPropertyName("disable_web_page_preview")] bool DisableWebPagePreview = false);
+
+public sealed record SendPhotoRequest(
+    [property: JsonPropertyName("chat_id")] string ChatId,
+    [property: JsonPropertyName("photo_base64")] string PhotoBase64,
+    [property: JsonPropertyName("caption")] string? Caption = null,
+    [property: JsonPropertyName("parse_mode")] string? ParseMode = null,
+    [property: JsonPropertyName("reply_markup")] ReplyMarkupRequest? ReplyMarkup = null,
+    [property: JsonPropertyName("file_name")] string? FileName = null,
+    [property: JsonPropertyName("mime_type")] string? MimeType = null);
+
+public sealed record SendDocumentRequest(
+    [property: JsonPropertyName("chat_id")] string ChatId,
+    [property: JsonPropertyName("file_base64")] string FileBase64,
+    [property: JsonPropertyName("caption")] string? Caption = null,
+    [property: JsonPropertyName("parse_mode")] string? ParseMode = null,
+    [property: JsonPropertyName("reply_markup")] ReplyMarkupRequest? ReplyMarkup = null,
+    [property: JsonPropertyName("file_name")] string? FileName = null,
+    [property: JsonPropertyName("mime_type")] string? MimeType = null);
 
 public sealed record EditMessageTextRequest(
     [property: JsonPropertyName("chat_id")] string ChatId,

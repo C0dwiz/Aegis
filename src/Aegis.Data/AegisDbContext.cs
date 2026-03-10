@@ -41,7 +41,7 @@ public class AegisDbContext : DbContext
         if (!optionsBuilder.IsConfigured)
         {
             // Default configuration for design-time tools
-            optionsBuilder.UseSqlite("Data Source=aegis.db");
+            optionsBuilder.UseNpgsql("Host=localhost;Port=5432;Database=aegis;Username=aegis;Password=aegis");
         }
     }
 

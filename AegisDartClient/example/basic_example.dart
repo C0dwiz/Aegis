@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:aegis_client/aegis_client.dart';
 
 /// Basic smoke example for the current Aegis protocol flow.
@@ -43,11 +44,21 @@ void main() async {
     print('Authenticated');
 
     privateSub = client.events.onPrivateMessageEvent((event) {
-      print('[event/private] id=${event.id} from=${event.fromUserId} text=${event.content}');
+      if (event.contentType == MessageContentType.audio && event.attachment != null) {
+        final voice = event.attachment!;
+        print('[event/private/voice] id=${event.id} from=${event.fromUserId} file=${voice.fileName} mime=${voice.mimeType} bytes=${voice.decodeBytes().length}');
+      } else {
+        print('[event/private] id=${event.id} from=${event.fromUserId} text=${event.content}');
+      }
     });
 
     channelSub = client.events.onChannelMessageEvent((event) {
-      print('[event/channel] id=${event.id} channel=${event.channelId} text=${event.content}');
+      if (event.contentType == MessageContentType.audio && event.attachment != null) {
+        final voice = event.attachment!;
+        print('[event/channel/voice] id=${event.id} channel=${event.channelId} file=${voice.fileName} mime=${voice.mimeType} bytes=${voice.decodeBytes().length}');
+      } else {
+        print('[event/channel] id=${event.id} channel=${event.channelId} text=${event.content}');
+      }
     });
 
     print('Subscribed to private/channel event streams');
@@ -83,6 +94,19 @@ void main() async {
     if (myId > 0) {
       final pm = await client.sendPrivateMessage(myId, 'self private message from dart basic');
       print('Private message success: ${pm.success}, messageId: ${pm.messageId}');
+
+      // Voice message example (dummy ogg bytes for protocol demo)
+      final voiceBytes = Uint8List.fromList([0x4F, 0x67, 0x67, 0x53, 0x00, 0x02, 0x00, 0x00]);
+      final voiceResp = await client.sendMedia(
+        chatType: ChatTargetType.private,
+        chatId: myId,
+        mediaBytes: voiceBytes,
+        mediaKind: MediaKind.voice,
+        fileName: 'voice-note.ogg',
+        mimeType: 'audio/ogg',
+        caption: 'voice check',
+      );
+      print('Voice message success: ${voiceResp.success}, messageId: ${voiceResp.messageId}');
 
       final privateHistory = await client.getPrivateHistory(myId, limit: 10);
       print('Private history success: ${privateHistory.success}, messages: ${privateHistory.messages.length}');

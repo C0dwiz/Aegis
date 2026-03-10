@@ -18,9 +18,9 @@ builder.Services.AddDbContext<AegisDbContext>(options =>
 {
     var connectionString = builder.Configuration.GetConnectionString("Default")
         ?? builder.Configuration["Database:ConnectionString"]
-        ?? "Data Source=aegis.db";
+        ?? "Host=localhost;Port=5432;Database=aegis;Username=aegis;Password=aegis";
 
-    options.UseSqlite(connectionString);
+    options.UseNpgsql(connectionString);
 });
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();

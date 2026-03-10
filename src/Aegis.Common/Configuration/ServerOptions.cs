@@ -46,7 +46,7 @@ public class DatabaseOptions
 {
     public const string SectionName = "Database";
     
-    public string Provider { get; set; } = "InMemory";
+    public string Provider { get; set; } = "PostgreSQL";
     public string ConnectionString { get; set; } = string.Empty;
 }
 

@@ -10,6 +10,44 @@ import 'transport.dart';
 import 'exceptions.dart';
 import 'protocol_constants.dart';
 
+extension _ChannelMessageResponseCompat on ChannelMessageResponse {
+  MediaSendResponse toMediaSendResponse() => MediaSendResponse(
+    success: success,
+    messageId: messageId,
+    messageText: messageText,
+  );
+}
+
+extension _GroupMessageResponseCompat on GroupMessageSendResponse {
+  MediaSendResponse toMediaSendResponse() => MediaSendResponse(
+    success: success,
+    messageId: messageId,
+    messageText: message,
+  );
+}
+
+extension _PrivateMessageResponseCompat on PrivateChatMessageResponse {
+  MediaSendResponse toMediaSendResponse() => MediaSendResponse(
+    success: success,
+    messageId: messageId,
+    messageText: messageText,
+  );
+}
+
+extension _MediaSendResponseCompat on MediaSendResponse {
+  PrivateChatMessageResponse toPrivateLike() => PrivateChatMessageResponse(
+    success: success,
+    messageId: messageId,
+    messageText: messageText,
+  );
+
+  ChannelMessageResponse toChannelLike() => ChannelMessageResponse(
+    success: success,
+    messageId: messageId,
+    messageText: messageText,
+  );
+}
+
 /// Main Aegis client class
 class AegisClient {
   late AegisTransport _transport;
@@ -186,6 +224,66 @@ class AegisClient {
     return PrivateChatMessageResponse.fromBytes(response.payload);
   }
 
+  /// Send a photo to a private chat.
+  Future<PrivateChatMessageResponse> sendPrivatePhoto(
+    int toUserId,
+    Uint8List photoBytes, {
+    String? caption,
+    String fileName = 'photo.jpg',
+    String mimeType = 'image/jpeg',
+  }) async {
+    final response = await sendMedia(
+      chatType: ChatTargetType.private,
+      chatId: toUserId,
+      mediaBytes: photoBytes,
+      mediaKind: MediaKind.photo,
+      caption: caption,
+      fileName: fileName,
+      mimeType: mimeType,
+    );
+    return response.toPrivateLike();
+  }
+
+  /// Send a file to a private chat.
+  Future<PrivateChatMessageResponse> sendPrivateFile(
+    int toUserId,
+    Uint8List fileBytes, {
+    String? caption,
+    required String fileName,
+    String mimeType = 'application/octet-stream',
+  }) async {
+    final response = await sendMedia(
+      chatType: ChatTargetType.private,
+      chatId: toUserId,
+      mediaBytes: fileBytes,
+      mediaKind: MediaKind.file,
+      caption: caption,
+      fileName: fileName,
+      mimeType: mimeType,
+    );
+    return response.toPrivateLike();
+  }
+
+  /// Send a voice message to a private chat.
+  Future<PrivateChatMessageResponse> sendPrivateVoice(
+    int toUserId,
+    Uint8List voiceBytes, {
+    String? caption,
+    String fileName = 'voice.ogg',
+    String mimeType = 'audio/ogg',
+  }) async {
+    final response = await sendMedia(
+      chatType: ChatTargetType.private,
+      chatId: toUserId,
+      mediaBytes: voiceBytes,
+      mediaKind: MediaKind.voice,
+      caption: caption,
+      fileName: fileName,
+      mimeType: mimeType,
+    );
+    return response.toPrivateLike();
+  }
+
   /// Get all chats for the authenticated user.
   Future<ChatListResponse> getChatList() async {
     _requireAuthenticated();
@@ -280,6 +378,174 @@ class AegisClient {
     final response = await _sendAndWaitResponse(msg,
         expectedTypes: {MessageType.channelMessage, MessageType.ack});
     return ChannelMessageResponse.fromBytes(response.payload);
+  }
+
+  /// Send a photo to a channel.
+  Future<ChannelMessageResponse> sendChannelPhoto(
+    int channelId,
+    Uint8List photoBytes, {
+    String? caption,
+    String fileName = 'photo.jpg',
+    String mimeType = 'image/jpeg',
+    int? replyToMessageId,
+  }) async {
+    final response = await sendMedia(
+      chatType: ChatTargetType.channel,
+      chatId: channelId,
+      mediaBytes: photoBytes,
+      mediaKind: MediaKind.photo,
+      caption: caption,
+      fileName: fileName,
+      mimeType: mimeType,
+      replyToMessageId: replyToMessageId,
+    );
+    return response.toChannelLike();
+  }
+
+  /// Send a file to a channel.
+  Future<ChannelMessageResponse> sendChannelFile(
+    int channelId,
+    Uint8List fileBytes, {
+    String? caption,
+    required String fileName,
+    String mimeType = 'application/octet-stream',
+    int? replyToMessageId,
+  }) async {
+    final response = await sendMedia(
+      chatType: ChatTargetType.channel,
+      chatId: channelId,
+      mediaBytes: fileBytes,
+      mediaKind: MediaKind.file,
+      caption: caption,
+      fileName: fileName,
+      mimeType: mimeType,
+      replyToMessageId: replyToMessageId,
+    );
+    return response.toChannelLike();
+  }
+
+  /// Send a voice message to a channel.
+  Future<ChannelMessageResponse> sendChannelVoice(
+    int channelId,
+    Uint8List voiceBytes, {
+    String? caption,
+    String fileName = 'voice.ogg',
+    String mimeType = 'audio/ogg',
+    int? replyToMessageId,
+  }) async {
+    final response = await sendMedia(
+      chatType: ChatTargetType.channel,
+      chatId: channelId,
+      mediaBytes: voiceBytes,
+      mediaKind: MediaKind.voice,
+      caption: caption,
+      fileName: fileName,
+      mimeType: mimeType,
+      replyToMessageId: replyToMessageId,
+    );
+    return response.toChannelLike();
+  }
+
+  /// Unified media sending for private chats, channels and groups.
+  ///
+  /// `chatType`:
+  /// - [ChatTargetType.private] -> `chatId` is `toUserId`
+  /// - [ChatTargetType.channel] -> `chatId` is `channelId`
+  /// - [ChatTargetType.group] -> `chatId` is `groupId`
+  Future<MediaSendResponse> sendMedia({
+    required ChatTargetType chatType,
+    required int chatId,
+    required Uint8List mediaBytes,
+    required MediaKind mediaKind,
+    String? caption,
+    String? fileName,
+    String? mimeType,
+    int? replyToMessageId,
+  }) async {
+    _requireAuthenticated();
+
+    final resolvedFileName = fileName ??
+        switch (mediaKind) {
+          MediaKind.photo => 'photo.jpg',
+          MediaKind.file => 'file.bin',
+          MediaKind.voice => 'voice.ogg',
+        };
+    final resolvedMime = mimeType ??
+        switch (mediaKind) {
+          MediaKind.photo => 'image/jpeg',
+          MediaKind.file => 'application/octet-stream',
+          MediaKind.voice => 'audio/ogg',
+        };
+    final contentType = switch (mediaKind) {
+      MediaKind.photo => MessageContentType.image,
+      MediaKind.file => MessageContentType.file,
+      MediaKind.voice => MessageContentType.audio,
+    };
+
+    final attachment = MediaAttachmentPayload(
+      fileName: resolvedFileName,
+      mimeType: resolvedMime,
+      base64Data: base64Encode(mediaBytes),
+      sizeBytes: mediaBytes.length,
+    );
+
+    switch (chatType) {
+      case ChatTargetType.private:
+        final request = PrivateChatMessageRequest(
+          toUserId: chatId,
+          content: caption,
+          contentType: contentType,
+          attachment: attachment,
+        );
+        final msg = Message.withType(
+          MessageType.privateChatMessage,
+          request.toBytes(),
+        );
+        final response = await _sendAndWaitResponse(
+          msg,
+          expectedTypes: {MessageType.privateChatMessage, MessageType.ack},
+        );
+        return PrivateChatMessageResponse.fromBytes(response.payload)
+          .toMediaSendResponse();
+
+      case ChatTargetType.channel:
+        final request = ChannelMessageRequest(
+          channelId: chatId,
+          content: caption,
+          contentType: contentType,
+          replyToMessageId: replyToMessageId,
+          attachment: attachment,
+        );
+        final msg = Message.withType(
+          MessageType.channelMessage,
+          request.toBytes(),
+        );
+        final response = await _sendAndWaitResponse(
+          msg,
+          expectedTypes: {MessageType.channelMessage, MessageType.ack},
+        );
+        return ChannelMessageResponse.fromBytes(response.payload)
+          .toMediaSendResponse();
+
+      case ChatTargetType.group:
+        final request = GroupMessageSendRequest(
+          groupId: chatId,
+          content: caption,
+          contentType: contentType,
+          replyToMessageId: replyToMessageId,
+          attachment: attachment,
+        );
+        final msg = Message.withType(
+          MessageType.groupMessageSend,
+          request.toBytes(),
+        );
+        final response = await _sendAndWaitResponse(
+          msg,
+          expectedTypes: {MessageType.groupMessageResponse, MessageType.ack},
+        );
+        return GroupMessageSendResponse.fromBytes(response.payload)
+          .toMediaSendResponse();
+    }
   }
 
   /// Create a new channel.

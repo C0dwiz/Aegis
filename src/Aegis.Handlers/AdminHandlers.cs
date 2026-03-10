@@ -46,9 +46,10 @@ public record GroupEditResponse(
 
 public record GroupMessageSendRequest(
     ulong GroupId,
-    string Content,
+    string? Content,
     Aegis.Data.Entities.MessageContentType ContentType = Aegis.Data.Entities.MessageContentType.Text,
-    ulong? ReplyToMessageId = null
+    ulong? ReplyToMessageId = null,
+    MediaAttachmentPayload? Attachment = null
 );
 
 public record GroupMessageSendResponse(
@@ -372,9 +373,12 @@ public class GroupMessageSendHandler : IMessageHandler
                 return;
             }
 
+            var contentType = MediaPayloadBuilder.ResolveContentType(request.ContentType, request.Attachment);
+            var normalizedContent = MediaPayloadBuilder.BuildMessageContent(request.Content, request.Attachment);
+
             var msg = await _messageService.SendGroupMessageAsync(
-                request.GroupId, session.UserId, request.Content,
-                request.ContentType, request.ReplyToMessageId);
+                request.GroupId, session.UserId, normalizedContent,
+                contentType, request.ReplyToMessageId);
 
             await SendResponseAsync(context, message.SequenceId, 
                 new GroupMessageSendResponse(true, msg.Id, "Message sent"));

@@ -5,7 +5,7 @@
 ## Новые возможности
 
 ### 🚀 База данных и пользователи
-- **Локальная SQLite база данных** с Entity Framework Core
+- **PostgreSQL база данных** с Entity Framework Core
 - **Регистрация пользователей** с username, email и паролем
 - **Аутентификация** по токенам сессий
 - **Поиск пользователей** по username с поддержкой шаблонов
@@ -290,7 +290,7 @@ AegisMessenger.Server/
 ### Требования
 
 - .NET 10.0
-- SQLite
+- PostgreSQL 16+
 - Entity Framework Core
 
 ### Быстрый запуск
@@ -302,19 +302,23 @@ cd Aegis
 dotnet build
 ```
 
-2. **Настройка базы данных:**
-```bash
-cd src/Aegis.Data
-dotnet ef migrations add InitialCreate
-dotnet ef database update
-```
-
-3. **Запуск сервера:**
+2. **Запуск сервера:**
 ```bash
 dotnet run --project src/Aegis.Server/Aegis.Server.csproj
 ```
 
-Сервер запустится на порту 8888 и создаст файл базы данных `aegis.db`.
+Сервер запустится на порту 8888 и подключится к PostgreSQL.
+
+### Запуск через Docker (PostgreSQL + Aegis Server + Bot API)
+
+```bash
+docker compose up --build -d
+```
+
+Сервисы после запуска:
+- TCP сервер: `localhost:8888`
+- Bot API: `http://localhost:5000`
+- PostgreSQL: `localhost:5432` (db/user/password: `aegis`)
 
 ### Конфигурация
 
@@ -327,8 +331,8 @@ dotnet run --project src/Aegis.Server/Aegis.Server.csproj
     "MaxConnections": 10000
   },
   "Database": {
-    "Provider": "Sqlite",
-    "ConnectionString": "Data Source=aegis.db"
+    "Provider": "PostgreSQL",
+    "ConnectionString": "Host=localhost;Port=5432;Database=aegis;Username=aegis;Password=aegis"
   },
   "Logging": {
     "MinimumLevel": "Information",
@@ -337,6 +341,26 @@ dotnet run --project src/Aegis.Server/Aegis.Server.csproj
   }
 }
 ```
+
+### Отправка фото и файлов
+
+Для `PrivateChatMessage` / `ChannelMessage` / `GroupMessageSend` можно отправлять attachment-поле.
+
+```json
+{
+  "ToUserId": 42,
+  "Content": "Фото из отпуска",
+  "ContentType": 1,
+  "Attachment": {
+    "FileName": "photo.jpg",
+    "MimeType": "image/jpeg",
+    "Base64Data": "<base64>",
+    "SizeBytes": 345678
+  }
+}
+```
+
+Для файлов используйте `ContentType: 4` (или оставьте `ContentType: 0`, сервер определит `File` по `MimeType`).
 
 ## Extensibility Points
 

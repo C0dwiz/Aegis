@@ -100,7 +100,7 @@ void main() {
       expect(ProtocolConstants.magic, equals(0xAE6C5D7));
       expect(ProtocolConstants.versionMajor, equals(1));
       expect(ProtocolConstants.versionMinor, equals(0));
-      expect(ProtocolConstants.headerSize, equals(20));
+      expect(ProtocolConstants.headerSize, equals(21));
       expect(ProtocolConstants.macSize, equals(32));
     });
   });

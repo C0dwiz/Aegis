@@ -726,8 +726,10 @@ public class MessageService : IMessageService
 
     public async Task<Message> SendPrivateMessageAsync(ulong fromUserId, ulong toUserId, string content, MessageContentType contentType = MessageContentType.Text)
     {
-        if (string.IsNullOrWhiteSpace(content))
+        if (string.IsNullOrWhiteSpace(content) && contentType == MessageContentType.Text)
             throw new ArgumentException("Message content cannot be empty");
+
+        content ??= string.Empty;
 
         // Get or create private chat
         var chat = await _privateChatRepository.GetPrivateChatAsync(fromUserId, toUserId);
@@ -786,8 +788,10 @@ public class MessageService : IMessageService
 
     public async Task<ChannelMessage> SendChannelMessageAsync(ulong channelId, ulong fromUserId, string content, MessageContentType contentType = MessageContentType.Text, ulong? replyToId = null)
     {
-        if (string.IsNullOrWhiteSpace(content))
+        if (string.IsNullOrWhiteSpace(content) && contentType == MessageContentType.Text)
             throw new ArgumentException("Message content cannot be empty");
+
+        content ??= string.Empty;
 
         var member = await _channelRepository.GetChannelMemberAsync(channelId, fromUserId)
             ?? throw new InvalidOperationException("Not a member of this channel");
@@ -860,8 +864,10 @@ public class MessageService : IMessageService
 
     public async Task<GroupMessage> SendGroupMessageAsync(ulong groupId, ulong fromUserId, string content, MessageContentType contentType = MessageContentType.Text, ulong? replyToId = null)
     {
-        if (string.IsNullOrWhiteSpace(content))
+        if (string.IsNullOrWhiteSpace(content) && contentType == MessageContentType.Text)
             throw new ArgumentException("Message content cannot be empty");
+
+        content ??= string.Empty;
 
         var member = await _groupRepository.GetGroupMemberAsync(groupId, fromUserId)
             ?? throw new InvalidOperationException("Not a member of this group");

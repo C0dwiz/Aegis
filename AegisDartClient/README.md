@@ -113,6 +113,14 @@ void main() async {
 - `joinChannel(channelId)` - присоединение к каналу
 - `sendChannelMessage(channelId, content, contentType, replyToMessageId)` - отправка сообщения в канал
 - `sendPrivateMessage(toUserId, content, contentType)` - отправка приватного сообщения
+- `sendPrivatePhoto(toUserId, photoBytes, ...)` - отправка фото в приватный чат
+- `sendPrivateFile(toUserId, fileBytes, fileName, ...)` - отправка файла в приватный чат
+- `sendPrivateVoice(toUserId, voiceBytes, ...)` - отправка голосового в приватный чат
+- `sendChannelPhoto(channelId, photoBytes, ...)` - отправка фото в канал
+- `sendChannelFile(channelId, fileBytes, fileName, ...)` - отправка файла в канал
+- `sendChannelVoice(channelId, voiceBytes, ...)` - отправка голосового в канал
+- `sendMedia(chatType, chatId, mediaBytes, mediaKind, ...)` - единый метод отправки фото/файлов/голосовых в любой чат
+- `tryParseMediaAttachment(content, contentType)` - парсинг медиа-вложения из входящего сообщения
 
 ### Message Payloads
 
@@ -167,6 +175,28 @@ final privateMessage = PrivateChatMessageRequest(
   toUserId: 789,
   content: 'Private conversation',
   contentType: MessageContentType.text,
+);
+
+// отправка медиа 
+await client.sendMedia(
+  chatType: ChatTargetType.private, // private | channel | group
+  chatId: 789,
+  mediaBytes: fileBytes,
+  mediaKind: MediaKind.file,        // photo | file | voice
+  fileName: 'report.pdf',
+  mimeType: 'application/pdf',
+  caption: 'Monthly report',
+);
+
+// отправка голосового
+await client.sendMedia(
+  chatType: ChatTargetType.private,
+  chatId: 789,
+  mediaBytes: voiceBytes,
+  mediaKind: MediaKind.voice,
+  fileName: 'voice-note.ogg',
+  mimeType: 'audio/ogg',
+  caption: 'voice check',
 );
 ```
 
@@ -259,6 +289,14 @@ client.messages.listen((message) {
       final errorText = String.fromCharCodes(message.payload.sublist(4));
       print('Error $errorCode: $errorText');
       break;
+  }
+});
+
+client.events.onPrivateMessageEvent((event) {
+  if (event.contentType == MessageContentType.audio && event.attachment != null) {
+    final voice = event.attachment!;
+    final bytes = voice.decodeBytes();
+    print('Voice message: file=${voice.fileName}, mime=${voice.mimeType}, bytes=${bytes.length}');
   }
 });
 ```

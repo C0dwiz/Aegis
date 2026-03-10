@@ -56,7 +56,17 @@ public static class Program
             "Applying database migrations using provider {Provider}",
             databaseOptions.Provider);
 
-        await dbContext.Database.MigrateAsync();
+        try
+        {
+            await dbContext.Database.MigrateAsync();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex,
+                "Database migration failed for provider {Provider}. Falling back to EnsureCreated().",
+                databaseOptions.Provider);
+            await dbContext.Database.EnsureCreatedAsync();
+        }
 
         var botManagementService = scope.ServiceProvider.GetRequiredService<IBotManagementService>();
         await botManagementService.EnsureBotFatherExistsAsync();
@@ -100,10 +110,10 @@ public static class Program
                         .GetRequiredService<IOptions<DatabaseOptions>>()
                         .Value;
                     var connectionString = string.IsNullOrWhiteSpace(databaseOptions.ConnectionString)
-                        ? "Data Source=aegis.db"
+                        ? "Host=localhost;Port=5432;Database=aegis;Username=aegis;Password=aegis"
                         : databaseOptions.ConnectionString;
 
-                    options.UseSqlite(connectionString);
+                    options.UseNpgsql(connectionString);
                 });
 
                 // Register repositories

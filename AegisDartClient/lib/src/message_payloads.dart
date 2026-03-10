@@ -37,6 +37,119 @@ enum ChannelType {
   }
 }
 
+/// Target chat type for unified messaging APIs.
+enum ChatTargetType {
+  private,
+  channel,
+  group,
+}
+
+/// Media kind for unified media sending.
+enum MediaKind {
+  photo,
+  file,
+  voice,
+}
+
+/// Normalized response for unified media sending API.
+class MediaSendResponse {
+  final bool success;
+  final int messageId;
+  final String? messageText;
+
+  MediaSendResponse({
+    required this.success,
+    this.messageId = 0,
+    this.messageText,
+  });
+}
+
+/// Binary attachment payload for media/file messages.
+class MediaAttachmentPayload {
+  final String fileName;
+  final String mimeType;
+  final String base64Data;
+  final int? sizeBytes;
+
+  MediaAttachmentPayload({
+    required this.fileName,
+    required this.mimeType,
+    required this.base64Data,
+    this.sizeBytes,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'FileName': fileName,
+    'MimeType': mimeType,
+    'Base64Data': base64Data,
+    if (sizeBytes != null) 'SizeBytes': sizeBytes,
+  };
+
+  factory MediaAttachmentPayload.fromJson(Map<String, dynamic> json) =>
+      MediaAttachmentPayload(
+        fileName: json['FileName'] as String,
+        mimeType: json['MimeType'] as String,
+        base64Data: json['Base64Data'] as String,
+        sizeBytes: json['SizeBytes'] as int?,
+      );
+}
+
+/// Parsed media payload extracted from message content JSON envelope.
+class ParsedMediaAttachment {
+  final String? text;
+  final String fileName;
+  final String mimeType;
+  final String base64Data;
+  final int? sizeBytes;
+
+  ParsedMediaAttachment({
+    this.text,
+    required this.fileName,
+    required this.mimeType,
+    required this.base64Data,
+    this.sizeBytes,
+  });
+
+  List<int> decodeBytes() => base64Decode(base64Data);
+}
+
+ParsedMediaAttachment? tryParseMediaAttachment(
+  String content,
+  MessageContentType contentType,
+) {
+  if (contentType != MessageContentType.image &&
+      contentType != MessageContentType.file &&
+      contentType != MessageContentType.audio) {
+    return null;
+  }
+
+  try {
+    final decoded = jsonDecode(content);
+    if (decoded is! Map<String, dynamic>) {
+      return null;
+    }
+
+    final fileName = decoded['FileName'] ?? decoded['fileName'];
+    final mimeType = decoded['MimeType'] ?? decoded['mimeType'];
+    final base64Data = decoded['Base64Data'] ?? decoded['base64Data'];
+
+    if (fileName is! String || mimeType is! String || base64Data is! String) {
+      return null;
+    }
+
+    final size = decoded['SizeBytes'] ?? decoded['sizeBytes'];
+    return ParsedMediaAttachment(
+      text: (decoded['Text'] ?? decoded['text']) as String?,
+      fileName: fileName,
+      mimeType: mimeType,
+      base64Data: base64Data,
+      sizeBytes: size is int ? size : int.tryParse('${size ?? ''}'),
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
 /// Registration request payload
 class RegistrationRequest {
   final String username;
@@ -254,15 +367,17 @@ class User {
 /// Channel message request payload
 class ChannelMessageRequest {
   final int channelId;
-  final String content;
+  final String? content;
   final MessageContentType contentType;
   final int? replyToMessageId;
+  final MediaAttachmentPayload? attachment;
 
   ChannelMessageRequest({
     required this.channelId,
-    required this.content,
+    this.content,
     this.contentType = MessageContentType.text,
     this.replyToMessageId,
+    this.attachment,
   });
 
   Map<String, dynamic> toJson() => {
@@ -270,13 +385,17 @@ class ChannelMessageRequest {
     'Content': content,
     'ContentType': contentType.value,
     if (replyToMessageId != null) 'ReplyToMessageId': replyToMessageId,
+    if (attachment != null) 'Attachment': attachment!.toJson(),
   };
 
   factory ChannelMessageRequest.fromJson(Map<String, dynamic> json) => ChannelMessageRequest(
     channelId: json['ChannelId'] as int,
-    content: json['Content'] as String,
+    content: json['Content'] as String?,
     contentType: MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
     replyToMessageId: json['ReplyToMessageId'] as int?,
+    attachment: json['Attachment'] != null
+        ? MediaAttachmentPayload.fromJson(json['Attachment'] as Map<String, dynamic>)
+        : null,
   );
 
   List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
@@ -562,25 +681,31 @@ class ChannelJoinResponse {
 /// Private chat message request payload
 class PrivateChatMessageRequest {
   final int toUserId;
-  final String content;
+  final String? content;
   final MessageContentType contentType;
+  final MediaAttachmentPayload? attachment;
 
   PrivateChatMessageRequest({
     required this.toUserId,
-    required this.content,
+    this.content,
     this.contentType = MessageContentType.text,
+    this.attachment,
   });
 
   Map<String, dynamic> toJson() => {
     'ToUserId': toUserId,
     'Content': content,
     'ContentType': contentType.value,
+    if (attachment != null) 'Attachment': attachment!.toJson(),
   };
 
   factory PrivateChatMessageRequest.fromJson(Map<String, dynamic> json) => PrivateChatMessageRequest(
     toUserId: json['ToUserId'] as int,
-    content: json['Content'] as String,
+    content: json['Content'] as String?,
     contentType: MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
+    attachment: json['Attachment'] != null
+        ? MediaAttachmentPayload.fromJson(json['Attachment'] as Map<String, dynamic>)
+        : null,
   );
 
   List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
@@ -741,6 +866,9 @@ class PrivateChatHistoryItem {
         fromUsername: json['FromUsername'] as String?,
         username: json['Username'] as String?,
       );
+
+  ParsedMediaAttachment? get attachment =>
+      tryParseMediaAttachment(content, contentType);
 }
 
 /// Private chat history response payload
@@ -827,6 +955,9 @@ class ChannelHistoryItem {
         fromUsername: json['FromUsername'] as String?,
         channelName: json['ChannelName'] as String?,
       );
+
+  ParsedMediaAttachment? get attachment =>
+      tryParseMediaAttachment(content, contentType);
 }
 
 /// Channel history response payload
@@ -900,6 +1031,9 @@ class PrivateChatMessageEvent {
     final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
     return PrivateChatMessageEvent.fromJson(json);
   }
+
+  ParsedMediaAttachment? get attachment =>
+      tryParseMediaAttachment(content, contentType);
 }
 
 /// Incoming channel message event payload
@@ -940,6 +1074,9 @@ class ChannelMessageEvent {
     final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
     return ChannelMessageEvent.fromJson(json);
   }
+
+  ParsedMediaAttachment? get attachment =>
+      tryParseMediaAttachment(content, contentType);
 }
 
 /// Message entity (stored/delivered message, not the wire-level frame)
@@ -997,6 +1134,9 @@ class ChatMessage {
     deliveredAt: json['DeliveredAt'] != null ? DateTime.parse(json['DeliveredAt'] as String) : null,
     readAt: json['ReadAt'] != null ? DateTime.parse(json['ReadAt'] as String) : null,
   );
+
+  ParsedMediaAttachment? get attachment =>
+      tryParseMediaAttachment(content, contentType);
 }
 
 /// Private chat entity
@@ -1273,5 +1413,59 @@ class GroupEditResponse {
   factory GroupEditResponse.fromBytes(List<int> bytes) {
     final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
     return GroupEditResponse.fromJson(json);
+  }
+}
+
+// ─── Group messaging payloads ────────────────────────────────────────────────
+
+/// Request to send a group message.
+class GroupMessageSendRequest {
+  final int groupId;
+  final String? content;
+  final MessageContentType contentType;
+  final int? replyToMessageId;
+  final MediaAttachmentPayload? attachment;
+
+  GroupMessageSendRequest({
+    required this.groupId,
+    this.content,
+    this.contentType = MessageContentType.text,
+    this.replyToMessageId,
+    this.attachment,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'GroupId': groupId,
+    'Content': content,
+    'ContentType': contentType.value,
+    if (replyToMessageId != null) 'ReplyToMessageId': replyToMessageId,
+    if (attachment != null) 'Attachment': attachment!.toJson(),
+  };
+
+  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+}
+
+/// Response for group message send.
+class GroupMessageSendResponse {
+  final bool success;
+  final int messageId;
+  final String? message;
+
+  GroupMessageSendResponse({
+    required this.success,
+    this.messageId = 0,
+    this.message,
+  });
+
+  factory GroupMessageSendResponse.fromJson(Map<String, dynamic> json) =>
+      GroupMessageSendResponse(
+        success: json['Success'] as bool,
+        messageId: json['MessageId'] as int? ?? 0,
+        message: json['Message'] as String?,
+      );
+
+  factory GroupMessageSendResponse.fromBytes(List<int> bytes) {
+    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    return GroupMessageSendResponse.fromJson(json);
   }
 }

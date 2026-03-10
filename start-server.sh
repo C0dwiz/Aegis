@@ -5,7 +5,7 @@
 
 set -e
 
-echo "🚀 Starting Aegis Messenger Server..."
+echo "Starting Aegis stack..."
 
 # Check if Docker is running
 if ! docker info > /dev/null 2>&1; then
@@ -14,8 +14,8 @@ if ! docker info > /dev/null 2>&1; then
 fi
 
 # Build and start containers
-echo "📦 Building and starting containers..."
-docker-compose -f docker-compose.yaml up --build -d
+echo "Building and starting containers..."
+docker compose up --build -d
 
 # Wait for server to start
 echo "⏳ Waiting for server to start..."
@@ -26,7 +26,7 @@ echo "🌐 Server Connection Information:"
 echo "=================================="
 
 # Get server container IP
-SERVER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' aegis-messenger-server)
+SERVER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' aegis-server)
 
 if [ -z "$SERVER_IP" ]; then
     echo "❌ Could not get server IP address"
@@ -34,34 +34,35 @@ if [ -z "$SERVER_IP" ]; then
     SERVER_IP="localhost"
 fi
 
-echo "📍 Server IP: $SERVER_IP"
-echo "🔌 Port: 8888"
-echo "🔗 Connection URL: $SERVER_IP:8888"
+echo "Server IP: $SERVER_IP"
+echo "TCP Port: 8888"
+echo "Connection URL: $SERVER_IP:8888"
+echo "Bot API URL: http://localhost:5000"
 
 # Display container status
 echo ""
-echo "📊 Container Status:"
-echo "===================="
-docker-compose -f docker-compose.yaml ps
+echo "Container status:"
+echo "================="
+docker compose ps
 
 # Display logs
 echo ""
-echo "📋 Recent Server Logs:"
+echo "Recent server logs:"
 echo "======================"
-docker logs aegis-messenger-server --tail 20
+docker logs aegis-server --tail 20
 
 # Test connection
 echo ""
-echo "🧪 Testing Connection..."
+echo "Testing connection..."
 echo "========================="
 if command -v nc &> /dev/null; then
     if nc -z $SERVER_IP 8888 &> /dev/null; then
-        echo "✅ Server is reachable on $SERVER_IP:8888"
+        echo "Server is reachable on $SERVER_IP:8888"
     else
-        echo "❌ Server is not reachable on $SERVER_IP:8888"
+        echo "Server is not reachable on $SERVER_IP:8888"
     fi
 else
-    echo "⚠️  netcat not available, cannot test connection"
+    echo "netcat not available, cannot test connection"
 fi
 
 echo ""
@@ -75,5 +76,5 @@ echo "await client.authenticate('your_token');"
 echo "await client.sendMessage('Hello from Docker!');"
 
 echo ""
-echo "🛑 To stop server: docker-compose -f docker-compose.yaml down"
-echo "📝 To view logs: docker logs aegis-messenger-server -f"
+echo "To stop stack: docker compose down"
+echo "To view server logs: docker logs aegis-server -f"

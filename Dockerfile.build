@@ -22,7 +22,7 @@ RUN dotnet build "Aegis.Server.csproj" -c Release -o /app/build
 RUN dotnet publish "Aegis.Server.csproj" -c Release -o /app/publish
 
 # Runtime stage
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
+FROM mcr.microsoft.com/dotnet/runtime:10.0 AS final
 WORKDIR /app
 
 # Create non-root user
@@ -34,10 +34,6 @@ COPY --from=build /app/publish .
 
 # Expose port
 EXPOSE 8888
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:8888/health || exit 1
 
 # Set environment variables
 ENV ASPNETCORE_ENVIRONMENT=Production

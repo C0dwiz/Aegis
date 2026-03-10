@@ -54,4 +54,42 @@ public class BotApiContractsTests
         Assert.Contains("\"content_type\"", json);
         Assert.Contains("\"date\"", json);
     }
+
+    [Fact]
+    public void SendPhotoRequest_UsesTelegramLikeJsonFields()
+    {
+        var request = new SendPhotoRequest(
+            ChatId: "u:7",
+            PhotoBase64: "ZmFrZQ==",
+            Caption: "pic",
+            FileName: "photo.jpg",
+            MimeType: "image/jpeg");
+
+        var json = JsonSerializer.Serialize(request);
+
+        Assert.Contains("\"chat_id\"", json);
+        Assert.Contains("\"photo_base64\"", json);
+        Assert.Contains("\"caption\"", json);
+        Assert.Contains("\"file_name\"", json);
+        Assert.Contains("\"mime_type\"", json);
+    }
+
+    [Fact]
+    public void SendDocumentRequest_UsesTelegramLikeJsonFields()
+    {
+        var request = new SendDocumentRequest(
+            ChatId: "u:8",
+            FileBase64: "cGRm",
+            Caption: "doc",
+            FileName: "report.pdf",
+            MimeType: "application/pdf");
+
+        var json = JsonSerializer.Serialize(request);
+
+        Assert.Contains("\"chat_id\"", json);
+        Assert.Contains("\"file_base64\"", json);
+        Assert.Contains("\"caption\"", json);
+        Assert.Contains("\"file_name\"", json);
+        Assert.Contains("\"mime_type\"", json);
+    }
 }

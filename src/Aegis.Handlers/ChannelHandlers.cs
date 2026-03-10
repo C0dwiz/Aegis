@@ -14,9 +14,10 @@ namespace Aegis.Handlers;
 /// </summary>
 public record ChannelMessageRequest(
     ulong ChannelId,
-    string Content,
+    string? Content,
     MessageContentType ContentType = MessageContentType.Text,
-    ulong? ReplyToMessageId = null
+    ulong? ReplyToMessageId = null,
+    MediaAttachmentPayload? Attachment = null
 );
 
 /// <summary>
@@ -78,8 +79,24 @@ public record ChannelSummary(
 /// </summary>
 public record PrivateChatMessageRequest(
     ulong ToUserId,
-    string Content,
-    MessageContentType ContentType = MessageContentType.Text
+    string? Content,
+    MessageContentType ContentType = MessageContentType.Text,
+    MediaAttachmentPayload? Attachment = null
+);
+
+public record MediaAttachmentPayload(
+    string FileName,
+    string MimeType,
+    string Base64Data,
+    long? SizeBytes = null
+);
+
+internal sealed record StoredMediaContent(
+    string? Text,
+    string FileName,
+    string MimeType,
+    string Base64Data,
+    long? SizeBytes
 );
 
 /// <summary>
@@ -135,9 +152,12 @@ public class ChannelMessageHandler : IMessageHandler
                 return;
             }
 
+            var contentType = MediaPayloadBuilder.ResolveContentType(payload.ContentType, payload.Attachment);
+            var normalizedContent = MediaPayloadBuilder.BuildMessageContent(payload.Content, payload.Attachment);
+
             var channelMsg = await _messageService.SendChannelMessageAsync(
-                payload.ChannelId, session.UserId, payload.Content,
-                payload.ContentType, payload.ReplyToMessageId);
+                payload.ChannelId, session.UserId, normalizedContent,
+                contentType, payload.ReplyToMessageId);
 
             var channel = await _channelRepository.GetByIdAsync(payload.ChannelId);
             var channelMembers = await _channelRepository.GetChannelMembersAsync(payload.ChannelId);
@@ -321,10 +341,13 @@ public class PrivateChatMessageHandler : IMessageHandler
                 return;
             }
 
+            var contentType = MediaPayloadBuilder.ResolveContentType(payload.ContentType, payload.Attachment);
+            var normalizedContent = MediaPayloadBuilder.BuildMessageContent(payload.Content, payload.Attachment);
+
             // Intercept messages sent to BotFather and execute command flow.
             if (await _botManagementService.IsBotFatherAsync(payload.ToUserId))
             {
-                var replies = await _botManagementService.ProcessBotFatherMessageAsync(session.UserId, payload.Content);
+                var replies = await _botManagementService.ProcessBotFatherMessageAsync(session.UserId, payload.Content ?? string.Empty);
                 foreach (var reply in replies)
                 {
                     var eventPayload = JsonSerializer.SerializeToUtf8Bytes(new PrivateChatMessageEventPayload(
@@ -358,7 +381,7 @@ public class PrivateChatMessageHandler : IMessageHandler
             }
 
             var privateMsg = await _messageService.SendPrivateMessageAsync(
-                session.UserId, payload.ToUserId, payload.Content, payload.ContentType);
+                session.UserId, payload.ToUserId, normalizedContent, contentType);
 
             // Push the message to the recipient if they are online
             if (_sessionManager.TryGetConnectionIdByUserId(payload.ToUserId, out var recipientConnId))
@@ -401,6 +424,46 @@ public class PrivateChatMessageHandler : IMessageHandler
             (ushort)MessageType.PrivateChatMessage,
             sequenceId,
             payload);
+    }
+}
+
+internal static class MediaPayloadBuilder
+{
+    public static MessageContentType ResolveContentType(
+        MessageContentType requestedType,
+        MediaAttachmentPayload? attachment)
+    {
+        if (attachment == null)
+        {
+            return requestedType;
+        }
+
+        if (requestedType != MessageContentType.Text)
+        {
+            return requestedType;
+        }
+
+        return attachment.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+            ? MessageContentType.Image
+            : MessageContentType.File;
+    }
+
+    public static string BuildMessageContent(string? text, MediaAttachmentPayload? attachment)
+    {
+        var normalizedText = text?.Trim();
+        if (attachment == null)
+        {
+            return normalizedText ?? string.Empty;
+        }
+
+        var stored = new StoredMediaContent(
+            Text: normalizedText,
+            FileName: attachment.FileName,
+            MimeType: attachment.MimeType,
+            Base64Data: attachment.Base64Data,
+            SizeBytes: attachment.SizeBytes);
+
+        return JsonSerializer.Serialize(stored);
     }
 }
 

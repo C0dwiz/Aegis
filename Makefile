@@ -1,75 +1,60 @@
-# Aegis Server Docker Makefile
+# Aegis stack Makefile
 
 .PHONY: help build run stop logs clean status test
 
 # Default target
 help:
-	@echo "Aegis Messenger Server Docker Commands:"
+	@echo "Aegis Docker Stack Commands:"
 	@echo "======================================"
-	@echo "make build    - Build Docker image"
-	@echo "make run      - Run server and show connection info"
+	@echo "make build    - Build all docker images"
+	@echo "make run      - Run postgres + server + bot api"
 	@echo "make stop     - Stop server"
-	@echo "make logs     - Show server logs"
+	@echo "make logs     - Show stack logs"
 	@echo "make status   - Show container status"
-	@echo "make clean    - Remove containers and images"
+	@echo "make clean    - Remove containers, images and volume"
 	@echo "make test     - Test connection to server"
 
 # Build Docker image
 build:
-	@echo "📦 Building Aegis Server image..."
-	docker build -f Dockerfile.simple -t aegis-server ../git/Aegis
+	@echo "Building docker images..."
+	docker compose build
 
 # Run server and show connection info
 run: build
-	@echo "🚀 Starting Aegis Server..."
-	docker run -d --name aegis-server -p 8888:8888 --restart unless-stopped aegis-server
-	@sleep 5
-	@echo "🌐 Connection Information:"
-	@echo "========================"
-	@echo "📍 Localhost: localhost:8888"
-	@if command -v docker-ip >/dev/null 2>&1; then \
-		IP=$$(docker-ip aegis-server); \
-		echo "🔗 Container IP: $$IP:8888"; \
-	fi
-	@echo "🎯 Dart Client Example:"
-	@echo "===================="
-	@echo "final client = AegisClient();"
-	@echo "await client.connect('localhost', 8888);"
-	@echo "await client.authenticate('token');"
-	@echo "await client.sendMessage('Hello!');"
+	@echo "Starting docker stack..."
+	docker compose up -d
+	@echo "TCP: localhost:8888"
+	@echo "Bot API: http://localhost:5000"
 
 # Stop server
 stop:
-	@echo "🛑 Stopping Aegis Server..."
-	docker stop aegis-server || true
-	docker rm aegis-server || true
+	@echo "Stopping docker stack..."
+	docker compose down
 
 # Show logs
 logs:
-	@echo "📋 Server Logs:"
+	@echo "Stack logs:"
 	@echo "==============="
-	docker logs aegis-server -f
+	docker compose logs -f
 
 # Show container status
 status:
-	@echo "📊 Container Status:"
+	@echo "Container status:"
 	@echo "===================="
-	docker ps -a --filter name=aegis-server
+	docker compose ps
 
 # Clean up containers and images
 clean:
-	@echo "🧹 Cleaning up..."
-	docker stop aegis-server || true
-	docker rm aegis-server || true
-	docker rmi aegis-server || true
-	docker system prune -f
+	@echo "Cleaning up..."
+	docker compose down -v --remove-orphans
+	docker image rm aegis-aegis-server aegis-aegis-botapi 2>/dev/null || true
 
 # Test connection to server
 test:
-	@echo "🧪 Testing connection..."
+	@echo "Testing connection..."
 	@if nc -z localhost 8888 2>/dev/null; then \
-		echo "✅ Server is reachable on localhost:8888"; \
+		echo "Server is reachable on localhost:8888"; \
 	else \
-		echo "❌ Server is not reachable on localhost:8888"; \
-		echo "💡 Try running 'make run' first"; \
+		echo "Server is not reachable on localhost:8888"; \
+		echo "Try running 'make run' first"; \
 	fi
