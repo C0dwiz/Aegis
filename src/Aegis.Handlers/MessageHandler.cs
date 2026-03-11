@@ -75,10 +75,15 @@ public class MessageHandler : IMessageHandler
                 return false;
             }
 
+            var normalizedContent = MediaPayloadBuilder.BuildMessageContent(
+                request.Content,
+                attachment: null,
+                parseMode: request.ParseMode);
+
             var saved = await _messageService.SendPrivateMessageAsync(
                 senderSession.UserId,
                 request.RecipientId,
-                request.Content,
+                normalizedContent,
                 Aegis.Data.Entities.MessageContentType.Text);
 
             if (_sessionManager.TryGetConnectionIdByUserId(request.RecipientId, out var recipientConnectionId))
@@ -87,7 +92,7 @@ public class MessageHandler : IMessageHandler
                     saved.Id,
                     senderSession.UserId,
                     senderSession.Username,
-                    request.Content,
+                    saved.Content,
                     saved.CreatedAt));
 
                 await _messageSender.SendProtocolMessageAsync(
@@ -224,6 +229,7 @@ public class MessageHandler : IMessageHandler
     {
         public ulong RecipientId { get; set; }
         public string Content { get; set; } = string.Empty;
+        public string? ParseMode { get; set; }
     }
 
     private sealed record IncomingDirectMessage(

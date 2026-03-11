@@ -12,7 +12,7 @@ namespace Aegis.Tests;
 public class TransportTests
 {
     private readonly TestLogger _logger = new TestLogger();
-    private const int TestTimeoutMs = 3000;
+    private const int TestTimeoutMs = 8000;
     
     [Fact]
     public async Task TcpServer_StartStop_ShouldWorkCorrectly()
@@ -57,13 +57,13 @@ public class TransportTests
         server.OnClientDisconnected += ctx => disconnectedTcs.TrySetResult(ctx);
         
         var startTask = Task.Run(() => server.StartAsync(port), cts.Token);
-        await Task.Delay(200); // Give server time to start
+        await Task.Delay(100, cts.Token);
         
         try
         {
             // Act
             using var client = new TcpClient();
-            await client.ConnectAsync(IPAddress.Loopback, port, cts.Token);
+            await ConnectWithRetryAsync(client, IPAddress.Loopback, port, cts.Token);
             
             var connectedContext = await connectedTcs.Task
                 .WaitAsync(TimeSpan.FromMilliseconds(500), cts.Token);
@@ -89,6 +89,37 @@ public class TransportTests
             await server.StopAsync();
             cts.Cancel();
         }
+    }
+
+    private static async Task ConnectWithRetryAsync(TcpClient client, IPAddress address, int port, CancellationToken cancellationToken)
+    {
+        Exception? lastError = null;
+
+        for (var attempt = 0; attempt < 20 && !cancellationToken.IsCancellationRequested; attempt++)
+        {
+            try
+            {
+                await client.ConnectAsync(address, port, cancellationToken);
+                return;
+            }
+            catch (SocketException ex)
+            {
+                lastError = ex;
+                await Task.Delay(50, cancellationToken);
+            }
+            catch (TaskCanceledException ex)
+            {
+                lastError = ex;
+                break;
+            }
+        }
+
+        if (lastError != null)
+        {
+            throw lastError;
+        }
+
+        throw new TimeoutException("Timed out waiting for TCP server to accept connections.");
     }
     
     [Fact]

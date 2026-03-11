@@ -46,9 +46,10 @@ public class ConnectionContext : IDisposable
         _incomingLength += data.Length;
     }
 
-    public bool TryReadNextFrame(out byte[] frame)
+    public bool TryReadNextFrame(out byte[] frame, out int frameLength)
     {
         frame = Array.Empty<byte>();
+        frameLength = 0;
 
         if (_incomingLength < ProtocolHeaderSize)
         {
@@ -67,8 +68,9 @@ public class ConnectionContext : IDisposable
             return false;
         }
 
-        frame = new byte[frameSize];
+        frame = ArrayPool<byte>.Shared.Rent(frameSize);
         _incomingBuffer.AsSpan(0, frameSize).CopyTo(frame);
+        frameLength = frameSize;
 
         var remaining = _incomingLength - frameSize;
         if (remaining > 0)
@@ -78,6 +80,26 @@ public class ConnectionContext : IDisposable
 
         _incomingLength = remaining;
         return true;
+    }
+
+    public bool TryReadNextFrame(out byte[] frame)
+    {
+        frame = Array.Empty<byte>();
+        if (!TryReadNextFrame(out var pooledFrame, out var frameLength))
+        {
+            return false;
+        }
+
+        try
+        {
+            frame = new byte[frameLength];
+            pooledFrame.AsSpan(0, frameLength).CopyTo(frame);
+            return true;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(pooledFrame);
+        }
     }
     
     public virtual void UpdateActivity() => LastActivity = DateTime.UtcNow;

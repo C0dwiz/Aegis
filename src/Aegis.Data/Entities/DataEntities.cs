@@ -35,6 +35,18 @@ public class User
     public ICollection<Device> Devices { get; set; } = new List<Device>();
     public ICollection<Bot> OwnedBots { get; set; } = new List<Bot>();
     public ICollection<Bot> BotAccounts { get; set; } = new List<Bot>();
+    public ICollection<UserAvatar> Avatars { get; set; } = new List<UserAvatar>();
+}
+
+public class UserAvatar
+{
+    public ulong Id { get; set; }
+    public ulong UserId { get; set; }
+    public string AvatarUrl { get; set; } = string.Empty;
+    public bool IsPrimary { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public User? User { get; set; }
 }
 
 public class Bot
@@ -275,6 +287,7 @@ public class Channel
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public bool IsActive { get; set; } = true;
     public string? InviteCode { get; set; }
+    public string? PublicAlias { get; set; }
     public int MemberCount { get; set; } = 0;
     
     // Navigation properties

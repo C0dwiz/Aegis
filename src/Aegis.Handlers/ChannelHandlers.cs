@@ -17,7 +17,8 @@ public record ChannelMessageRequest(
     string? Content,
     MessageContentType ContentType = MessageContentType.Text,
     ulong? ReplyToMessageId = null,
-    MediaAttachmentPayload? Attachment = null
+    MediaAttachmentPayload? Attachment = null,
+    string? ParseMode = null
 );
 
 /// <summary>
@@ -81,7 +82,14 @@ public record PrivateChatMessageRequest(
     ulong ToUserId,
     string? Content,
     MessageContentType ContentType = MessageContentType.Text,
-    MediaAttachmentPayload? Attachment = null
+    MediaAttachmentPayload? Attachment = null,
+    string? ParseMode = null
+);
+
+internal sealed record StoredRichTextContent(
+    string Kind,
+    string Text,
+    string ParseMode
 );
 
 public record MediaAttachmentPayload(
@@ -153,7 +161,7 @@ public class ChannelMessageHandler : IMessageHandler
             }
 
             var contentType = MediaPayloadBuilder.ResolveContentType(payload.ContentType, payload.Attachment);
-            var normalizedContent = MediaPayloadBuilder.BuildMessageContent(payload.Content, payload.Attachment);
+            var normalizedContent = MediaPayloadBuilder.BuildMessageContent(payload.Content, payload.Attachment, payload.ParseMode);
 
             var channelMsg = await _messageService.SendChannelMessageAsync(
                 payload.ChannelId, session.UserId, normalizedContent,
@@ -207,7 +215,7 @@ public class ChannelMessageHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error sending channel message");
+            _logger.LogHandlerError(ex, "channel_message_send", context, message, _sessionManager);
             await SendResponseAsync(context, message.SequenceId, new ChannelMessageResponse(false, MessageText: "Internal server error"));
         }
     }
@@ -278,7 +286,7 @@ public class ChannelCreateHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error creating channel");
+            _logger.LogHandlerError(ex, "channel_create", context, message, _sessionManager);
             await SendResponseAsync(context, message.SequenceId, new ChannelCreateResponse(false, Message: "Internal server error"));
         }
     }
@@ -342,12 +350,13 @@ public class PrivateChatMessageHandler : IMessageHandler
             }
 
             var contentType = MediaPayloadBuilder.ResolveContentType(payload.ContentType, payload.Attachment);
-            var normalizedContent = MediaPayloadBuilder.BuildMessageContent(payload.Content, payload.Attachment);
+            var normalizedContent = MediaPayloadBuilder.BuildMessageContent(payload.Content, payload.Attachment, payload.ParseMode);
 
             // Intercept messages sent to BotFather and execute command flow.
             if (await _botManagementService.IsBotFatherAsync(payload.ToUserId))
             {
-                var replies = await _botManagementService.ProcessBotFatherMessageAsync(session.UserId, payload.Content ?? string.Empty);
+                var botText = MediaPayloadBuilder.ExtractDisplayText(payload.Content, payload.ParseMode);
+                var replies = await _botManagementService.ProcessBotFatherMessageAsync(session.UserId, botText);
                 foreach (var reply in replies)
                 {
                     var eventPayload = JsonSerializer.SerializeToUtf8Bytes(new PrivateChatMessageEventPayload(
@@ -411,7 +420,7 @@ public class PrivateChatMessageHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error sending private message");
+            _logger.LogHandlerError(ex, "private_message_send", context, message, _sessionManager);
             await SendResponseAsync(context, message.SequenceId, new PrivateChatMessageResponse(false, MessageText: "Internal server error"));
         }
     }
@@ -443,14 +452,34 @@ internal static class MediaPayloadBuilder
             return requestedType;
         }
 
-        return attachment.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
-            ? MessageContentType.Image
-            : MessageContentType.File;
+        if (attachment.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            return MessageContentType.Image;
+        }
+
+        if (attachment.MimeType.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
+        {
+            return MessageContentType.Video;
+        }
+
+        if (attachment.MimeType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+        {
+            return MessageContentType.Audio;
+        }
+
+        return MessageContentType.File;
     }
 
-    public static string BuildMessageContent(string? text, MediaAttachmentPayload? attachment)
+    private static readonly HashSet<string> AllowedParseModes = new(StringComparer.OrdinalIgnoreCase)
     {
-        var normalizedText = text?.Trim();
+        "markdown",
+        "markdownv2",
+        "html"
+    };
+
+    public static string BuildMessageContent(string? text, MediaAttachmentPayload? attachment, string? parseMode)
+    {
+        var normalizedText = BuildTextWithFormatting(text, parseMode);
         if (attachment == null)
         {
             return normalizedText ?? string.Empty;
@@ -464,6 +493,44 @@ internal static class MediaPayloadBuilder
             SizeBytes: attachment.SizeBytes);
 
         return JsonSerializer.Serialize(stored);
+    }
+
+    public static string ExtractDisplayText(string? text, string? parseMode)
+    {
+        return BuildTextWithFormatting(text, parseMode) ?? string.Empty;
+    }
+
+    private static string? BuildTextWithFormatting(string? text, string? parseMode)
+    {
+        var normalizedText = text?.Trim();
+        if (string.IsNullOrEmpty(normalizedText))
+        {
+            return normalizedText;
+        }
+
+        var normalizedMode = NormalizeParseMode(parseMode);
+        if (normalizedMode == null)
+        {
+            return normalizedText;
+        }
+
+        var rich = new StoredRichTextContent(
+            Kind: "rich-text",
+            Text: normalizedText,
+            ParseMode: normalizedMode);
+
+        return JsonSerializer.Serialize(rich);
+    }
+
+    private static string? NormalizeParseMode(string? parseMode)
+    {
+        if (string.IsNullOrWhiteSpace(parseMode))
+        {
+            return null;
+        }
+
+        var normalized = parseMode.Trim().ToLowerInvariant();
+        return AllowedParseModes.Contains(normalized) ? normalized : null;
     }
 }
 
@@ -543,7 +610,7 @@ public class ChannelJoinHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error joining channel");
+            _logger.LogHandlerError(ex, "channel_join", context, message, _sessionManager);
             await SendResponseAsync(context, message.SequenceId,
                 new ChannelJoinResponse(false, Message: "Internal server error"));
         }

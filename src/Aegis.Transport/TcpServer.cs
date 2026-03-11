@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Collections.Concurrent;
+using System.Buffers;
+using System.Threading.Channels;
 using Aegis.Common;
 using Aegis.Common.Logging;
 using Aegis.Common.Errors;
@@ -9,6 +11,12 @@ namespace Aegis.Transport;
 
 public class TcpServer : IDisposable
 {
+    private sealed class PendingFrame
+    {
+        public required byte[] Buffer { get; init; }
+        public required int Length { get; init; }
+    }
+
     private readonly ILogger _logger;
     private readonly Socket _listener;
     private readonly CancellationTokenSource _cts;
@@ -137,40 +145,75 @@ public class TcpServer : IDisposable
     {
         var socket = context.Socket;
         var buffer = context.GetReceiveBuffer();
-        
-        while (!_cts.Token.IsCancellationRequested && socket.Connected)
+        var frameQueue = Channel.CreateBounded<PendingFrame>(new BoundedChannelOptions(256)
         {
-            int bytesReceived;
-            using (var idleTimeout = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token))
+            SingleReader = true,
+            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.Wait
+        });
+
+        var consumerTask = ConsumeFramesAsync(context, frameQueue.Reader);
+        
+        try
+        {
+            while (!_cts.Token.IsCancellationRequested && socket.Connected)
             {
-                idleTimeout.CancelAfter(IdleTimeout);
-                try
+                int bytesReceived;
+                using (var idleTimeout = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token))
                 {
-                    bytesReceived = await socket.ReceiveAsync(buffer, SocketFlags.None, idleTimeout.Token);
+                    idleTimeout.CancelAfter(IdleTimeout);
+                    try
+                    {
+                        bytesReceived = await socket.ReceiveAsync(buffer, SocketFlags.None, idleTimeout.Token);
+                    }
+                    catch (OperationCanceledException) when (!_cts.Token.IsCancellationRequested)
+                    {
+                        _logger.Warning($"Connection {context.ConnectionId} closed due to idle timeout ({IdleTimeout.TotalSeconds:F0}s)");
+                        break;
+                    }
                 }
-                catch (OperationCanceledException) when (!_cts.Token.IsCancellationRequested)
+
+                if (bytesReceived == 0)
                 {
-                    _logger.Warning($"Connection {context.ConnectionId} closed due to idle timeout ({IdleTimeout.TotalSeconds:F0}s)");
+                    // Клиент отключился порядком
                     break;
                 }
+                
+                context.UpdateActivity();
+
+                context.AppendIncomingData(buffer.Span.Slice(0, bytesReceived));
+
+                while (context.TryReadNextFrame(out var frame, out var frameLength))
+                {
+                    await frameQueue.Writer.WriteAsync(new PendingFrame
+                    {
+                        Buffer = frame,
+                        Length = frameLength
+                    }, _cts.Token);
+                }
             }
+        }
+        finally
+        {
+            frameQueue.Writer.TryComplete();
+            await consumerTask;
+        }
+    }
 
-            if (bytesReceived == 0)
-            {
-                // Клиент отключился порядком
-                break;
-            }
-            
-            context.UpdateActivity();
-
-            context.AppendIncomingData(buffer.Span.Slice(0, bytesReceived));
-
-            while (context.TryReadNextFrame(out var frame))
+    private async Task ConsumeFramesAsync(ConnectionContext context, ChannelReader<PendingFrame> reader)
+    {
+        await foreach (var frame in reader.ReadAllAsync(_cts.Token))
+        {
+            try
             {
                 if (OnMessageReceived != null)
                 {
-                    await OnMessageReceived(context, frame);
+                    await OnMessageReceived(context, frame.Buffer.AsMemory(0, frame.Length));
                 }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(frame.Buffer);
             }
         }
     }

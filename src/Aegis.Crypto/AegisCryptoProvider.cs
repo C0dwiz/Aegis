@@ -16,126 +16,104 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
     // ICryptoProvider implementation
     public async Task<string> HashPasswordAsync(string password)
     {
-        return await Task.Run(() =>
-        {
-            using var rng = RandomNumberGenerator.Create();
-            var salt = new byte[16];
-            rng.GetBytes(salt);
+        using var rng = RandomNumberGenerator.Create();
+        var salt = new byte[16];
+        rng.GetBytes(salt);
 
-            var hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, PasswordHashIterations, HashAlgorithmName.SHA256, 32);
-            
-            // Combine salt and hash
-            var result = new byte[salt.Length + hash.Length];
-            salt.CopyTo(result, 0);
-            hash.CopyTo(result, salt.Length);
-            
-            return Convert.ToBase64String(result);
-        });
+        var hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, PasswordHashIterations, HashAlgorithmName.SHA256, 32);
+        
+        var result = new byte[salt.Length + hash.Length];
+        salt.CopyTo(result, 0);
+        hash.CopyTo(result, salt.Length);
+        
+        return await Task.FromResult(Convert.ToBase64String(result));
     }
 
     public async Task<bool> VerifyPasswordAsync(string password, string hash)
     {
-        return await Task.Run(() =>
+        try
         {
-            try
-            {
-                var hashBytes = Convert.FromBase64String(hash);
-                if (hashBytes.Length < 16)
-                    return false;
-                
-                var salt = hashBytes.AsSpan(0, 16);
-                var expectedHash = hashBytes.AsSpan(16);
-
-                var computedHash = Rfc2898DeriveBytes.Pbkdf2(password, salt, PasswordHashIterations, HashAlgorithmName.SHA256, 32);
-                
-                return CryptographicOperations.FixedTimeEquals(expectedHash, computedHash);
-            }
-            catch
-            {
+            var hashBytes = Convert.FromBase64String(hash);
+            if (hashBytes.Length < 16)
                 return false;
-            }
-        });
+            
+            var salt = hashBytes.AsSpan(0, 16);
+            var expectedHash = hashBytes.AsSpan(16);
+
+            var computedHash = Rfc2898DeriveBytes.Pbkdf2(password, salt, PasswordHashIterations, HashAlgorithmName.SHA256, 32);
+            
+            return await Task.FromResult(CryptographicOperations.FixedTimeEquals(expectedHash, computedHash));
+        }
+        catch
+        {
+            return await Task.FromResult(false);
+        }
     }
 
     public async Task<string> HashAsync(string data)
     {
-        return await Task.Run(() =>
-        {
-            using var sha256 = SHA256.Create();
-            var hash = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(data));
-            return Convert.ToBase64String(hash);
-        });
+        using var sha256 = SHA256.Create();
+        var hash = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(data));
+        return await Task.FromResult(Convert.ToBase64String(hash));
     }
 
     public async Task<bool> VerifyMacAsync(byte[] data, byte[] key, byte[] mac)
     {
-        return await Task.Run(() => VerifyMac(data, key, mac));
+        return await Task.FromResult(VerifyMac(data, key, mac));
     }
 
     public async Task<byte[]> GenerateSessionKeyAsync()
     {
-        return await Task.Run(() =>
-        {
-            var key = new byte[EncryptionKeySize];
-            RandomNumberGenerator.Fill(key);
-            return key;
-        });
+        var key = new byte[EncryptionKeySize];
+        RandomNumberGenerator.Fill(key);
+        return await Task.FromResult(key);
     }
 
     // ISessionCryptoProvider implementation
     public async Task<byte[]> EncryptAsync(byte[] data, byte[] key)
     {
-        return await Task.Run(() =>
-        {
-            var nonce = new byte[NonceSize];
-            RandomNumberGenerator.Fill(nonce);
-            
-            var ciphertext = new byte[data.Length + TagSize];
-            using var aes = new AesGcm(key, TagSize);
-            aes.Encrypt(nonce, data, ciphertext.AsSpan(0, data.Length), ciphertext.AsSpan(data.Length, TagSize));
-            
-            var result = new byte[nonce.Length + ciphertext.Length];
-            nonce.CopyTo(result);
-            ciphertext.CopyTo(result.AsSpan(nonce.Length));
-            
-            return result;
-        });
+        var nonce = new byte[NonceSize];
+        RandomNumberGenerator.Fill(nonce);
+        
+        var ciphertext = new byte[data.Length + TagSize];
+        using var aes = new AesGcm(key, TagSize);
+        aes.Encrypt(nonce, data, ciphertext.AsSpan(0, data.Length), ciphertext.AsSpan(data.Length, TagSize));
+        
+        var result = new byte[nonce.Length + ciphertext.Length];
+        nonce.CopyTo(result);
+        ciphertext.CopyTo(result.AsSpan(nonce.Length));
+        
+        return await Task.FromResult(result);
     }
 
     public async Task<byte[]> DecryptAsync(byte[] encryptedData, byte[] key)
     {
-        return await Task.Run(() =>
+        if (encryptedData.Length < NonceSize + TagSize)
+            throw new CryptoError("Invalid encrypted data length");
+
+        var nonce = encryptedData.AsSpan(0, NonceSize);
+        var ciphertext = encryptedData.AsSpan(NonceSize);
+        var actualCiphertext = ciphertext.Slice(0, ciphertext.Length - TagSize);
+        var tag = ciphertext.Slice(ciphertext.Length - TagSize, TagSize);
+
+        var plaintext = new byte[actualCiphertext.Length];
+        using var aes = new AesGcm(key, TagSize);
+        
+        try
         {
-            if (encryptedData.Length < NonceSize + TagSize)
-                throw new CryptoError("Invalid encrypted data length");
-
-            var nonce = encryptedData.AsSpan(0, NonceSize);
-            var ciphertext = encryptedData.AsSpan(NonceSize);
-            var actualCiphertext = ciphertext.Slice(0, ciphertext.Length - TagSize);
-            var tag = ciphertext.Slice(ciphertext.Length - TagSize, TagSize);
-
-            var plaintext = new byte[actualCiphertext.Length];
-            using var aes = new AesGcm(key, TagSize);
-            
-            try
-            {
-                aes.Decrypt(nonce.ToArray(), actualCiphertext.ToArray(), tag.ToArray(), plaintext);
-                return plaintext;
-            }
-            catch (CryptographicException)
-            {
-                throw new CryptoError("Decryption failed - invalid authentication tag");
-            }
-        });
+            aes.Decrypt(nonce, actualCiphertext, tag, plaintext);
+            return await Task.FromResult(plaintext);
+        }
+        catch (CryptographicException)
+        {
+            throw new CryptoError("Decryption failed - invalid authentication tag");
+        }
     }
 
     public async Task<byte[]> GenerateMacAsync(byte[] data, byte[] key)
     {
-        return await Task.Run(() =>
-        {
-            using var hmac = new HMACSHA256(key);
-            return hmac.ComputeHash(data);
-        });
+        using var hmac = new HMACSHA256(key);
+        return await Task.FromResult(hmac.ComputeHash(data));
     }
 
 
@@ -235,43 +213,32 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
     
     public async Task<byte[]> EncryptMessageAsync(Message message, byte[] sessionKey)
     {
-        return await Task.Run(() =>
-        {
-            // Calculate message size
-            var messageSize = ProtocolConstants.HeaderSize + message.PayloadLength + ProtocolConstants.MacSize;
-            var messageBytes = new byte[messageSize];
-            
-            // Serialize message to bytes
-            MessageEncoder.Encode(message, messageBytes);
-            
-            // Generate nonce
-            var nonce = new byte[NonceSize];
-            RandomNumberGenerator.Fill(nonce);
-            
-            // Encrypt the message (excluding MAC)
-            var payloadSize = messageSize - ProtocolConstants.MacSize;
-            var ciphertext = new byte[payloadSize + TagSize];
-            var encryptedLength = Encrypt(new ReadOnlySpan<byte>(messageBytes, 0, (int)payloadSize), sessionKey, nonce, ciphertext);
-            
-            // Combine nonce + encrypted message
-            var result = new byte[nonce.Length + encryptedLength];
-            Buffer.BlockCopy(nonce, 0, result, 0, nonce.Length);
-            Buffer.BlockCopy(ciphertext, 0, result, nonce.Length, encryptedLength);
-            
-            // Compute MAC over the entire encrypted message
-            var mac = new byte[ProtocolConstants.MacSize];
-            ComputeMac(result, sessionKey, mac);
-            
-            // Final result: nonce + ciphertext + mac
-            var finalResult = new byte[result.Length + mac.Length];
-            Buffer.BlockCopy(result, 0, finalResult, 0, result.Length);
-            Buffer.BlockCopy(mac, 0, finalResult, result.Length, mac.Length);
-            
-            CryptographicOperations.ZeroMemory(ciphertext);
-            CryptographicOperations.ZeroMemory(nonce);
-            
-            return finalResult;
-        });
+        var messageSize = ProtocolConstants.HeaderSize + message.PayloadLength + ProtocolConstants.MacSize;
+        var messageBytes = new byte[messageSize];
+        MessageEncoder.Encode(message, messageBytes);
+        
+        var nonce = new byte[NonceSize];
+        RandomNumberGenerator.Fill(nonce);
+        
+        var payloadSize = messageSize - ProtocolConstants.MacSize;
+        var ciphertext = new byte[payloadSize + TagSize];
+        var encryptedLength = Encrypt(new ReadOnlySpan<byte>(messageBytes, 0, (int)payloadSize), sessionKey, nonce, ciphertext);
+        
+        var result = new byte[nonce.Length + encryptedLength];
+        Buffer.BlockCopy(nonce, 0, result, 0, nonce.Length);
+        Buffer.BlockCopy(ciphertext, 0, result, nonce.Length, encryptedLength);
+        
+        var mac = new byte[ProtocolConstants.MacSize];
+        ComputeMac(result, sessionKey, mac);
+        
+        var finalResult = new byte[result.Length + mac.Length];
+        Buffer.BlockCopy(result, 0, finalResult, 0, result.Length);
+        Buffer.BlockCopy(mac, 0, finalResult, result.Length, mac.Length);
+        
+        CryptographicOperations.ZeroMemory(ciphertext);
+        CryptographicOperations.ZeroMemory(nonce);
+        
+        return await Task.FromResult(finalResult);
     }
 }
 

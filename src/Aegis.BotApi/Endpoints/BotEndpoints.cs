@@ -20,6 +20,15 @@ public static class BotEndpoints
         app.MapPost("/bot/{token}/sendDocument", SendDocument)
             .WithName("SendDocument");
 
+        app.MapPost("/bot/{token}/sendMedia", SendMedia)
+            .WithName("SendMedia");
+
+        app.MapPost("/bot/{token}/sendFile", SendFile)
+            .WithName("SendFile");
+
+        app.MapPost("/bot/{token}/sendVoiceMessage", SendVoiceMessage)
+            .WithName("SendVoiceMessage");
+
         app.MapPost("/bot/{token}/editMessageText", EditMessageText)
             .WithName("EditMessageText");
 
@@ -60,6 +69,39 @@ public static class BotEndpoints
     private static async Task<IResult> SendDocument(
         string token,
         SendDocumentRequest request,
+        BotRequestMapper requestMapper,
+        IBotMessageUseCase useCase)
+    {
+        var command = requestMapper.Map(request);
+        var response = await useCase.SendMessageAsync(token, command);
+        return BotResponseMapper.ToHttpResult(response);
+    }
+
+    private static async Task<IResult> SendMedia(
+        string token,
+        SendMediaRequest request,
+        BotRequestMapper requestMapper,
+        IBotMessageUseCase useCase)
+    {
+        var command = requestMapper.Map(request);
+        var response = await useCase.SendMessageAsync(token, command);
+        return BotResponseMapper.ToHttpResult(response);
+    }
+
+    private static async Task<IResult> SendFile(
+        string token,
+        SendFileRequest request,
+        BotRequestMapper requestMapper,
+        IBotMessageUseCase useCase)
+    {
+        var command = requestMapper.Map(request);
+        var response = await useCase.SendMessageAsync(token, command);
+        return BotResponseMapper.ToHttpResult(response);
+    }
+
+    private static async Task<IResult> SendVoiceMessage(
+        string token,
+        SendVoiceMessageRequest request,
         BotRequestMapper requestMapper,
         IBotMessageUseCase useCase)
     {

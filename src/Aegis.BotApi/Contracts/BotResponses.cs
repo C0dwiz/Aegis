@@ -16,4 +16,7 @@ public sealed record MessageResult(
     [property: JsonPropertyName("chat_id")] string ChatId,
     [property: JsonPropertyName("text")] string Text,
     [property: JsonPropertyName("content_type")] MessageContentType ContentType,
-    [property: JsonPropertyName("date")] DateTime Date);
+    [property: JsonPropertyName("date")] DateTime Date,
+    [property: JsonPropertyName("file_name")] string? FileName = null,
+    [property: JsonPropertyName("mime_type")] string? MimeType = null,
+    [property: JsonPropertyName("parse_mode")] string? ParseMode = null);

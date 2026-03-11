@@ -6,6 +6,7 @@ using Aegis.Common;
 using Aegis.Common.Configuration;
 using Microsoft.Extensions.Options;
 using System.Security.Cryptography;
+using System.Buffers;
 
 namespace Aegis.Server;
 
@@ -118,19 +119,29 @@ public class ServerMessageSender : IMessageSender
         }
 
         message.Mac = new byte[ProtocolConstants.MacSize];
-        var buffer = new byte[Message.TotalSize(message)];
-        MessageEncoder.Encode(message, buffer);
+        var totalSize = Message.TotalSize(message);
+        var rented = ArrayPool<byte>.Shared.Rent(totalSize);
 
-        if (shouldSign)
+        try
         {
-            _cryptoProvider.ComputeMac(
-                buffer.AsSpan(0, buffer.Length - ProtocolConstants.MacSize),
-                session!.MacKey.Span,
-                buffer.AsSpan(buffer.Length - ProtocolConstants.MacSize, ProtocolConstants.MacSize));
-        }
+            var output = rented.AsMemory(0, totalSize);
+            MessageEncoder.Encode(message, output.Span);
 
-        await _server.SendToConnectionAsync(connectionId, buffer);
-        _logger.Debug($"Protocol message {message.Type} sent to connection {connectionId}, size: {buffer.Length}");
+            if (shouldSign)
+            {
+                _cryptoProvider.ComputeMac(
+                    output.Span.Slice(0, totalSize - ProtocolConstants.MacSize),
+                    session!.MacKey.Span,
+                    output.Span.Slice(totalSize - ProtocolConstants.MacSize, ProtocolConstants.MacSize));
+            }
+
+            await _server.SendToConnectionAsync(connectionId, output);
+            _logger.Debug($"Protocol message {message.Type} sent to connection {connectionId}, size: {totalSize}");
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
     }
 
     private static bool TryDecodeProtocolMessage(byte[] data, out Message message)

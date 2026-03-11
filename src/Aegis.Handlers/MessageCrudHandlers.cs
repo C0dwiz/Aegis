@@ -118,7 +118,7 @@ public class MessageEditHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error editing message");
+            _logger.LogHandlerError(ex, "message_edit", context, message, _sessionManager);
             await SendResponseAsync(context, message.SequenceId, new MessageEditResponse(false, "Internal server error"));
         }
     }
@@ -222,7 +222,7 @@ public class MessageDeleteHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error deleting message");
+            _logger.LogHandlerError(ex, "message_delete", context, message, _sessionManager);
             await SendResponseAsync(context, message.SequenceId, new MessageDeleteResponse(false, "Internal server error"));
         }
     }

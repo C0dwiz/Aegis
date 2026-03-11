@@ -22,11 +22,12 @@ public record ChatListItem(
     string Type,
     string Title,
     string? AvatarUrl,
-    string? LastMessage,
-    DateTime? LastMessageAt,
-    int UnreadCount,
-    ulong? PeerUserId,
-    ulong? ChannelId
+    string? PresenceStatus = null,
+    string? LastMessage = null,
+    DateTime? LastMessageAt = null,
+    int UnreadCount = 0,
+    ulong? PeerUserId = null,
+    ulong? ChannelId = null
 );
 
 public record PrivateChatHistoryRequest(
@@ -110,6 +111,25 @@ public class ChatListHandler : IMessageHandler
     private readonly IChannelRepository _channelRepository;
     private readonly IMessageRepository _messageRepository;
     private readonly ILogger<ChatListHandler> _logger;
+    private readonly UserPresenceResolver _presenceResolver;
+
+    public ChatListHandler(
+        SessionManager sessionManager,
+        IMessageSender messageSender,
+        IPrivateChatRepository privateChatRepository,
+        IChannelRepository channelRepository,
+        IMessageRepository messageRepository,
+        ILogger<ChatListHandler> logger,
+        UserPresenceResolver presenceResolver)
+    {
+        _sessionManager = sessionManager;
+        _messageSender = messageSender;
+        _privateChatRepository = privateChatRepository;
+        _channelRepository = channelRepository;
+        _messageRepository = messageRepository;
+        _logger = logger;
+        _presenceResolver = presenceResolver;
+    }
 
     public ChatListHandler(
         SessionManager sessionManager,
@@ -118,13 +138,8 @@ public class ChatListHandler : IMessageHandler
         IChannelRepository channelRepository,
         IMessageRepository messageRepository,
         ILogger<ChatListHandler> logger)
+        : this(sessionManager, messageSender, privateChatRepository, channelRepository, messageRepository, logger, new UserPresenceResolver(sessionManager))
     {
-        _sessionManager = sessionManager;
-        _messageSender = messageSender;
-        _privateChatRepository = privateChatRepository;
-        _channelRepository = channelRepository;
-        _messageRepository = messageRepository;
-        _logger = logger;
     }
 
     public async ValueTask HandleAsync(ConnectionContext context, Aegis.Protocol.Message message)
@@ -152,6 +167,7 @@ public class ChatListHandler : IMessageHandler
                     Type: "direct",
                     Title: peer?.Username ?? $"user-{peerId}",
                     AvatarUrl: peer?.AvatarUrl,
+                    PresenceStatus: _presenceResolver.Resolve(peerId, peer?.LastSeenAt),
                     LastMessage: chat.LastMessage?.Content,
                     LastMessageAt: chat.LastMessage?.CreatedAt ?? chat.LastActivityAt,
                     UnreadCount: unreadBySender.TryGetValue(peerId, out var unread) ? unread : 0,
@@ -159,23 +175,20 @@ public class ChatListHandler : IMessageHandler
                     ChannelId: null));
             }
 
-            var channels = await _channelRepository.GetUserChannelsAsync(session.UserId);
-            foreach (var channel in channels)
+                var channelSummaries = await _channelRepository.GetUserChannelChatSummariesAsync(session.UserId);
+                foreach (var summary in channelSummaries)
             {
-                var member = await _channelRepository.GetChannelMemberAsync(channel.Id, session.UserId);
-                var lastMessage = await _channelRepository.GetLatestChannelMessageAsync(channel.Id);
-                var unreadCount = await _channelRepository.GetUnreadCountAsync(channel.Id, member?.LastReadAt);
-
                 chatItems.Add(new ChatListItem(
-                    ChatId: channel.Id,
-                    Type: channel.Type == ChannelType.Group ? "group" : "channel",
-                    Title: channel.Name,
-                    AvatarUrl: channel.AvatarUrl,
-                    LastMessage: lastMessage?.Content,
-                    LastMessageAt: lastMessage?.CreatedAt,
-                    UnreadCount: unreadCount,
+                    ChatId: summary.ChannelId,
+                    Type: summary.Type == ChannelType.Group ? "group" : "channel",
+                    Title: summary.Name,
+                    AvatarUrl: summary.AvatarUrl,
+                    PresenceStatus: null,
+                    LastMessage: summary.LastMessage,
+                    LastMessageAt: summary.LastMessageAt,
+                    UnreadCount: summary.UnreadCount,
                     PeerUserId: null,
-                    ChannelId: channel.Id));
+                    ChannelId: summary.ChannelId));
             }
 
             var ordered = chatItems
@@ -186,7 +199,7 @@ public class ChatListHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error loading chat list");
+            _logger.LogHandlerError(ex, "chat_list_load", context, message, _sessionManager);
             await SendResponseAsync(context, message.SequenceId, new ChatListResponse(false, Array.Empty<ChatListItem>(), "Internal server error"));
         }
     }
@@ -279,7 +292,7 @@ public class PrivateChatHistoryHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error loading private chat history");
+            _logger.LogHandlerError(ex, "private_history_load", context, message, _sessionManager);
             await SendResponseAsync(context, message.SequenceId,
                 new PrivateChatHistoryResponse(false, 0, Array.Empty<PrivateChatHistoryItem>(), "Internal server error"));
         }
@@ -371,7 +384,7 @@ public class ChannelHistoryHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error loading channel history");
+            _logger.LogHandlerError(ex, "channel_history_load", context, message, _sessionManager);
             await SendResponseAsync(context, message.SequenceId,
                 new ChannelHistoryResponse(false, 0, null, Array.Empty<ChannelHistoryItem>(), "Internal server error"));
         }

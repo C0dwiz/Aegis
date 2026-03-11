@@ -64,7 +64,27 @@ public enum MessageType : ushort
     ChannelHistoryRequest = 45,
     ChannelHistoryResponse = 46,
     PrivateChatMessageEvent = 47,
-    ChannelMessageEvent = 48
+    ChannelMessageEvent = 48,
+
+    // Profile avatars
+    ProfileAvatarAdd = 49,
+    ProfileAvatarAddResponse = 50,
+    ProfileAvatarList = 51,
+    ProfileAvatarListResponse = 52,
+    ProfileAvatarDelete = 53,
+    ProfileAvatarDeleteResponse = 54,
+    ProfileAvatarSetPrimary = 55,
+    ProfileAvatarSetPrimaryResponse = 56,
+
+    // Channel links
+    ChannelLinkUpdate = 57,
+    ChannelLinkUpdateResponse = 58,
+    ChannelLinkGet = 59,
+    ChannelLinkGetResponse = 60,
+    ChannelResolve = 61,
+    ChannelResolveResponse = 62,
+    ChannelJoinByLink = 63,
+    ChannelJoinByLinkResponse = 64
 }
 
 /// <summary>

@@ -32,11 +32,29 @@ public class AuthHandler : IMessageHandler
     private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;
     private readonly IMessageRepository _messageRepository;
-    private readonly IUserSearchService _userSearchService;
+    private readonly Func<IEnumerable<ulong>, Task<IDictionary<ulong, string>>> _getUsernamesByIds;
     private readonly ILogger<AuthHandler> _logger;
     
     public MessageType Type => MessageType.Auth;
     
+    public AuthHandler(
+        IUserAuthenticationService authService,
+        RateLimiter rateLimiter,
+        SessionManager sessionManager,
+        IMessageSender messageSender,
+        IMessageRepository messageRepository,
+        IUserRepository userRepository,
+        ILogger<AuthHandler> logger)
+    {
+        _authService = authService;
+        _rateLimiter = rateLimiter;
+        _sessionManager = sessionManager;
+        _messageSender = messageSender;
+        _messageRepository = messageRepository;
+        _getUsernamesByIds = userRepository.GetUsernamesByIdsAsync;
+        _logger = logger;
+    }
+
     public AuthHandler(
         IUserAuthenticationService authService,
         RateLimiter rateLimiter,
@@ -51,7 +69,19 @@ public class AuthHandler : IMessageHandler
         _sessionManager = sessionManager;
         _messageSender = messageSender;
         _messageRepository = messageRepository;
-        _userSearchService = userSearchService;
+        _getUsernamesByIds = async ids =>
+        {
+            var result = new Dictionary<ulong, string>();
+            foreach (var id in ids.Distinct())
+            {
+                var user = await userSearchService.FindUserByIdAsync(id);
+                if (user != null)
+                {
+                    result[id] = user.Username;
+                }
+            }
+            return result;
+        };
         _logger = logger;
     }
     
@@ -106,6 +136,7 @@ public class AuthHandler : IMessageHandler
                     Success = false,
                     Error = "Authentication failed"
                 });
+                _logger.LogWarning("Token authentication failed on connection {ConnectionId}", context.ConnectionId);
                 return;
             }
 
@@ -152,7 +183,7 @@ public class AuthHandler : IMessageHandler
         }
         catch (JsonException ex)
         {
-            _logger.LogError(ex, "Invalid JSON in auth message from connection {ConnectionId}", context.ConnectionId);
+            _logger.LogHandlerError(ex, "auth_invalid_json", context, message, _sessionManager);
             await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
             {
                 Success = false,
@@ -161,7 +192,7 @@ public class AuthHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing authentication from connection {ConnectionId}", context.ConnectionId);
+            _logger.LogHandlerError(ex, "auth_process", context, message, _sessionManager);
             await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
             {
                 Success = false,
@@ -180,18 +211,14 @@ public class AuthHandler : IMessageHandler
                 return;
             }
 
-            var senderNames = new Dictionary<ulong, string>();
-            foreach (var senderId in undelivered.Select(m => m.FromUserId).Distinct())
-            {
-                var sender = await _userSearchService.FindUserByIdAsync(senderId);
-                if (sender != null)
-                {
-                    senderNames[senderId] = sender.Username;
-                }
-            }
+            var senderNames = await _getUsernamesByIds(undelivered.Select(m => m.FromUserId));
 
             foreach (var message in undelivered.OrderBy(m => m.CreatedAt))
             {
+                var fromUsername = senderNames.TryGetValue(message.FromUserId, out var resolvedUsername)
+                    ? resolvedUsername
+                    : null;
+
                 var payload = JsonSerializer.SerializeToUtf8Bytes(new PrivateChatMessageEventPayload(
                     Id: message.Id,
                     FromUserId: message.FromUserId,
@@ -199,8 +226,8 @@ public class AuthHandler : IMessageHandler
                     Content: message.Content,
                     ContentType: message.ContentType,
                     CreatedAt: message.CreatedAt,
-                    FromUsername: senderNames.GetValueOrDefault(message.FromUserId),
-                    Username: senderNames.GetValueOrDefault(message.FromUserId)));
+                    FromUsername: fromUsername,
+                    Username: fromUsername));
 
                 await _messageSender.SendProtocolMessageAsync(
                     connectionId,
@@ -214,7 +241,7 @@ public class AuthHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to deliver pending messages to user {UserId}", userId);
+            _logger.LogError(ex, "handler_error op={Operation} conn={ConnectionId} user={UserId}", "auth_deliver_pending", connectionId, userId);
         }
     }
     
@@ -243,7 +270,7 @@ public class AuthHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error sending auth response to connection {ConnectionId}", context.ConnectionId);
+            _logger.LogHandlerError(ex, "auth_send_response", context, sequenceId: sequenceId);
         }
     }
 }

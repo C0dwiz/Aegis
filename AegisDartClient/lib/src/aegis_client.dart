@@ -101,6 +101,10 @@ class AegisClient {
 
   /// Disconnect from the server.
   Future<void> disconnect() async {
+    if (_transport.isConnected && _isAuthenticated) {
+      await _publishPresence(isOnline: false);
+    }
+
     await _transport.disconnect();
     _isAuthenticated = false;
     _userId = null;
@@ -167,6 +171,8 @@ class AegisClient {
     _isAuthenticated = true;
     _userId = decoded['UserId'] as int?;
     _username = decoded['Username'] as String?;
+
+    await _publishPresence(isOnline: true);
   }
 
   // ─── Registration ───────────────────────────────────────────────────────────
@@ -194,27 +200,81 @@ class AegisClient {
   /// Send a direct message using the legacy binary-free JSON format (type 3).
   ///
   /// For proper private messaging prefer [sendPrivateMessage].
-  Future<void> sendMessage(String content, {int toUserId = 0}) async {
+  Future<void> sendMessage(
+    String content, {
+    int toUserId = 0,
+    ParseMode? parseMode,
+  }) async {
     _requireAuthenticated();
     final payloadBytes = utf8.encode(jsonEncode({
       'RecipientId': toUserId,
       'Content': content,
+      if (parseMode != null) 'ParseMode': parseMode.value,
     }));
     final msg = Message.withType(MessageType.message, payloadBytes);
     msg.sequenceId = _nextSeqId++;
     await _transport.sendMessage(msg);
   }
 
+  /// Send a plain text message to a group.
+  Future<MediaSendResponse> sendGroupMessage(
+    int groupId,
+    String content, {
+    MessageContentType contentType = MessageContentType.text,
+    int? replyToMessageId,
+    ParseMode? parseMode,
+  }) async {
+    _requireAuthenticated();
+
+    final request = GroupMessageSendRequest(
+      groupId: groupId,
+      content: content,
+      contentType: contentType,
+      replyToMessageId: replyToMessageId,
+      parseMode: parseMode?.value,
+    );
+
+    final msg = Message.withType(
+      MessageType.groupMessageSend,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(
+      msg,
+      expectedTypes: {MessageType.groupMessageResponse, MessageType.ack},
+    );
+    return GroupMessageSendResponse.fromBytes(response.payload)
+        .toMediaSendResponse();
+  }
+
+  /// Send a Markdown-formatted message to a group.
+  Future<MediaSendResponse> sendGroupMarkdown(
+    int groupId,
+    String markdownText, {
+    int? replyToMessageId,
+  }) {
+    return sendGroupMessage(
+      groupId,
+      markdownText,
+      contentType: MessageContentType.text,
+      replyToMessageId: replyToMessageId,
+      parseMode: ParseMode.markdown,
+    );
+  }
+
   /// Send a private chat message to another user (type 17).
   Future<PrivateChatMessageResponse> sendPrivateMessage(
       int toUserId, String content,
-      {MessageContentType contentType = MessageContentType.text}) async {
+      {
+      MessageContentType contentType = MessageContentType.text,
+      ParseMode? parseMode,
+    }) async {
     _requireAuthenticated();
 
     final request = PrivateChatMessageRequest(
       toUserId: toUserId,
       content: content,
       contentType: contentType,
+      parseMode: parseMode?.value,
     );
 
     final msg =
@@ -363,6 +423,7 @@ class AegisClient {
     String content, {
     MessageContentType contentType = MessageContentType.text,
     int? replyToMessageId,
+    ParseMode? parseMode,
   }) async {
     _requireAuthenticated();
 
@@ -371,6 +432,7 @@ class AegisClient {
       content: content,
       contentType: contentType,
       replyToMessageId: replyToMessageId,
+      parseMode: parseMode?.value,
     );
 
     final msg =
@@ -458,6 +520,7 @@ class AegisClient {
     required Uint8List mediaBytes,
     required MediaKind mediaKind,
     String? caption,
+    ParseMode? parseMode,
     String? fileName,
     String? mimeType,
     int? replyToMessageId,
@@ -467,17 +530,23 @@ class AegisClient {
     final resolvedFileName = fileName ??
         switch (mediaKind) {
           MediaKind.photo => 'photo.jpg',
+          MediaKind.video => 'video.mp4',
+          MediaKind.gif => 'animation.gif',
           MediaKind.file => 'file.bin',
           MediaKind.voice => 'voice.ogg',
         };
     final resolvedMime = mimeType ??
         switch (mediaKind) {
           MediaKind.photo => 'image/jpeg',
+          MediaKind.video => 'video/mp4',
+          MediaKind.gif => 'image/gif',
           MediaKind.file => 'application/octet-stream',
           MediaKind.voice => 'audio/ogg',
         };
     final contentType = switch (mediaKind) {
       MediaKind.photo => MessageContentType.image,
+      MediaKind.video => MessageContentType.video,
+      MediaKind.gif => MessageContentType.image,
       MediaKind.file => MessageContentType.file,
       MediaKind.voice => MessageContentType.audio,
     };
@@ -496,6 +565,7 @@ class AegisClient {
           content: caption,
           contentType: contentType,
           attachment: attachment,
+          parseMode: parseMode?.value,
         );
         final msg = Message.withType(
           MessageType.privateChatMessage,
@@ -515,6 +585,7 @@ class AegisClient {
           contentType: contentType,
           replyToMessageId: replyToMessageId,
           attachment: attachment,
+          parseMode: parseMode?.value,
         );
         final msg = Message.withType(
           MessageType.channelMessage,
@@ -534,6 +605,7 @@ class AegisClient {
           contentType: contentType,
           replyToMessageId: replyToMessageId,
           attachment: attachment,
+          parseMode: parseMode?.value,
         );
         final msg = Message.withType(
           MessageType.groupMessageSend,
@@ -546,6 +618,82 @@ class AegisClient {
         return GroupMessageSendResponse.fromBytes(response.payload)
           .toMediaSendResponse();
     }
+  }
+
+  /// Unified file sending helper built on top of [sendMedia].
+  Future<MediaSendResponse> sendFile({
+    required ChatTargetType chatType,
+    required int chatId,
+    required Uint8List fileBytes,
+    required String fileName,
+    String mimeType = 'application/octet-stream',
+    String? caption,
+    ParseMode? parseMode,
+    int? replyToMessageId,
+  }) {
+    return sendMedia(
+      chatType: chatType,
+      chatId: chatId,
+      mediaBytes: fileBytes,
+      mediaKind: MediaKind.file,
+      fileName: fileName,
+      mimeType: mimeType,
+      caption: caption,
+      parseMode: parseMode,
+      replyToMessageId: replyToMessageId,
+    );
+  }
+
+  /// Unified voice message helper built on top of [sendMedia].
+  Future<MediaSendResponse> sendVoiceMessage({
+    required ChatTargetType chatType,
+    required int chatId,
+    required Uint8List voiceBytes,
+    String fileName = 'voice.ogg',
+    String mimeType = 'audio/ogg',
+    String? caption,
+    ParseMode? parseMode,
+    int? replyToMessageId,
+  }) {
+    return sendMedia(
+      chatType: chatType,
+      chatId: chatId,
+      mediaBytes: voiceBytes,
+      mediaKind: MediaKind.voice,
+      fileName: fileName,
+      mimeType: mimeType,
+      caption: caption,
+      parseMode: parseMode,
+      replyToMessageId: replyToMessageId,
+    );
+  }
+
+  /// Convenience helper for Markdown-formatted private text messages.
+  Future<PrivateChatMessageResponse> sendPrivateMarkdown(
+    int toUserId,
+    String markdownText,
+  ) {
+    return sendPrivateMessage(
+      toUserId,
+      markdownText,
+      contentType: MessageContentType.text,
+      parseMode: ParseMode.markdown,
+    );
+  }
+
+  /// Convenience helper for Markdown-formatted channel text messages.
+  Future<ChannelMessageResponse> sendChannelMarkdown(
+    int channelId,
+    String markdownText, {
+    int? replyToMessageId,
+  }) {
+    return sendChannelMessage(
+      channelId,
+      markdownText,
+      contentType: MessageContentType.text,
+      replyToMessageId: replyToMessageId,
+      parseMode: ParseMode.markdown,
+    );
   }
 
   /// Create a new channel.
@@ -705,7 +853,100 @@ class AegisClient {
     String mimeType = 'image/jpeg',
   }) async {
     final dataUrl = 'data:$mimeType;base64,${base64Encode(imageBytes)}';
-    return updateProfile(avatarUrl: dataUrl);
+    final result = await addProfileAvatar(dataUrl, makePrimary: true);
+    return ProfileUpdateResponse(
+      success: result.success,
+      message: result.message,
+      profile: null,
+    );
+  }
+
+  Future<ProfileAvatarMutationResponse> addProfileAvatar(
+    String avatarUrl, {
+    bool makePrimary = false,
+  }) async {
+    _requireAuthenticated();
+    final request = ProfileAvatarAddRequest(
+      avatarUrl: avatarUrl,
+      makePrimary: makePrimary,
+    );
+    final msg = Message.withType(MessageType.profileAvatarAdd, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.profileAvatarAddResponse});
+    return ProfileAvatarMutationResponse.fromBytes(response.payload);
+  }
+
+  Future<ProfileAvatarListResponse> listProfileAvatars() async {
+    _requireAuthenticated();
+    final msg = Message.withType(
+      MessageType.profileAvatarList,
+      utf8.encode('{}'),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.profileAvatarListResponse});
+    return ProfileAvatarListResponse.fromBytes(response.payload);
+  }
+
+  Future<ProfileAvatarMutationResponse> deleteProfileAvatar(int avatarId) async {
+    _requireAuthenticated();
+    final request = ProfileAvatarDeleteRequest(avatarId: avatarId);
+    final msg = Message.withType(MessageType.profileAvatarDelete, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.profileAvatarDeleteResponse});
+    return ProfileAvatarMutationResponse.fromBytes(response.payload);
+  }
+
+  Future<ProfileAvatarMutationResponse> setPrimaryProfileAvatar(int avatarId) async {
+    _requireAuthenticated();
+    final request = ProfileAvatarSetPrimaryRequest(avatarId: avatarId);
+    final msg = Message.withType(MessageType.profileAvatarSetPrimary, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.profileAvatarSetPrimaryResponse});
+    return ProfileAvatarMutationResponse.fromBytes(response.payload);
+  }
+
+  Future<ChannelLinkResponse> updateChannelLinks(
+    int channelId, {
+    String? publicAlias,
+    bool regeneratePrivateInvite = false,
+  }) async {
+    _requireAuthenticated();
+    final request = ChannelLinkUpdateRequest(
+      channelId: channelId,
+      publicAlias: publicAlias,
+      regeneratePrivateInvite: regeneratePrivateInvite,
+    );
+    final msg = Message.withType(MessageType.channelLinkUpdate, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.channelLinkUpdateResponse});
+    return ChannelLinkResponse.fromBytes(response.payload);
+  }
+
+  Future<ChannelLinkResponse> getChannelLinks(int channelId) async {
+    _requireAuthenticated();
+    final request = ChannelLinkRequest(channelId: channelId);
+    final msg = Message.withType(MessageType.channelLinkGet, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.channelLinkGetResponse});
+    return ChannelLinkResponse.fromBytes(response.payload);
+  }
+
+  Future<ChannelResolveResponse> resolveChannelLink(String linkOrAlias) async {
+    _requireAuthenticated();
+    final request = ChannelResolveRequest(linkOrAlias: linkOrAlias);
+    final msg = Message.withType(MessageType.channelResolve, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.channelResolveResponse});
+    return ChannelResolveResponse.fromBytes(response.payload);
+  }
+
+  Future<ChannelJoinResponse> joinChannelByLink(String linkOrAlias) async {
+    _requireAuthenticated();
+    final request = ChannelResolveRequest(linkOrAlias: linkOrAlias);
+    final msg = Message.withType(MessageType.channelJoinByLink, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.channelJoinByLinkResponse});
+    return ChannelJoinResponse.fromBytes(response.payload);
   }
 
   // ─── User search ─────────────────────────────────────────────────────────────
@@ -731,6 +972,12 @@ class AegisClient {
     final msg = Message.withType(MessageType.ping, _int64ToBytes(timestamp));
     msg.sequenceId = _nextSeqId++;
     await _transport.sendMessage(msg);
+  }
+
+  /// Explicitly publish user presence state to the server.
+  Future<void> setPresence({required bool isOnline}) async {
+    _requireAuthenticated();
+    await _publishPresence(isOnline: isOnline);
   }
 
   // ─── Internal helpers ────────────────────────────────────────────────────────
@@ -780,6 +1027,20 @@ class AegisClient {
     final msg = Message.withType(MessageType.handshake, payload);
     msg.sequenceId = _nextSeqId++;
     await _transport.sendMessage(msg);
+  }
+
+  Future<void> _publishPresence({required bool isOnline}) async {
+    try {
+      final request = UserPresenceUpdateRequest(
+        isOnline: isOnline,
+        clientTimestamp: DateTime.now().toUtc(),
+      );
+      final msg = Message.withType(MessageType.userPresence, request.toBytes());
+      msg.sequenceId = _nextSeqId++;
+      await _transport.sendMessage(msg);
+    } catch (_) {
+      // Presence signal is best-effort and must not block auth/disconnect.
+    }
   }
 
   void _requireConnected() {

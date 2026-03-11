@@ -86,6 +86,47 @@ internal sealed class BotRequestMapper
         return Map(sendMessageRequest);
     }
 
+    public SendMessageCommand Map(SendMediaRequest request)
+    {
+        var contentType = request.ContentType ?? InferContentTypeByMime(request.MimeType);
+
+        return BuildMediaCommand(
+            request.ChatId,
+            request.MediaBase64,
+            request.Caption,
+            request.ParseMode,
+            request.ReplyMarkup,
+            request.FileName,
+            request.MimeType,
+            contentType);
+    }
+
+    public SendMessageCommand Map(SendFileRequest request)
+    {
+        return BuildMediaCommand(
+            request.ChatId,
+            request.FileBase64,
+            request.Caption,
+            request.ParseMode,
+            request.ReplyMarkup,
+            request.FileName,
+            request.MimeType,
+            MessageContentType.File);
+    }
+
+    public SendMessageCommand Map(SendVoiceMessageRequest request)
+    {
+        return BuildMediaCommand(
+            request.ChatId,
+            request.VoiceBase64,
+            request.Caption,
+            request.ParseMode,
+            request.ReplyMarkup,
+            request.FileName ?? "voice.ogg",
+            request.MimeType ?? "audio/ogg",
+            MessageContentType.Audio);
+    }
+
     public EditMessageCommand Map(EditMessageTextRequest request)
     {
         var resolved = _chatIdResolver.Resolve(request.ChatId);
@@ -98,4 +139,75 @@ internal sealed class BotRequestMapper
         var resolved = _chatIdResolver.Resolve(request.ChatId);
         return new DeleteMessageCommand(resolved, request.MessageId);
     }
+
+    private SendMessageCommand BuildMediaCommand(
+        string chatId,
+        string base64,
+        string? caption,
+        string? parseMode,
+        ReplyMarkupRequest? replyMarkup,
+        string? fileName,
+        string? mimeType,
+        MessageContentType contentType)
+    {
+        var resolved = _chatIdResolver.Resolve(chatId);
+        var normalizedMimeType = string.IsNullOrWhiteSpace(mimeType)
+            ? DefaultMime(contentType)
+            : mimeType!;
+        var normalizedFileName = string.IsNullOrWhiteSpace(fileName)
+            ? DefaultFileName(contentType)
+            : fileName!;
+        var normalizedText = _contentFormatter.BuildContent(caption ?? string.Empty, parseMode, replyMarkup);
+
+        var envelope = new BotMediaContentEnvelope(
+            Kind: "bot-media",
+            Text: normalizedText,
+            FileName: normalizedFileName,
+            MimeType: normalizedMimeType,
+            Base64Data: base64);
+
+        var content = JsonSerializer.Serialize(envelope);
+        return new SendMessageCommand(resolved, content, contentType);
+    }
+
+    private static MessageContentType InferContentTypeByMime(string? mimeType)
+    {
+        if (string.IsNullOrWhiteSpace(mimeType))
+        {
+            return MessageContentType.File;
+        }
+
+        if (mimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            return MessageContentType.Image;
+        }
+
+        if (mimeType.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
+        {
+            return MessageContentType.Video;
+        }
+
+        if (mimeType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+        {
+            return MessageContentType.Audio;
+        }
+
+        return MessageContentType.File;
+    }
+
+    private static string DefaultFileName(MessageContentType contentType) => contentType switch
+    {
+        MessageContentType.Image => "photo.jpg",
+        MessageContentType.Video => "video.mp4",
+        MessageContentType.Audio => "voice.ogg",
+        _ => "file.bin"
+    };
+
+    private static string DefaultMime(MessageContentType contentType) => contentType switch
+    {
+        MessageContentType.Image => "image/jpeg",
+        MessageContentType.Video => "video/mp4",
+        MessageContentType.Audio => "audio/ogg",
+        _ => "application/octet-stream"
+    };
 }

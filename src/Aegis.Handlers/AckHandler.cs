@@ -36,17 +36,17 @@ public class AckHandler : IMessageHandler
             var sequenceId = BinaryPrimitives.ReadUInt64BigEndian(message.Payload.AsSpan(0, 8));
             var status = (AckStatus)message.Payload[8];
 
-            _logger.Info($"Received Ack for message {sequenceId} with status {status}");
+            _logger.Debug($"Received Ack for message {sequenceId} with status {status}");
 
             if (status == AckStatus.Ok)
             {
-                _ackManager.AcknowledgeMessage(sequenceId);
+                _ackManager.AcknowledgeMessage(context.ConnectionId, sequenceId);
             }
             else if (status == AckStatus.Retry)
             {
                 // Retransmit the message
-                _ackManager.IncrementRetryCount(sequenceId);
-                _logger.Info($"Retransmission requested for message {sequenceId}");
+                _ackManager.IncrementRetryCount(context.ConnectionId, sequenceId);
+                _logger.Debug($"Retransmission requested for message {sequenceId}");
             }
             else
             {
@@ -92,14 +92,14 @@ public class NackHandler : IMessageHandler
             }
 
             var sequenceId = BinaryPrimitives.ReadUInt64BigEndian(message.Payload.AsSpan(0, 8));
-            _logger.Info($"Received Nack for message {sequenceId}, preparing retransmission");
+            _logger.Debug($"Received Nack for message {sequenceId}, preparing retransmission");
 
             // Try to retransmit the message
-            if (_ackManager.ShouldRetransmit(sequenceId, out var pending) && pending != null)
+            if (_ackManager.ShouldRetransmit(context.ConnectionId, sequenceId, out var pending) && pending != null)
             {
-                _ackManager.IncrementRetryCount(sequenceId);
+                _ackManager.IncrementRetryCount(context.ConnectionId, sequenceId);
                 
-                _logger.Info($"Retransmitting message {sequenceId}");
+                _logger.Debug($"Retransmitting message {sequenceId}");
                 await _messageSender.SendMessageAsync(context.ConnectionId, pending.MessageData);
             }
             else
@@ -147,7 +147,7 @@ public class RetransmitRequestHandler : IMessageHandler
 
             var firstSequenceId = BinaryPrimitives.ReadUInt64BigEndian(message.Payload.AsSpan(0, 8));
             
-            _logger.Info($"Received retransmit request starting from sequence {firstSequenceId}");
+            _logger.Debug($"Received retransmit request starting from sequence {firstSequenceId}");
 
             var pending = _ackManager.GetPendingMessages(context.ConnectionId);
             var toRetransmit = pending
@@ -157,7 +157,7 @@ public class RetransmitRequestHandler : IMessageHandler
 
             foreach (var msg in toRetransmit)
             {
-                _logger.Info($"Retransmitting message {msg.SequenceId}");
+                _logger.Debug($"Retransmitting message {msg.SequenceId}");
                 await _messageSender.SendMessageAsync(context.ConnectionId, msg.MessageData);
             }
 

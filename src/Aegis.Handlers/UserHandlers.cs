@@ -6,18 +6,47 @@ using Aegis.Data.Services;
 using Aegis.Protocol;
 using Aegis.Transport;
 using Microsoft.Extensions.Logging;
+using System.Text.Json.Serialization;
 
 namespace Aegis.Handlers;
 
 /// <summary>
 /// Registration request payload
 /// </summary>
-public record RegistrationRequest(
-    string Username,
-    string Email,
-    string Password,
-    string PublicKey
-);
+public sealed class RegistrationRequest
+{
+    public RegistrationRequest()
+    {
+    }
+
+    public RegistrationRequest(string username, string email, string password, string publicKey)
+    {
+        Username = username;
+        Email = email;
+        Password = password;
+        PublicKey = publicKey;
+    }
+
+    [JsonPropertyName("username")]
+    public string? Username { get; init; }
+
+    [JsonPropertyName("email")]
+    public string? Email { get; init; }
+
+    // Legacy clients may send this field.
+    [JsonPropertyName("mail")]
+    public string? Mail { get; init; }
+
+    [JsonPropertyName("password")]
+    public string? Password { get; init; }
+
+    [JsonPropertyName("publicKey")]
+    public string? PublicKey { get; init; }
+
+    // Legacy clients may send this snake_case field.
+    [JsonPropertyName("public_key")]
+    public string? PublicKeyLegacy { get; init; }
+}
 
 /// <summary>
 /// Registration response payload
@@ -55,7 +84,8 @@ public record UserSearchResponse(
 /// </summary>
 public record UserSearchResult(
     ulong Id,
-    string Username
+    string Username,
+    string PresenceStatus = UserPresenceStatus.LongAgo
 );
 
 /// <summary>
@@ -100,10 +130,10 @@ public class RegistrationHandler : IMessageHandler
             }
 
             var user = await _registrationService.RegisterUserAsync(
-                payload.Username,
-                payload.Email,
-                payload.Password,
-                payload.PublicKey
+                payload.Username?.Trim() ?? string.Empty,
+                ResolveEmail(payload),
+                payload.Password?.Trim() ?? string.Empty,
+                ResolvePublicKey(payload)
             );
 
             var response = new RegistrationResponse(
@@ -112,7 +142,10 @@ public class RegistrationHandler : IMessageHandler
             );
 
             await SendResponseAsync(context, message.SequenceId, response);
-            _logger.LogInformation("User {Username} registered successfully", payload.Username);
+            _logger.LogInformation(
+                "User {Username} registered successfully on connection {ConnectionId}",
+                user.Username,
+                context.ConnectionId);
             return;
         }
         catch (ArgumentException ex)
@@ -127,9 +160,46 @@ public class RegistrationHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error during user registration");
+            _logger.LogHandlerError(ex, "user_register", context, message);
             await SendErrorResponse(context, message.SequenceId, "Internal server error");
             return;
+        }
+    }
+
+    private static string ResolveEmail(RegistrationRequest payload)
+    {
+        var direct = payload.Email?.Trim();
+        if (!string.IsNullOrWhiteSpace(direct))
+        {
+            return UserRegistrationService.NormalizeEmail(direct);
+        }
+
+        var legacy = payload.Mail?.Trim();
+        if (!string.IsNullOrWhiteSpace(legacy))
+        {
+            return UserRegistrationService.NormalizeEmail(legacy);
+        }
+
+        return UserRegistrationService.BuildLegacyEmail(payload.Username ?? string.Empty);
+    }
+
+    private static string ResolvePublicKey(RegistrationRequest payload)
+    {
+        return UserRegistrationService.NormalizePublicKey(
+            payload.PublicKey ?? payload.PublicKeyLegacy,
+            payload.Username);
+    }
+
+    private static string payloadUsername(byte[] payload)
+    {
+        try
+        {
+            var request = JsonSerializer.Deserialize<RegistrationRequest>(payload);
+            return request?.Username ?? string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
         }
     }
 
@@ -173,6 +243,23 @@ public class UserSearchHandler : IMessageHandler
     private readonly IMessageSender _messageSender;
     private readonly RateLimiter _rateLimiter;
     private readonly ILogger<UserSearchHandler> _logger;
+    private readonly UserPresenceResolver _presenceResolver;
+
+    public UserSearchHandler(
+        IUserSearchService searchService,
+        SessionManager sessionManager,
+        IMessageSender messageSender,
+        RateLimiter rateLimiter,
+        ILogger<UserSearchHandler> logger,
+        UserPresenceResolver presenceResolver)
+    {
+        _searchService = searchService;
+        _sessionManager = sessionManager;
+        _messageSender = messageSender;
+        _rateLimiter = rateLimiter;
+        _logger = logger;
+        _presenceResolver = presenceResolver;
+    }
 
     public UserSearchHandler(
         IUserSearchService searchService,
@@ -180,12 +267,8 @@ public class UserSearchHandler : IMessageHandler
         IMessageSender messageSender,
         RateLimiter rateLimiter,
         ILogger<UserSearchHandler> logger)
+        : this(searchService, sessionManager, messageSender, rateLimiter, logger, new UserPresenceResolver(sessionManager))
     {
-        _searchService = searchService;
-        _sessionManager = sessionManager;
-        _messageSender = messageSender;
-        _rateLimiter = rateLimiter;
-        _logger = logger;
     }
 
     public async ValueTask HandleAsync(ConnectionContext context, Aegis.Protocol.Message message)
@@ -214,7 +297,12 @@ public class UserSearchHandler : IMessageHandler
 
             var safeLimit = Math.Clamp(payload.Limit, 1, 20);
             var users = await _searchService.SearchUsersByUsernameAsync(payload.Query, safeLimit);
-            var searchResults = users.Select(u => new UserSearchResult(u.Id, u.Username)).ToList();
+            var searchResults = users
+                .Select(u => new UserSearchResult(
+                    u.Id,
+                    u.Username,
+                    _presenceResolver.Resolve(u.Id, u.LastSeenAt)))
+                .ToList();
 
             var response = new UserSearchResponse(
                 Success: true,
@@ -228,7 +316,7 @@ public class UserSearchHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error during user search");
+            _logger.LogHandlerError(ex, "user_search", context, message, _sessionManager);
             await SendErrorResponse(context, message.SequenceId, "Internal server error");
             return;
         }

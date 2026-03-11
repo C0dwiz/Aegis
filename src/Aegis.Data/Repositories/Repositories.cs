@@ -79,6 +79,123 @@ public interface IUserRepository : IRepository<User>
     Task<IEnumerable<User>> SearchByUsernameAsync(string pattern);
     Task<IEnumerable<User>> SearchByEmailAsync(string pattern);
     Task<IEnumerable<User>> SearchAsync(string query, int limit = 20);
+    Task<IDictionary<ulong, string>> GetUsernamesByIdsAsync(IEnumerable<ulong> userIds);
+}
+
+public interface IUserAvatarRepository : IRepository<UserAvatar>
+{
+    Task<IEnumerable<UserAvatar>> GetByUserIdAsync(ulong userId);
+    Task<UserAvatar?> GetPrimaryByUserIdAsync(ulong userId);
+    Task<UserAvatar> AddForUserAsync(ulong userId, string avatarUrl, bool makePrimary);
+    Task<bool> DeleteForUserAsync(ulong userId, ulong avatarId);
+    Task<bool> SetPrimaryAsync(ulong userId, ulong avatarId);
+}
+
+public class UserAvatarRepository : Repository<UserAvatar>, IUserAvatarRepository
+{
+    private readonly AegisDbContext _context;
+
+    public UserAvatarRepository(AegisDbContext context) : base(context)
+    {
+        _context = context;
+    }
+
+    public async Task<IEnumerable<UserAvatar>> GetByUserIdAsync(ulong userId)
+    {
+        return await _context.UserAvatars
+            .AsNoTracking()
+            .Where(a => a.UserId == userId)
+            .OrderByDescending(a => a.IsPrimary)
+            .ThenByDescending(a => a.CreatedAt)
+            .ToListAsync();
+    }
+
+    public async Task<UserAvatar?> GetPrimaryByUserIdAsync(ulong userId)
+    {
+        return await _context.UserAvatars
+            .AsNoTracking()
+            .Where(a => a.UserId == userId && a.IsPrimary)
+            .OrderByDescending(a => a.CreatedAt)
+            .FirstOrDefaultAsync();
+    }
+
+    public async Task<UserAvatar> AddForUserAsync(ulong userId, string avatarUrl, bool makePrimary)
+    {
+        if (makePrimary)
+        {
+            var existingPrimary = await _context.UserAvatars
+                .Where(a => a.UserId == userId && a.IsPrimary)
+                .ToListAsync();
+
+            foreach (var avatar in existingPrimary)
+            {
+                avatar.IsPrimary = false;
+            }
+        }
+
+        var entity = new UserAvatar
+        {
+            UserId = userId,
+            AvatarUrl = avatarUrl,
+            IsPrimary = makePrimary,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.UserAvatars.Add(entity);
+        await _context.SaveChangesAsync();
+        return entity;
+    }
+
+    public async Task<bool> DeleteForUserAsync(ulong userId, ulong avatarId)
+    {
+        var avatar = await _context.UserAvatars
+            .FirstOrDefaultAsync(a => a.Id == avatarId && a.UserId == userId);
+        if (avatar == null)
+        {
+            return false;
+        }
+
+        var wasPrimary = avatar.IsPrimary;
+        _context.UserAvatars.Remove(avatar);
+        await _context.SaveChangesAsync();
+
+        if (wasPrimary)
+        {
+            var next = await _context.UserAvatars
+                .Where(a => a.UserId == userId)
+                .OrderByDescending(a => a.CreatedAt)
+                .FirstOrDefaultAsync();
+            if (next != null)
+            {
+                next.IsPrimary = true;
+                await _context.SaveChangesAsync();
+            }
+        }
+
+        return true;
+    }
+
+    public async Task<bool> SetPrimaryAsync(ulong userId, ulong avatarId)
+    {
+        var target = await _context.UserAvatars
+            .FirstOrDefaultAsync(a => a.Id == avatarId && a.UserId == userId);
+        if (target == null)
+        {
+            return false;
+        }
+
+        var avatars = await _context.UserAvatars
+            .Where(a => a.UserId == userId)
+            .ToListAsync();
+
+        foreach (var avatar in avatars)
+        {
+            avatar.IsPrimary = avatar.Id == target.Id;
+        }
+
+        await _context.SaveChangesAsync();
+        return true;
+    }
 }
 
 public class UserRepository : Repository<User>, IUserRepository
@@ -92,34 +209,103 @@ public class UserRepository : Repository<User>, IUserRepository
 
     public async Task<User?> GetByUsernameAsync(string username)
     {
-        return await _context.Users.FirstOrDefaultAsync(u => u.Username == username);
+        var normalized = (username ?? string.Empty).Trim();
+        return await _context.Users
+            .FirstOrDefaultAsync(u => u.Username == normalized);
     }
 
     public async Task<User?> GetByEmailAsync(string email)
     {
-        return await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+        var normalized = (email ?? string.Empty).Trim().ToLowerInvariant();
+        return await _context.Users
+            .FirstOrDefaultAsync(u => u.Email == normalized);
     }
 
     public async Task<IEnumerable<User>> SearchByUsernameAsync(string pattern)
     {
-        return await _context.Users
-            .Where(u => u.Username.Contains(pattern) && u.IsActive)
+        var normalized = (pattern ?? string.Empty).Trim();
+        var query = _context.Users.AsNoTracking().Where(u => u.IsActive);
+
+        if (IsInMemoryProvider())
+        {
+            return await query
+                .Where(u => u.Username.ToLower().Contains(normalized.ToLower()))
+                .OrderBy(u => u.Username)
+                .ToListAsync();
+        }
+
+        return await query
+            .Where(u => EF.Functions.ILike(u.Username, $"%{normalized}%"))
+            .OrderBy(u => u.Username)
             .ToListAsync();
     }
 
     public async Task<IEnumerable<User>> SearchByEmailAsync(string pattern)
     {
-        return await _context.Users
-            .Where(u => u.Email.Contains(pattern) && u.IsActive)
+        var normalized = (pattern ?? string.Empty).Trim();
+        var query = _context.Users.AsNoTracking().Where(u => u.IsActive);
+
+        if (IsInMemoryProvider())
+        {
+            return await query
+                .Where(u => u.Email.ToLower().Contains(normalized.ToLower()))
+                .OrderBy(u => u.Email)
+                .ToListAsync();
+        }
+
+        return await query
+            .Where(u => EF.Functions.ILike(u.Email, $"%{normalized}%"))
+            .OrderBy(u => u.Email)
             .ToListAsync();
     }
 
     public async Task<IEnumerable<User>> SearchAsync(string query, int limit = 20)
     {
-        return await _context.Users
-            .Where(u => (u.Username.Contains(query) || u.Email.Contains(query)) && u.IsActive)
-            .Take(limit)
+        var normalized = (query ?? string.Empty).Trim();
+        var safeLimit = Math.Clamp(limit, 1, 100);
+        var baseQuery = _context.Users.AsNoTracking().Where(u => u.IsActive);
+
+        if (IsInMemoryProvider())
+        {
+            return await baseQuery
+                .Where(u =>
+                    u.Username.ToLower().Contains(normalized.ToLower()) ||
+                    u.Email.ToLower().Contains(normalized.ToLower()))
+                .OrderBy(u => u.Username)
+                .Take(safeLimit)
+                .ToListAsync();
+        }
+
+        return await baseQuery
+            .Where(u =>
+                EF.Functions.ILike(u.Username, $"%{normalized}%") ||
+                EF.Functions.ILike(u.Email, $"%{normalized}%"))
+            .OrderBy(u => u.Username)
+            .Take(safeLimit)
             .ToListAsync();
+    }
+
+    public async Task<IDictionary<ulong, string>> GetUsernamesByIdsAsync(IEnumerable<ulong> userIds)
+    {
+        var ids = userIds.Distinct().ToArray();
+        if (ids.Length == 0)
+        {
+            return new Dictionary<ulong, string>();
+        }
+
+        return await _context.Users
+            .AsNoTracking()
+            .Where(u => ids.Contains(u.Id))
+            .Select(u => new { u.Id, u.Username })
+            .ToDictionaryAsync(x => x.Id, x => x.Username);
+    }
+
+    private bool IsInMemoryProvider()
+    {
+        return string.Equals(
+            _context.Database.ProviderName,
+            "Microsoft.EntityFrameworkCore.InMemory",
+            StringComparison.Ordinal);
     }
 }
 
@@ -300,6 +486,7 @@ public class SessionRepository : Repository<Session>, ISessionRepository
     public async Task<IEnumerable<Session>> GetUserActiveSessions(ulong userId)
     {
         return await _context.Sessions
+            .AsNoTracking()
             .Where(s => s.UserId == userId && s.IsActive)
             .ToListAsync();
     }
@@ -350,6 +537,7 @@ public class MessageRepository : Repository<Message>, IMessageRepository
     public async Task<IEnumerable<Message>> GetConversationAsync(ulong userId1, ulong userId2, int limit = 50)
     {
         return await _context.Messages
+            .AsNoTracking()
             .Where(m => !m.IsDeleted &&
                 ((m.FromUserId == userId1 && m.ToUserId == userId2) ||
                  (m.FromUserId == userId2 && m.ToUserId == userId1)))
@@ -361,6 +549,7 @@ public class MessageRepository : Repository<Message>, IMessageRepository
     public async Task<IEnumerable<Message>> GetConversationBeforeAsync(ulong userId1, ulong userId2, ulong? beforeMessageId, int limit = 50)
     {
         var query = _context.Messages
+            .AsNoTracking()
             .Where(m => !m.IsDeleted &&
                 ((m.FromUserId == userId1 && m.ToUserId == userId2) ||
                  (m.FromUserId == userId2 && m.ToUserId == userId1)));
@@ -379,6 +568,7 @@ public class MessageRepository : Repository<Message>, IMessageRepository
     public async Task<IEnumerable<Message>> GetUndeliveredMessagesAsync(ulong userId)
     {
         return await _context.Messages
+            .AsNoTracking()
             .Where(m => m.ToUserId == userId && !m.IsDelivered && !m.IsDeleted)
             .ToListAsync();
     }
@@ -386,6 +576,7 @@ public class MessageRepository : Repository<Message>, IMessageRepository
     public async Task<IEnumerable<Message>> GetUnreadMessagesAsync(ulong userId)
     {
         return await _context.Messages
+            .AsNoTracking()
             .Where(m => m.ToUserId == userId && !m.IsRead && !m.IsDeleted)
             .ToListAsync();
     }
@@ -446,7 +637,21 @@ public interface IChannelRepository : IRepository<Channel>
     Task<ChannelMessage?> GetChannelMessageAsync(ulong messageId);
     Task<ChannelMessage> UpdateChannelMessageAsync(ChannelMessage message);
     Task<IEnumerable<ChannelMember>> GetChannelMembersAsync(ulong channelId);
+    Task<IEnumerable<ChannelChatSummary>> GetUserChannelChatSummariesAsync(ulong userId);
+    Task<Channel?> GetByInviteCodeAsync(string inviteCode);
+    Task<Channel?> GetByPublicAliasAsync(string publicAlias);
+    Task<bool> IsPublicAliasTakenAsync(string publicAlias, ulong? exceptChannelId = null);
 }
+
+public sealed record ChannelChatSummary(
+    ulong ChannelId,
+    string Name,
+    string? AvatarUrl,
+    ChannelType Type,
+    string? LastMessage,
+    DateTime? LastMessageAt,
+    int UnreadCount
+);
 
 public class ChannelRepository : Repository<Channel>, IChannelRepository
 {
@@ -460,6 +665,7 @@ public class ChannelRepository : Repository<Channel>, IChannelRepository
     public async Task<IEnumerable<Channel>> GetUserChannelsAsync(ulong userId)
     {
         return await _context.ChannelMembers
+            .AsNoTracking()
             .Where(cm => cm.UserId == userId && cm.IsActive)
             .Select(cm => cm.Channel!)
             .ToListAsync();
@@ -468,6 +674,7 @@ public class ChannelRepository : Repository<Channel>, IChannelRepository
     public async Task<Channel?> GetChannelWithMembersAsync(ulong channelId)
     {
         return await _context.Channels
+            .AsNoTracking()
             .Include(c => c.Members)
             .ThenInclude(cm => cm.User)
             .Include(c => c.CreatedByUser)
@@ -483,6 +690,7 @@ public class ChannelRepository : Repository<Channel>, IChannelRepository
     public async Task<ChannelMember?> GetChannelMemberAsync(ulong channelId, ulong userId)
     {
         return await _context.ChannelMembers
+            .AsNoTracking()
             .Include(cm => cm.User)
             .FirstOrDefaultAsync(cm => cm.ChannelId == channelId && cm.UserId == userId && cm.IsActive);
     }
@@ -490,6 +698,7 @@ public class ChannelRepository : Repository<Channel>, IChannelRepository
     public async Task<IEnumerable<ChannelMessage>> GetChannelMessagesAsync(ulong channelId, int limit = 50)
     {
         return await _context.ChannelMessages
+            .AsNoTracking()
             .Include(cm => cm.FromUser)
             .Include(cm => cm.ReplyToMessage)
             .Where(cm => cm.ChannelId == channelId && !cm.IsDeleted)
@@ -501,6 +710,7 @@ public class ChannelRepository : Repository<Channel>, IChannelRepository
     public async Task<IEnumerable<ChannelMessage>> GetChannelMessagesBeforeAsync(ulong channelId, ulong? beforeMessageId, int limit = 50)
     {
         var query = _context.ChannelMessages
+            .AsNoTracking()
             .Include(cm => cm.FromUser)
             .Include(cm => cm.ReplyToMessage)
             .Where(cm => cm.ChannelId == channelId && !cm.IsDeleted);
@@ -519,6 +729,7 @@ public class ChannelRepository : Repository<Channel>, IChannelRepository
     public async Task<ChannelMessage?> GetLatestChannelMessageAsync(ulong channelId)
     {
         return await _context.ChannelMessages
+            .AsNoTracking()
             .Include(cm => cm.FromUser)
             .Where(cm => cm.ChannelId == channelId && !cm.IsDeleted)
             .OrderByDescending(cm => cm.CreatedAt)
@@ -562,6 +773,7 @@ public class ChannelRepository : Repository<Channel>, IChannelRepository
     public async Task<ChannelMessage?> GetChannelMessageAsync(ulong messageId)
     {
         return await _context.ChannelMessages
+            .AsNoTracking()
             .Include(cm => cm.FromUser)
             .FirstOrDefaultAsync(cm => cm.Id == messageId && !cm.IsDeleted);
     }
@@ -576,9 +788,76 @@ public class ChannelRepository : Repository<Channel>, IChannelRepository
     public async Task<IEnumerable<ChannelMember>> GetChannelMembersAsync(ulong channelId)
     {
         return await _context.ChannelMembers
+            .AsNoTracking()
             .Include(cm => cm.User)
             .Where(cm => cm.ChannelId == channelId && cm.IsActive)
             .ToListAsync();
+    }
+
+    public async Task<IEnumerable<ChannelChatSummary>> GetUserChannelChatSummariesAsync(ulong userId)
+    {
+        return await _context.ChannelMembers
+            .AsNoTracking()
+            .Where(cm => cm.UserId == userId && cm.IsActive)
+            .Select(cm => new ChannelChatSummary(
+                cm.ChannelId,
+                cm.Channel!.Name,
+                cm.Channel.AvatarUrl,
+                cm.Channel.Type,
+                _context.ChannelMessages
+                    .Where(m => m.ChannelId == cm.ChannelId && !m.IsDeleted)
+                    .OrderByDescending(m => m.CreatedAt)
+                    .Select(m => m.Content)
+                    .FirstOrDefault(),
+                _context.ChannelMessages
+                    .Where(m => m.ChannelId == cm.ChannelId && !m.IsDeleted)
+                    .OrderByDescending(m => m.CreatedAt)
+                    .Select(m => (DateTime?)m.CreatedAt)
+                    .FirstOrDefault(),
+                _context.ChannelMessages
+                    .Where(m => m.ChannelId == cm.ChannelId && !m.IsDeleted &&
+                        (!cm.LastReadAt.HasValue || m.CreatedAt > cm.LastReadAt.Value))
+                    .Count()
+            ))
+            .ToListAsync();
+    }
+
+    public async Task<Channel?> GetByInviteCodeAsync(string inviteCode)
+    {
+        var normalized = (inviteCode ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(normalized))
+        {
+            return null;
+        }
+
+        return await _context.Channels
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.IsActive && c.InviteCode == normalized);
+    }
+
+    public async Task<Channel?> GetByPublicAliasAsync(string publicAlias)
+    {
+        var normalized = (publicAlias ?? string.Empty).Trim().TrimStart('@');
+        if (string.IsNullOrEmpty(normalized))
+        {
+            return null;
+        }
+
+        return await _context.Channels
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.IsActive && c.PublicAlias == normalized);
+    }
+
+    public async Task<bool> IsPublicAliasTakenAsync(string publicAlias, ulong? exceptChannelId = null)
+    {
+        var normalized = (publicAlias ?? string.Empty).Trim().TrimStart('@');
+        if (string.IsNullOrEmpty(normalized))
+        {
+            return false;
+        }
+
+        return await _context.Channels
+            .AnyAsync(c => c.PublicAlias == normalized && (!exceptChannelId.HasValue || c.Id != exceptChannelId.Value));
     }
 }
 
@@ -723,6 +1002,7 @@ public class PrivateChatRepository : Repository<PrivateChat>, IPrivateChatReposi
     public async Task<IEnumerable<PrivateChat>> GetUserPrivateChatsAsync(ulong userId)
     {
         return await _context.PrivateChats
+            .AsNoTracking()
             .Include(pc => pc.User1)
             .Include(pc => pc.User2)
             .Include(pc => pc.LastMessage)

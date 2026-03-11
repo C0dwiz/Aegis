@@ -6,6 +6,7 @@ public interface ISessionCryptoProvider
     Task<byte[]> DecryptAsync(byte[] encryptedData, byte[] key);
     Task<byte[]> GenerateMacAsync(byte[] data, byte[] key);
     bool VerifyMac(byte[] data, byte[] key, byte[] mac);
+    bool VerifyMac(ReadOnlySpan<byte> data, ReadOnlySpan<byte> key, ReadOnlySpan<byte> mac);
     Memory<byte> GenerateSessionKey();
     Memory<byte> GenerateMacKey();
 }

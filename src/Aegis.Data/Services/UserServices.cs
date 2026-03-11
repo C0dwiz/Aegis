@@ -1,7 +1,10 @@
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using Aegis.Data.Entities;
 using Aegis.Data.Repositories;
 using Aegis.Common;
+using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Logging;
 using Group = Aegis.Data.Entities.Group;
 
 namespace Aegis.Data.Services;
@@ -17,19 +20,30 @@ public interface IUserRegistrationService
 
 public class UserRegistrationService : IUserRegistrationService
 {
+    private const string LegacyPublicKeyPrefix = "LEGACY_PUBLIC_KEY_";
+
     private readonly IUserRepository _userRepository;
     private readonly ICryptoProvider _cryptoProvider;
+    private readonly ILogger<UserRegistrationService> _logger;
 
-    public UserRegistrationService(IUserRepository userRepository, ICryptoProvider cryptoProvider)
+    public UserRegistrationService(
+        IUserRepository userRepository,
+        ICryptoProvider cryptoProvider,
+        ILogger<UserRegistrationService> logger)
     {
         _userRepository = userRepository;
         _cryptoProvider = cryptoProvider;
+        _logger = logger;
     }
 
     internal static readonly Regex UsernameRegex = new(@"^[a-zA-Z0-9][a-zA-Z0-9_.-]{2,31}$", RegexOptions.Compiled);
 
     public async Task<User> RegisterUserAsync(string username, string email, string password, string publicKey)
     {
+        username = username?.Trim() ?? string.Empty;
+        email = NormalizeEmail(email);
+        publicKey = NormalizePublicKey(publicKey, username);
+
         if (string.IsNullOrWhiteSpace(username) || username.Length < 3)
             throw new ArgumentException("Username must be at least 3 characters long", nameof(username));
 
@@ -44,9 +58,6 @@ public class UserRegistrationService : IUserRegistrationService
         if (string.IsNullOrWhiteSpace(password) || password.Length < 6)
             throw new ArgumentException("Password must be at least 6 characters long", nameof(password));
         
-        if (string.IsNullOrWhiteSpace(publicKey))
-            throw new ArgumentException("Public key is required", nameof(publicKey));
-
         if (!await IsUsernameAvailableAsync(username))
             throw new InvalidOperationException("Username is already taken");
         
@@ -66,19 +77,43 @@ public class UserRegistrationService : IUserRegistrationService
             UpdatedAt = DateTime.UtcNow
         };
 
-        return await _userRepository.CreateAsync(user);
+        var created = await _userRepository.CreateAsync(user);
+        _logger.LogInformation("User registered: {UserId} ({Username})", created.Id, created.Username);
+        return created;
     }
 
     public async Task<bool> IsUsernameAvailableAsync(string username)
     {
-        var existingUser = await _userRepository.GetByUsernameAsync(username);
+        var existingUser = await _userRepository.GetByUsernameAsync((username ?? string.Empty).Trim());
         return existingUser == null;
     }
 
     public async Task<bool> IsEmailAvailableAsync(string email)
     {
-        var existingUser = await _userRepository.GetByEmailAsync(email);
+        var existingUser = await _userRepository.GetByEmailAsync(NormalizeEmail(email));
         return existingUser == null;
+    }
+
+    public static string NormalizeEmail(string? email)
+    {
+        return (email ?? string.Empty).Trim().ToLowerInvariant();
+    }
+
+    public static string BuildLegacyEmail(string username)
+    {
+        var normalized = (username ?? string.Empty).Trim().ToLowerInvariant();
+        return $"{normalized}@legacy.local";
+    }
+
+    public static string NormalizePublicKey(string? publicKey, string? username)
+    {
+        if (!string.IsNullOrWhiteSpace(publicKey))
+        {
+            return publicKey.Trim();
+        }
+
+        var normalizedUsername = (username ?? string.Empty).Trim();
+        return $"{LegacyPublicKeyPrefix}{normalizedUsername.ToUpperInvariant()}";
     }
 }
 
@@ -190,21 +225,67 @@ public interface IUserSearchService
 
 public class UserSearchService : IUserSearchService
 {
-    private readonly IUserRepository _userRepository;
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
 
-    public UserSearchService(IUserRepository userRepository)
+    private readonly IUserRepository _userRepository;
+    private readonly IDistributedCache? _cache;
+    private readonly ILogger<UserSearchService> _logger;
+
+    public UserSearchService(
+        IUserRepository userRepository,
+        IDistributedCache? cache,
+        ILogger<UserSearchService> logger)
     {
         _userRepository = userRepository;
+        _cache = cache;
+        _logger = logger;
+    }
+
+    public UserSearchService(
+        IUserRepository userRepository,
+        ILogger<UserSearchService> logger)
+        : this(userRepository, null, logger)
+    {
     }
 
     public async Task<User?> FindUserByUsernameAsync(string username)
     {
-        return await _userRepository.GetByUsernameAsync(username);
+        var normalized = (username ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(normalized))
+        {
+            return null;
+        }
+
+        var cacheKey = $"user:by-username:{normalized.ToLowerInvariant()}";
+        var cached = await TryGetUserFromCacheAsync(cacheKey);
+        if (cached != null)
+        {
+            return cached;
+        }
+
+        var user = await _userRepository.GetByUsernameAsync(normalized);
+        await TrySetUserCacheAsync(cacheKey, user);
+        return user;
     }
 
     public async Task<User?> FindUserByEmailAsync(string email)
     {
-        return await _userRepository.GetByEmailAsync(email);
+        var normalized = (email ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(normalized))
+        {
+            return null;
+        }
+
+        var cacheKey = $"user:by-email:{normalized}";
+        var cached = await TryGetUserFromCacheAsync(cacheKey);
+        if (cached != null)
+        {
+            return cached;
+        }
+
+        var user = await _userRepository.GetByEmailAsync(normalized);
+        await TrySetUserCacheAsync(cacheKey, user);
+        return user;
     }
 
     public async Task<IEnumerable<User>> SearchUsersByUsernameAsync(string pattern, int limit = 20)
@@ -220,7 +301,86 @@ public class UserSearchService : IUserSearchService
 
     public async Task<User?> FindUserByIdAsync(ulong userId)
     {
-        return await _userRepository.GetByIdAsync(userId);
+        if (userId == 0)
+        {
+            return null;
+        }
+
+        var cacheKey = $"user:by-id:{userId}";
+        var cached = await TryGetUserFromCacheAsync(cacheKey);
+        if (cached != null)
+        {
+            return cached;
+        }
+
+        var user = await _userRepository.GetByIdAsync(userId);
+        await TrySetUserCacheAsync(cacheKey, user);
+        return user;
+    }
+
+    private async Task<User?> TryGetUserFromCacheAsync(string cacheKey)
+    {
+        if (_cache == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var bytes = await _cache.GetAsync(cacheKey);
+            if (bytes == null || bytes.Length == 0)
+            {
+                return null;
+            }
+
+            return JsonSerializer.Deserialize<User>(bytes);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "User cache read failed for key {CacheKey}", cacheKey);
+            return null;
+        }
+    }
+
+    private async Task TrySetUserCacheAsync(string cacheKey, User? user)
+    {
+        if (_cache == null || user == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(ToCacheSafeUser(user));
+            await _cache.SetAsync(cacheKey, bytes, new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = CacheTtl
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "User cache write failed for key {CacheKey}", cacheKey);
+        }
+    }
+
+    private static User ToCacheSafeUser(User source)
+    {
+        return new User
+        {
+            Id = source.Id,
+            Username = source.Username,
+            Email = source.Email,
+            PublicKey = source.PublicKey,
+            IdentityKeyFingerprint = source.IdentityKeyFingerprint,
+            DisplayName = source.DisplayName,
+            AvatarUrl = source.AvatarUrl,
+            Bio = source.Bio,
+            IsActive = source.IsActive,
+            CreatedAt = source.CreatedAt,
+            UpdatedAt = source.UpdatedAt,
+            LastSeenAt = source.LastSeenAt,
+            PasswordHash = string.Empty
+        };
     }
 }
 
@@ -230,20 +390,106 @@ public interface IUserProfileService
 {
     Task<User?> GetProfileAsync(ulong userId);
     Task<User> UpdateProfileAsync(ulong userId, string? displayName, string? avatarUrl, string? bio, string? username);
+    Task<UserAvatar> AddAvatarAsync(ulong userId, string avatarUrl, bool makePrimary = false);
+    Task<IReadOnlyList<UserAvatar>> GetAvatarsAsync(ulong userId);
+    Task<bool> DeleteAvatarAsync(ulong userId, ulong avatarId);
+    Task<bool> SetPrimaryAvatarAsync(ulong userId, ulong avatarId);
 }
 
 public class UserProfileService : IUserProfileService
 {
-    private readonly IUserRepository _userRepository;
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
 
-    public UserProfileService(IUserRepository userRepository)
+    private readonly IUserRepository _userRepository;
+    private readonly IUserAvatarRepository _avatarRepository;
+    private readonly IAvatarStorageService _avatarStorage;
+    private readonly IDistributedCache? _cache;
+    private readonly ILogger<UserProfileService> _logger;
+
+    public UserProfileService(
+        IUserRepository userRepository,
+        IUserAvatarRepository avatarRepository,
+        IAvatarStorageService avatarStorage,
+        IDistributedCache? cache,
+        ILogger<UserProfileService> logger)
     {
         _userRepository = userRepository;
+        _avatarRepository = avatarRepository;
+        _avatarStorage = avatarStorage;
+        _cache = cache;
+        _logger = logger;
+    }
+
+    public UserProfileService(
+        IUserRepository userRepository,
+        IUserAvatarRepository avatarRepository,
+        IAvatarStorageService avatarStorage,
+        ILogger<UserProfileService> logger)
+        : this(userRepository, avatarRepository, avatarStorage, null, logger)
+    {
+    }
+
+    public UserProfileService(
+        IUserRepository userRepository,
+        IUserAvatarRepository avatarRepository,
+        ILogger<UserProfileService> logger)
+        : this(userRepository, avatarRepository, new PassThroughAvatarStorageService(), null, logger)
+    {
+    }
+
+    public UserProfileService(
+        IUserRepository userRepository,
+        ILogger<UserProfileService> logger)
+        : this(userRepository, new InMemoryAvatarRepository(), new PassThroughAvatarStorageService(), null, logger)
+    {
     }
 
     public async Task<User?> GetProfileAsync(ulong userId)
     {
-        return await _userRepository.GetByIdAsync(userId);
+        if (userId == 0)
+        {
+            return null;
+        }
+
+        var cacheKey = $"profile:by-id:{userId}";
+        if (_cache != null)
+        {
+            try
+            {
+                var bytes = await _cache.GetAsync(cacheKey);
+                if (bytes != null)
+                {
+                    var cached = JsonSerializer.Deserialize<User>(bytes);
+                    if (cached != null)
+                    {
+                        return cached;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Profile cache read failed for user {UserId}", userId);
+            }
+        }
+
+        var user = await _userRepository.GetByIdAsync(userId);
+
+        if (_cache != null && user != null)
+        {
+            try
+            {
+                await _cache.SetAsync(
+                    cacheKey,
+                    JsonSerializer.SerializeToUtf8Bytes(user),
+                    new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CacheTtl });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Profile cache write failed for user {UserId}", userId);
+            }
+        }
+
+        return user;
     }
 
     public async Task<User> UpdateProfileAsync(ulong userId, string? displayName, string? avatarUrl, string? bio, string? username)
@@ -251,8 +497,12 @@ public class UserProfileService : IUserProfileService
         var user = await _userRepository.GetByIdAsync(userId)
             ?? throw new InvalidOperationException("User not found");
 
+        var previousUsername = user.Username;
+        var previousEmail = user.Email;
+
         if (username != null && username != user.Username)
         {
+            username = username.Trim();
             if (username.Length < 3)
                 throw new ArgumentException("Username must be at least 3 characters long");
             if (!UserRegistrationService.UsernameRegex.IsMatch(username))
@@ -264,12 +514,240 @@ public class UserProfileService : IUserProfileService
             user.Username = username;
         }
 
-        if (displayName != null) user.DisplayName = displayName;
-        if (avatarUrl != null) user.AvatarUrl = avatarUrl;
-        if (bio != null) user.Bio = bio;
+        if (displayName != null) user.DisplayName = displayName.Trim();
+        if (avatarUrl != null)
+        {
+            if (string.IsNullOrWhiteSpace(avatarUrl))
+            {
+                if (!string.IsNullOrWhiteSpace(user.AvatarUrl))
+                {
+                    await _avatarStorage.DeleteIfManagedAsync(user.AvatarUrl);
+                }
+
+                user.AvatarUrl = null;
+            }
+            else
+            {
+                var normalized = await _avatarStorage.NormalizeAvatarReferenceAsync(avatarUrl, userId);
+                if (!string.Equals(normalized, user.AvatarUrl, StringComparison.Ordinal))
+                {
+                    await _avatarStorage.DeleteIfManagedAsync(user.AvatarUrl);
+                }
+
+                user.AvatarUrl = normalized;
+            }
+        }
+        if (bio != null) user.Bio = string.IsNullOrWhiteSpace(bio) ? null : bio.Trim();
         user.UpdatedAt = DateTime.UtcNow;
 
-        return await _userRepository.UpdateAsync(user);
+        var updated = await _userRepository.UpdateAsync(user);
+        await InvalidateProfileCacheAsync(updated, previousUsername, previousEmail);
+        return updated;
+    }
+
+    public async Task<UserAvatar> AddAvatarAsync(ulong userId, string avatarUrl, bool makePrimary = false)
+    {
+        var user = await _userRepository.GetByIdAsync(userId)
+            ?? throw new InvalidOperationException("User not found");
+
+        var normalizedUrl = (avatarUrl ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(normalizedUrl))
+        {
+            throw new ArgumentException("Avatar URL is required", nameof(avatarUrl));
+        }
+
+        normalizedUrl = await _avatarStorage.NormalizeAvatarReferenceAsync(normalizedUrl, userId);
+
+        var existing = await _avatarRepository.GetByUserIdAsync(userId);
+        var shouldBePrimary = makePrimary || !existing.Any();
+        var created = await _avatarRepository.AddForUserAsync(userId, normalizedUrl, shouldBePrimary);
+
+        if (shouldBePrimary)
+        {
+            if (!string.Equals(user.AvatarUrl, normalizedUrl, StringComparison.Ordinal))
+            {
+                await _avatarStorage.DeleteIfManagedAsync(user.AvatarUrl);
+            }
+
+            user.AvatarUrl = normalizedUrl;
+            user.UpdatedAt = DateTime.UtcNow;
+            var updated = await _userRepository.UpdateAsync(user);
+            await InvalidateProfileCacheAsync(updated, updated.Username, updated.Email);
+        }
+
+        return created;
+    }
+
+    public async Task<IReadOnlyList<UserAvatar>> GetAvatarsAsync(ulong userId)
+    {
+        var avatars = await _avatarRepository.GetByUserIdAsync(userId);
+        return avatars.ToList();
+    }
+
+    public async Task<bool> DeleteAvatarAsync(ulong userId, ulong avatarId)
+    {
+        var avatarsBefore = await _avatarRepository.GetByUserIdAsync(userId);
+        var target = avatarsBefore.FirstOrDefault(a => a.Id == avatarId);
+
+        var deleted = await _avatarRepository.DeleteForUserAsync(userId, avatarId);
+        if (!deleted)
+        {
+            return false;
+        }
+
+        if (target != null)
+        {
+            await _avatarStorage.DeleteIfManagedAsync(target.AvatarUrl);
+        }
+
+        var user = await _userRepository.GetByIdAsync(userId);
+        if (user != null)
+        {
+            var primary = await _avatarRepository.GetPrimaryByUserIdAsync(userId);
+            user.AvatarUrl = primary?.AvatarUrl;
+            user.UpdatedAt = DateTime.UtcNow;
+            var updated = await _userRepository.UpdateAsync(user);
+            await InvalidateProfileCacheAsync(updated, updated.Username, updated.Email);
+        }
+
+        return true;
+    }
+
+    public async Task<bool> SetPrimaryAvatarAsync(ulong userId, ulong avatarId)
+    {
+        var updatedPrimary = await _avatarRepository.SetPrimaryAsync(userId, avatarId);
+        if (!updatedPrimary)
+        {
+            return false;
+        }
+
+        var user = await _userRepository.GetByIdAsync(userId);
+        var primary = await _avatarRepository.GetPrimaryByUserIdAsync(userId);
+        if (user != null)
+        {
+            user.AvatarUrl = primary?.AvatarUrl;
+            user.UpdatedAt = DateTime.UtcNow;
+            var updated = await _userRepository.UpdateAsync(user);
+            await InvalidateProfileCacheAsync(updated, updated.Username, updated.Email);
+        }
+
+        return true;
+    }
+
+    private async Task InvalidateProfileCacheAsync(User user, string previousUsername, string previousEmail)
+    {
+        if (_cache == null)
+        {
+            return;
+        }
+
+        var keys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            $"profile:by-id:{user.Id}",
+            $"user:by-id:{user.Id}",
+            $"user:by-username:{user.Username.ToLowerInvariant()}",
+            $"user:by-email:{user.Email.ToLowerInvariant()}"
+        };
+
+        if (!string.Equals(previousUsername, user.Username, StringComparison.OrdinalIgnoreCase))
+        {
+            keys.Add($"user:by-username:{previousUsername.ToLowerInvariant()}");
+        }
+
+        if (!string.Equals(previousEmail, user.Email, StringComparison.OrdinalIgnoreCase))
+        {
+            keys.Add($"user:by-email:{previousEmail.ToLowerInvariant()}");
+        }
+
+        foreach (var key in keys)
+        {
+            try
+            {
+                await _cache.RemoveAsync(key);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Profile cache invalidation failed for key {CacheKey}", key);
+            }
+        }
+    }
+}
+
+internal sealed class InMemoryAvatarRepository : IUserAvatarRepository
+{
+    private readonly List<UserAvatar> _items = new();
+    private ulong _nextId = 1;
+
+    public Task<UserAvatar?> GetByIdAsync(ulong id) => Task.FromResult(_items.FirstOrDefault(x => x.Id == id));
+    public Task<IEnumerable<UserAvatar>> GetAllAsync() => Task.FromResult<IEnumerable<UserAvatar>>(_items.ToList());
+    public Task<IEnumerable<UserAvatar>> FindAsync(System.Linq.Expressions.Expression<Func<UserAvatar, bool>> predicate)
+        => Task.FromResult<IEnumerable<UserAvatar>>(_items.AsQueryable().Where(predicate).ToList());
+    public Task<UserAvatar> CreateAsync(UserAvatar entity)
+    {
+        entity.Id = _nextId++;
+        _items.Add(entity);
+        return Task.FromResult(entity);
+    }
+    public Task<UserAvatar> UpdateAsync(UserAvatar entity)
+    {
+        var idx = _items.FindIndex(x => x.Id == entity.Id);
+        if (idx >= 0) _items[idx] = entity;
+        return Task.FromResult(entity);
+    }
+    public Task<bool> DeleteAsync(ulong id)
+    {
+        var removed = _items.RemoveAll(x => x.Id == id) > 0;
+        return Task.FromResult(removed);
+    }
+
+    public Task<IEnumerable<UserAvatar>> GetByUserIdAsync(ulong userId)
+        => Task.FromResult<IEnumerable<UserAvatar>>(_items.Where(a => a.UserId == userId).OrderByDescending(a => a.IsPrimary).ThenByDescending(a => a.CreatedAt).ToList());
+
+    public Task<UserAvatar?> GetPrimaryByUserIdAsync(ulong userId)
+        => Task.FromResult(_items.Where(a => a.UserId == userId && a.IsPrimary).OrderByDescending(a => a.CreatedAt).FirstOrDefault());
+
+    public async Task<UserAvatar> AddForUserAsync(ulong userId, string avatarUrl, bool makePrimary)
+    {
+        if (makePrimary)
+        {
+            foreach (var avatar in _items.Where(a => a.UserId == userId))
+            {
+                avatar.IsPrimary = false;
+            }
+        }
+
+        var entity = new UserAvatar
+        {
+            Id = _nextId++,
+            UserId = userId,
+            AvatarUrl = avatarUrl,
+            IsPrimary = makePrimary,
+            CreatedAt = DateTime.UtcNow
+        };
+        _items.Add(entity);
+        return await Task.FromResult(entity);
+    }
+
+    public Task<bool> DeleteForUserAsync(ulong userId, ulong avatarId)
+    {
+        var removed = _items.RemoveAll(a => a.UserId == userId && a.Id == avatarId) > 0;
+        return Task.FromResult(removed);
+    }
+
+    public Task<bool> SetPrimaryAsync(ulong userId, ulong avatarId)
+    {
+        var target = _items.FirstOrDefault(a => a.UserId == userId && a.Id == avatarId);
+        if (target == null)
+        {
+            return Task.FromResult(false);
+        }
+
+        foreach (var avatar in _items.Where(a => a.UserId == userId))
+        {
+            avatar.IsPrimary = avatar.Id == avatarId;
+        }
+
+        return Task.FromResult(true);
     }
 }
 
@@ -279,7 +757,12 @@ public interface IChannelService
 {
     Task<Channel> CreateChannelAsync(ulong creatorUserId, string name, string? description, ChannelType type);
     Task<(Channel Channel, bool WasAlreadyMember)> JoinChannelAsync(ulong userId, ulong channelId);
+    Task<(Channel Channel, bool WasAlreadyMember)> JoinChannelByInviteCodeAsync(ulong userId, string inviteCode);
     Task<Channel> UpdateChannelAsync(ulong channelId, ulong userId, string? name, string? description, string? avatarUrl);
+    Task<Channel> UpdateChannelLinksAsync(ulong channelId, ulong userId, string? publicAlias, bool regeneratePrivateInvite);
+    Task<string> GetInviteLinkAsync(ulong channelId, ulong userId);
+    Task<string?> GetPublicLinkAsync(ulong channelId);
+    Task<Channel?> ResolveByLinkAsync(string linkOrAlias);
     Task<ChannelMember> UpdateMemberRoleAsync(ulong channelId, ulong actorUserId, ulong targetUserId, ChannelMemberRole newRole);
     Task<ChannelMember> UpdateMemberPermissionsAsync(ulong channelId, ulong actorUserId, ulong targetUserId, MemberPermissions permissions);
     Task<bool> HasPermissionAsync(ulong channelId, ulong userId, string permission);
@@ -318,7 +801,9 @@ public class ChannelService : IChannelService
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,
             IsActive = true,
-            MemberCount = 1
+            MemberCount = 1,
+            InviteCode = CreateInviteCode(),
+            PublicAlias = null
         };
 
         var created = await _channelRepository.CreateAsync(channel);
@@ -377,6 +862,14 @@ public class ChannelService : IChannelService
         return (channel, false);
     }
 
+    public async Task<(Channel Channel, bool WasAlreadyMember)> JoinChannelByInviteCodeAsync(ulong userId, string inviteCode)
+    {
+        var channel = await _channelRepository.GetByInviteCodeAsync(inviteCode)
+            ?? throw new InvalidOperationException("Channel not found");
+
+        return await JoinChannelAllowPrivateAsync(userId, channel);
+    }
+
     public async Task<Channel> UpdateChannelAsync(ulong channelId, ulong userId, string? name, string? description, string? avatarUrl)
     {
         var member = await _channelRepository.GetChannelMemberAsync(channelId, userId)
@@ -394,6 +887,107 @@ public class ChannelService : IChannelService
         channel.UpdatedAt = DateTime.UtcNow;
 
         return await _channelRepository.UpdateAsync(channel);
+    }
+
+    public async Task<Channel> UpdateChannelLinksAsync(ulong channelId, ulong userId, string? publicAlias, bool regeneratePrivateInvite)
+    {
+        var member = await _channelRepository.GetChannelMemberAsync(channelId, userId)
+            ?? throw new InvalidOperationException("Not a member of this channel");
+
+        if (!CanEditInfo(member))
+            throw new UnauthorizedAccessException("No permission to edit channel links");
+
+        var channel = await _channelRepository.GetByIdAsync(channelId)
+            ?? throw new InvalidOperationException("Channel not found");
+
+        if (publicAlias != null)
+        {
+            var normalizedAlias = NormalizeAlias(publicAlias);
+            if (normalizedAlias.Length == 0)
+            {
+                channel.PublicAlias = null;
+            }
+            else
+            {
+                if (!Regex.IsMatch(normalizedAlias, "^[a-zA-Z0-9_]{4,32}$"))
+                {
+                    throw new ArgumentException("Public alias must be 4-32 chars and contain only letters, digits, and underscores");
+                }
+
+                var taken = await _channelRepository.IsPublicAliasTakenAsync(normalizedAlias, channelId);
+                if (taken)
+                {
+                    throw new InvalidOperationException("Alias is already taken");
+                }
+
+                channel.PublicAlias = normalizedAlias;
+            }
+        }
+
+        if (regeneratePrivateInvite)
+        {
+            channel.InviteCode = CreateInviteCode();
+        }
+
+        channel.UpdatedAt = DateTime.UtcNow;
+        return await _channelRepository.UpdateAsync(channel);
+    }
+
+    public async Task<string> GetInviteLinkAsync(ulong channelId, ulong userId)
+    {
+        var member = await _channelRepository.GetChannelMemberAsync(channelId, userId)
+            ?? throw new InvalidOperationException("Not a member of this channel");
+
+        if (!member.CanInviteUsers && member.Role != ChannelMemberRole.Owner)
+            throw new UnauthorizedAccessException("No permission to view invite link");
+
+        var channel = await _channelRepository.GetByIdAsync(channelId)
+            ?? throw new InvalidOperationException("Channel not found");
+
+        if (string.IsNullOrWhiteSpace(channel.InviteCode))
+        {
+            channel.InviteCode = CreateInviteCode();
+            channel = await _channelRepository.UpdateAsync(channel);
+        }
+
+        return $"aegis://join/{channel.InviteCode}";
+    }
+
+    public async Task<string?> GetPublicLinkAsync(ulong channelId)
+    {
+        var channel = await _channelRepository.GetByIdAsync(channelId)
+            ?? throw new InvalidOperationException("Channel not found");
+
+        if (string.IsNullOrWhiteSpace(channel.PublicAlias))
+        {
+            return null;
+        }
+
+        return $"@{channel.PublicAlias}";
+    }
+
+    public async Task<Channel?> ResolveByLinkAsync(string linkOrAlias)
+    {
+        var value = (linkOrAlias ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        if (value.StartsWith("aegis://join/", StringComparison.OrdinalIgnoreCase))
+        {
+            var inviteCode = value["aegis://join/".Length..].Trim();
+            return await _channelRepository.GetByInviteCodeAsync(inviteCode);
+        }
+
+        var alias = NormalizeAlias(value);
+        var byAlias = await _channelRepository.GetByPublicAliasAsync(alias);
+        if (byAlias != null)
+        {
+            return byAlias;
+        }
+
+        return await _channelRepository.GetByInviteCodeAsync(value);
     }
 
     public async Task<ChannelMember> UpdateMemberRoleAsync(ulong channelId, ulong actorUserId, ulong targetUserId, ChannelMemberRole newRole)
@@ -513,6 +1107,43 @@ public class ChannelService : IChannelService
                 break;
         }
     }
+
+    private async Task<(Channel Channel, bool WasAlreadyMember)> JoinChannelAllowPrivateAsync(ulong userId, Channel channel)
+    {
+        var existing = await _channelRepository.GetChannelMemberAsync(channel.Id, userId);
+        if (existing != null)
+        {
+            return (channel, true);
+        }
+
+        var member = new ChannelMember
+        {
+            ChannelId = channel.Id,
+            UserId = userId,
+            Role = ChannelMemberRole.Member,
+            JoinedAt = DateTime.UtcNow,
+            IsActive = true,
+            CanSendMessages = true
+        };
+        await _channelRepository.AddMemberAsync(member);
+
+        channel.MemberCount += 1;
+        channel.UpdatedAt = DateTime.UtcNow;
+        await _channelRepository.UpdateAsync(channel);
+
+        return (channel, false);
+    }
+
+    private static string CreateInviteCode()
+    {
+        return Convert.ToHexString(Guid.NewGuid().ToByteArray()).ToLowerInvariant();
+    }
+
+    private static string NormalizeAlias(string value)
+    {
+        return (value ?? string.Empty).Trim().TrimStart('@');
+    }
+
 }
 
 // ===================== GROUP SERVICE =====================

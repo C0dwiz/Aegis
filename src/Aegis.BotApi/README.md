@@ -44,6 +44,9 @@ Edit `src/Aegis.BotApi/appsettings.json`:
 - `POST /bot/{token}/sendMessage`
 - `POST /bot/{token}/sendPhoto`
 - `POST /bot/{token}/sendDocument`
+- `POST /bot/{token}/sendMedia`
+- `POST /bot/{token}/sendFile`
+- `POST /bot/{token}/sendVoiceMessage`
 - `POST /bot/{token}/editMessageText`
 - `POST /bot/{token}/deleteMessage`
 
@@ -122,6 +125,44 @@ The contract is Telegram-like:
   "caption": "Quarterly report",
   "file_name": "report.pdf",
   "mime_type": "application/pdf"
+}
+```
+
+### sendMedia (photo/video/gif)
+
+```json
+{
+  "chat_id": "u:2",
+  "media_base64": "<base64-media>",
+  "caption": "video/gif/photo",
+  "file_name": "clip.mp4",
+  "mime_type": "video/mp4"
+}
+```
+
+For GIF use `mime_type: image/gif`.
+
+### sendFile
+
+```json
+{
+  "chat_id": "u:2",
+  "file_base64": "<base64-file>",
+  "caption": "archive",
+  "file_name": "backup.zip",
+  "mime_type": "application/zip"
+}
+```
+
+### sendVoiceMessage
+
+```json
+{
+  "chat_id": "u:2",
+  "voice_base64": "<base64-ogg>",
+  "caption": "voice note",
+  "file_name": "voice.ogg",
+  "mime_type": "audio/ogg"
 }
 ```
 

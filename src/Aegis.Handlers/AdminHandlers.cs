@@ -49,7 +49,8 @@ public record GroupMessageSendRequest(
     string? Content,
     Aegis.Data.Entities.MessageContentType ContentType = Aegis.Data.Entities.MessageContentType.Text,
     ulong? ReplyToMessageId = null,
-    MediaAttachmentPayload? Attachment = null
+    MediaAttachmentPayload? Attachment = null,
+    string? ParseMode = null
 );
 
 public record GroupMessageSendResponse(
@@ -146,7 +147,7 @@ public class ChannelEditHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error editing channel");
+            _logger.LogHandlerError(ex, "admin_channel_edit", context, message, _sessionManager);
             await SendResponseAsync(context, message.SequenceId, new ChannelEditResponse(false, "Internal server error"));
         }
     }
@@ -224,7 +225,7 @@ public class GroupCreateHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error creating group");
+            _logger.LogHandlerError(ex, "admin_group_create", context, message, _sessionManager);
             await SendResponseAsync(context, message.SequenceId, new GroupCreateResponse(false, Message: "Internal server error"));
         }
     }
@@ -307,7 +308,7 @@ public class GroupEditHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error editing group");
+            _logger.LogHandlerError(ex, "admin_group_edit", context, message, _sessionManager);
             await SendResponseAsync(context, message.SequenceId, new GroupEditResponse(false, "Internal server error"));
         }
     }
@@ -374,7 +375,7 @@ public class GroupMessageSendHandler : IMessageHandler
             }
 
             var contentType = MediaPayloadBuilder.ResolveContentType(request.ContentType, request.Attachment);
-            var normalizedContent = MediaPayloadBuilder.BuildMessageContent(request.Content, request.Attachment);
+            var normalizedContent = MediaPayloadBuilder.BuildMessageContent(request.Content, request.Attachment, request.ParseMode);
 
             var msg = await _messageService.SendGroupMessageAsync(
                 request.GroupId, session.UserId, normalizedContent,
@@ -395,7 +396,7 @@ public class GroupMessageSendHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error sending group message");
+            _logger.LogHandlerError(ex, "admin_group_message_send", context, message, _sessionManager);
             await SendResponseAsync(context, message.SequenceId, new GroupMessageSendResponse(false, Message: "Internal server error"));
         }
     }
@@ -497,7 +498,7 @@ public class MemberRoleUpdateHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error updating member role");
+            _logger.LogHandlerError(ex, "admin_member_role_update", context, message, _sessionManager);
             await SendResponseAsync(context, message.SequenceId, new MemberRoleUpdateResponse(false, "Internal server error"));
         }
     }
@@ -606,7 +607,7 @@ public class MemberPermissionUpdateHandler : IMessageHandler
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error updating member permissions");
+            _logger.LogHandlerError(ex, "admin_member_permissions_update", context, message, _sessionManager);
             await SendResponseAsync(context, message.SequenceId, new MemberPermissionUpdateResponse(false, "Internal server error"));
         }
     }

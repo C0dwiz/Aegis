@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import struct
 import time
+import base64
 from collections import deque
 from typing import Iterable, Optional
 
@@ -182,6 +183,118 @@ class AegisClient:
         sequence_id = self._send_request(MessageType.PRIVATE_CHAT_MESSAGE, request.to_bytes(), MessageFlags.REQUIRES_ACK)
         response_message = self._wait_for_response(sequence_id, (MessageType.ACK,), timeout=10)
         return PrivateChatMessageResponse.from_bytes(response_message.payload)
+
+    def send_media(
+        self,
+        chat_type: str,
+        chat_id: int,
+        media_bytes: bytes,
+        media_kind: str,
+        caption: Optional[str] = None,
+        file_name: Optional[str] = None,
+        mime_type: Optional[str] = None,
+        reply_to_message_id: Optional[int] = None,
+    ):
+        if not self._transport.is_connected:
+            raise NotConnectedException()
+        if not self._is_authenticated:
+            raise AuthenticationException("Client is not authenticated")
+
+        defaults = {
+            "photo": ("photo.jpg", "image/jpeg", MessageContentType.IMAGE),
+            "video": ("video.mp4", "video/mp4", MessageContentType.VIDEO),
+            "gif": ("animation.gif", "image/gif", MessageContentType.IMAGE),
+            "voice": ("voice.ogg", "audio/ogg", MessageContentType.AUDIO),
+            "file": ("file.bin", "application/octet-stream", MessageContentType.FILE),
+        }
+
+        if media_kind not in defaults:
+            raise ValueError(f"Unsupported media_kind: {media_kind}")
+
+        default_file_name, default_mime, content_type = defaults[media_kind]
+        attachment = {
+            "FileName": file_name or default_file_name,
+            "MimeType": mime_type or default_mime,
+            "Base64Data": base64.b64encode(media_bytes).decode("ascii"),
+            "SizeBytes": len(media_bytes),
+        }
+
+        if chat_type == "private":
+            request = PrivateChatMessageRequest(
+                to_user_id=chat_id,
+                content=caption or "",
+                content_type=content_type,
+            )
+            payload = json.loads(request.to_bytes().decode("utf-8"))
+            payload["Attachment"] = attachment
+            sequence_id = self._send_request(
+                MessageType.PRIVATE_CHAT_MESSAGE,
+                json.dumps(payload).encode("utf-8"),
+                MessageFlags.REQUIRES_ACK,
+            )
+            response_message = self._wait_for_response(sequence_id, (MessageType.ACK,), timeout=10)
+            return PrivateChatMessageResponse.from_bytes(response_message.payload)
+
+        if chat_type == "channel":
+            request = ChannelMessageRequest(
+                channel_id=chat_id,
+                content=caption or "",
+                content_type=content_type,
+                reply_to_message_id=reply_to_message_id,
+            )
+            payload = json.loads(request.to_bytes().decode("utf-8"))
+            payload["Attachment"] = attachment
+            sequence_id = self._send_request(
+                MessageType.CHANNEL_MESSAGE,
+                json.dumps(payload).encode("utf-8"),
+                MessageFlags.REQUIRES_ACK,
+            )
+            response_message = self._wait_for_response(sequence_id, (MessageType.ACK,), timeout=10)
+            return ChannelMessageResponse.from_bytes(response_message.payload)
+
+        raise ValueError("chat_type must be 'private' or 'channel'")
+
+    def send_file(
+        self,
+        chat_type: str,
+        chat_id: int,
+        file_bytes: bytes,
+        file_name: str,
+        mime_type: str = "application/octet-stream",
+        caption: Optional[str] = None,
+        reply_to_message_id: Optional[int] = None,
+    ):
+        return self.send_media(
+            chat_type=chat_type,
+            chat_id=chat_id,
+            media_bytes=file_bytes,
+            media_kind="file",
+            caption=caption,
+            file_name=file_name,
+            mime_type=mime_type,
+            reply_to_message_id=reply_to_message_id,
+        )
+
+    def send_voice_message(
+        self,
+        chat_type: str,
+        chat_id: int,
+        voice_bytes: bytes,
+        caption: Optional[str] = None,
+        file_name: str = "voice.ogg",
+        mime_type: str = "audio/ogg",
+        reply_to_message_id: Optional[int] = None,
+    ):
+        return self.send_media(
+            chat_type=chat_type,
+            chat_id=chat_id,
+            media_bytes=voice_bytes,
+            media_kind="voice",
+            caption=caption,
+            file_name=file_name,
+            mime_type=mime_type,
+            reply_to_message_id=reply_to_message_id,
+        )
 
     def get_chat_list(self) -> ChatListResponse:
         if not self._transport.is_connected:

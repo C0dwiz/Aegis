@@ -7,6 +7,7 @@ public class SessionManager
 {
     private readonly ConcurrentDictionary<ulong, SessionInfo> _sessions;
     private readonly ConcurrentDictionary<ulong, ulong> _userConnections;
+    private readonly ConcurrentDictionary<ulong, bool> _userPresenceState;
     private readonly ISessionCryptoProvider _cryptoProvider;
     private readonly ILogger _logger;
     
@@ -14,6 +15,7 @@ public class SessionManager
     {
         _sessions = new ConcurrentDictionary<ulong, SessionInfo>();
         _userConnections = new ConcurrentDictionary<ulong, ulong>();
+        _userPresenceState = new ConcurrentDictionary<ulong, bool>();
         _cryptoProvider = cryptoProvider;
         _logger = logger;
     }
@@ -64,6 +66,7 @@ public class SessionManager
             session.Username = username;
             session.IsAuthenticated = true;
             _userConnections.AddOrUpdate(userId, connectionId, (_, _) => connectionId);
+            _userPresenceState.AddOrUpdate(userId, true, (_, _) => true);
             _logger.Info($"Session authenticated for connection {connectionId}, user {username} (ID: {userId})");
             return true;
         }
@@ -78,6 +81,32 @@ public class SessionManager
     public ulong? GetConnectionIdByUserId(ulong userId)
     {
         return _userConnections.TryGetValue(userId, out var connectionId) ? connectionId : null;
+    }
+
+    public bool IsUserOnline(ulong userId)
+    {
+        if (!_userConnections.TryGetValue(userId, out _))
+        {
+            return false;
+        }
+
+        if (_userPresenceState.TryGetValue(userId, out var isOnline))
+        {
+            return isOnline;
+        }
+
+        return true;
+    }
+
+    public bool SetUserPresence(ulong connectionId, bool isOnline)
+    {
+        if (!_sessions.TryGetValue(connectionId, out var session) || !session.IsAuthenticated)
+        {
+            return false;
+        }
+
+        _userPresenceState.AddOrUpdate(session.UserId, isOnline, (_, _) => isOnline);
+        return true;
     }
     
     public SessionInfo? GetAuthenticatedSession(ulong connectionId)
@@ -99,6 +128,8 @@ public class SessionManager
                 {
                     _userConnections.TryRemove(session.UserId, out _);
                 }
+
+                _userPresenceState.TryRemove(session.UserId, out _);
             }
 
             ZeroSessionSecrets(session);
@@ -140,7 +171,7 @@ public class SessionManager
             return false;
         }
         
-        return _cryptoProvider.VerifyMac(data.ToArray(), session.MacKey.ToArray(), receivedMac.ToArray());
+        return _cryptoProvider.VerifyMac(data, session.MacKey.Span, receivedMac);
     }
 
     private static void ZeroSessionSecrets(SessionInfo session)

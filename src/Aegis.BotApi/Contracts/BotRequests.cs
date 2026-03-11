@@ -33,6 +33,34 @@ public sealed record SendDocumentRequest(
     [property: JsonPropertyName("file_name")] string? FileName = null,
     [property: JsonPropertyName("mime_type")] string? MimeType = null);
 
+public sealed record SendMediaRequest(
+    [property: JsonPropertyName("chat_id")] string ChatId,
+    [property: JsonPropertyName("media_base64")] string MediaBase64,
+    [property: JsonPropertyName("caption")] string? Caption = null,
+    [property: JsonPropertyName("parse_mode")] string? ParseMode = null,
+    [property: JsonPropertyName("reply_markup")] ReplyMarkupRequest? ReplyMarkup = null,
+    [property: JsonPropertyName("file_name")] string? FileName = null,
+    [property: JsonPropertyName("mime_type")] string? MimeType = null,
+    [property: JsonPropertyName("content_type")] MessageContentType? ContentType = null);
+
+public sealed record SendFileRequest(
+    [property: JsonPropertyName("chat_id")] string ChatId,
+    [property: JsonPropertyName("file_base64")] string FileBase64,
+    [property: JsonPropertyName("caption")] string? Caption = null,
+    [property: JsonPropertyName("parse_mode")] string? ParseMode = null,
+    [property: JsonPropertyName("reply_markup")] ReplyMarkupRequest? ReplyMarkup = null,
+    [property: JsonPropertyName("file_name")] string? FileName = null,
+    [property: JsonPropertyName("mime_type")] string? MimeType = null);
+
+public sealed record SendVoiceMessageRequest(
+    [property: JsonPropertyName("chat_id")] string ChatId,
+    [property: JsonPropertyName("voice_base64")] string VoiceBase64,
+    [property: JsonPropertyName("caption")] string? Caption = null,
+    [property: JsonPropertyName("parse_mode")] string? ParseMode = null,
+    [property: JsonPropertyName("reply_markup")] ReplyMarkupRequest? ReplyMarkup = null,
+    [property: JsonPropertyName("file_name")] string? FileName = null,
+    [property: JsonPropertyName("mime_type")] string? MimeType = null);
+
 public sealed record EditMessageTextRequest(
     [property: JsonPropertyName("chat_id")] string ChatId,
     [property: JsonPropertyName("message_id")] ulong MessageId,

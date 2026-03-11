@@ -21,6 +21,7 @@ public class AegisDbContext : DbContext
     }
 
     public DbSet<User> Users { get; set; }
+    public DbSet<UserAvatar> UserAvatars { get; set; }
     public DbSet<Session> Sessions { get; set; }
     public DbSet<Message> Messages { get; set; }
     public DbSet<Group> Groups { get; set; }
@@ -59,11 +60,25 @@ public class AegisDbContext : DbContext
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
 
+        modelBuilder.Entity<UserAvatar>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.UserId, e.IsPrimary });
+            entity.HasOne(e => e.User)
+                .WithMany(u => u.Avatars)
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
+        });
+
         // Session configuration
         modelBuilder.Entity<Session>(entity =>
         {
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.SessionToken).IsUnique();
+            entity.HasIndex(e => new { e.UserId, e.IsActive });
+            entity.HasIndex(e => new { e.ConnectionId, e.IsActive });
+            entity.HasIndex(e => e.ExpiresAt);
             entity.HasOne(e => e.User).WithMany(u => u.Sessions).HasForeignKey(e => e.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
@@ -75,6 +90,9 @@ public class AegisDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => new { e.FromUserId, e.CreatedAt });
             entity.HasIndex(e => new { e.ToUserId, e.IsRead });
+            entity.HasIndex(e => new { e.FromUserId, e.ToUserId, e.IsDeleted, e.CreatedAt });
+            entity.HasIndex(e => new { e.ToUserId, e.IsDelivered, e.IsDeleted, e.CreatedAt });
+            entity.HasIndex(e => new { e.ToUserId, e.IsRead, e.IsDeleted, e.FromUserId });
             entity.HasOne(e => e.FromUser).WithMany(u => u.SentMessages).HasForeignKey(e => e.FromUserId)
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(e => e.ToUser).WithMany(u => u.ReceivedMessages).HasForeignKey(e => e.ToUserId)
@@ -98,6 +116,7 @@ public class AegisDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => new { e.GroupId, e.UserId }).IsUnique();
+            entity.HasIndex(e => new { e.UserId, e.IsActive });
             entity.HasOne(e => e.Group).WithMany(g => g.Members).HasForeignKey(e => e.GroupId)
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(e => e.User).WithMany(u => u.GroupMemberships).HasForeignKey(e => e.UserId)
@@ -110,6 +129,7 @@ public class AegisDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => new { e.GroupId, e.CreatedAt });
+            entity.HasIndex(e => new { e.GroupId, e.IsDeleted, e.CreatedAt });
             entity.HasOne(e => e.Group).WithMany(g => g.Messages).HasForeignKey(e => e.GroupId)
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(e => e.FromUser).WithMany().HasForeignKey(e => e.FromUserId)
@@ -141,6 +161,8 @@ public class AegisDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.Name);
+            entity.HasIndex(e => e.PublicAlias).IsUnique();
+            entity.HasIndex(e => e.InviteCode).IsUnique();
             entity.HasOne(e => e.CreatedByUser).WithMany(u => u.CreatedChannels).HasForeignKey(e => e.CreatedByUserId)
                 .OnDelete(DeleteBehavior.Restrict);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
@@ -152,6 +174,7 @@ public class AegisDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => new { e.ChannelId, e.UserId }).IsUnique();
+            entity.HasIndex(e => new { e.UserId, e.IsActive });
             entity.HasOne(e => e.Channel).WithMany(c => c.Members).HasForeignKey(e => e.ChannelId)
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(e => e.User).WithMany(u => u.ChannelMemberships).HasForeignKey(e => e.UserId)
@@ -164,6 +187,7 @@ public class AegisDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => new { e.ChannelId, e.CreatedAt });
+            entity.HasIndex(e => new { e.ChannelId, e.IsDeleted, e.CreatedAt });
             entity.HasOne(e => e.Channel).WithMany(c => c.Messages).HasForeignKey(e => e.ChannelId)
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(e => e.FromUser).WithMany().HasForeignKey(e => e.FromUserId)
@@ -178,6 +202,8 @@ public class AegisDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => new { e.User1Id, e.User2Id }).IsUnique();
+            entity.HasIndex(e => new { e.User1Id, e.IsActive, e.LastActivityAt });
+            entity.HasIndex(e => new { e.User2Id, e.IsActive, e.LastActivityAt });
             entity.HasOne(e => e.User1).WithMany(u => u.PrivateChats1).HasForeignKey(e => e.User1Id)
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(e => e.User2).WithMany(u => u.PrivateChats2).HasForeignKey(e => e.User2Id)
@@ -203,6 +229,7 @@ public class AegisDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.TokenHash).IsUnique();
+            entity.HasIndex(e => new { e.BotId, e.RevokedAt, e.CreatedAt });
             entity.HasOne(e => e.Bot).WithMany(b => b.Tokens).HasForeignKey(e => e.BotId)
                 .OnDelete(DeleteBehavior.Cascade);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);

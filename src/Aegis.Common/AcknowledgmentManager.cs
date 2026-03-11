@@ -8,7 +8,7 @@ namespace Aegis.Common;
 /// </summary>
 public class AcknowledgmentManager
 {
-    private readonly ConcurrentDictionary<ulong, PendingMessage> _pendingMessages;
+    private readonly ConcurrentDictionary<ulong, ConcurrentDictionary<ulong, PendingMessage>> _pendingByConnection;
     private readonly ConcurrentDictionary<ulong, DateTime> _lastAckTime;
     private readonly ILogger _logger;
     private readonly int _retransmitTimeoutMs;
@@ -17,7 +17,7 @@ public class AcknowledgmentManager
 
     public AcknowledgmentManager(ILogger? logger = null, int retransmitTimeoutMs = 5000, int maxRetries = 3)
     {
-        _pendingMessages = new ConcurrentDictionary<ulong, PendingMessage>();
+        _pendingByConnection = new ConcurrentDictionary<ulong, ConcurrentDictionary<ulong, PendingMessage>>();
         _lastAckTime = new ConcurrentDictionary<ulong, DateTime>();
         _logger = logger ?? new NullLogger();
         _retransmitTimeoutMs = retransmitTimeoutMs;
@@ -42,20 +42,26 @@ public class AcknowledgmentManager
             RetryCount = 0
         };
 
-        _pendingMessages.TryAdd(sequenceId, pending);
-        _logger.Info($"Registered pending message {sequenceId} for connection {connectionId}");
+        var perConnection = _pendingByConnection.GetOrAdd(connectionId, _ => new ConcurrentDictionary<ulong, PendingMessage>());
+        perConnection[sequenceId] = pending;
+        _logger.Debug($"Registered pending message {sequenceId} for connection {connectionId}");
     }
 
     /// <summary>
     /// Mark a message as acknowledged
     /// </summary>
-    public bool AcknowledgeMessage(ulong sequenceId)
+    public bool AcknowledgeMessage(ulong connectionId, ulong sequenceId)
     {
-        var removed = _pendingMessages.TryRemove(sequenceId, out var pending);
+        if (!_pendingByConnection.TryGetValue(connectionId, out var perConnection))
+        {
+            return false;
+        }
+
+        var removed = perConnection.TryRemove(sequenceId, out var pending);
         if (removed && pending != null)
         {
             _lastAckTime.AddOrUpdate(pending.ConnectionId, DateTime.UtcNow, (_, _) => DateTime.UtcNow);
-            _logger.Info($"Message {sequenceId} acknowledged");
+            _logger.Debug($"Message {sequenceId} acknowledged");
             return true;
         }
         return false;
@@ -64,10 +70,13 @@ public class AcknowledgmentManager
     /// <summary>
     /// Check if a message needs retransmission
     /// </summary>
-    public bool ShouldRetransmit(ulong sequenceId, out PendingMessage? message)
+    public bool ShouldRetransmit(ulong connectionId, ulong sequenceId, out PendingMessage? message)
     {
         message = null;
-        if (!_pendingMessages.TryGetValue(sequenceId, out var pending))
+        if (!_pendingByConnection.TryGetValue(connectionId, out var perConnection))
+            return false;
+
+        if (!perConnection.TryGetValue(sequenceId, out var pending))
             return false;
 
         var elapsed = DateTime.UtcNow - pending.SentAt;
@@ -85,17 +94,21 @@ public class AcknowledgmentManager
     /// </summary>
     public List<PendingMessage> GetPendingMessages(ulong connectionId)
     {
-        return _pendingMessages.Values
-            .Where(m => m.ConnectionId == connectionId)
-            .ToList();
+        if (!_pendingByConnection.TryGetValue(connectionId, out var perConnection))
+        {
+            return new List<PendingMessage>();
+        }
+
+        return perConnection.Values.ToList();
     }
 
     /// <summary>
     /// Increment retry count for a message
     /// </summary>
-    public void IncrementRetryCount(ulong sequenceId)
+    public void IncrementRetryCount(ulong connectionId, ulong sequenceId)
     {
-        if (_pendingMessages.TryGetValue(sequenceId, out var message))
+        if (_pendingByConnection.TryGetValue(connectionId, out var perConnection) &&
+            perConnection.TryGetValue(sequenceId, out var message))
         {
             message.RetryCount++;
             message.SentAt = DateTime.UtcNow;
@@ -103,7 +116,7 @@ public class AcknowledgmentManager
             if (message.RetryCount >= _maxRetries)
             {
                 _logger.Warning($"Message {sequenceId} exceeded max retries ({_maxRetries})");
-                _pendingMessages.TryRemove(sequenceId, out _);
+                perConnection.TryRemove(sequenceId, out _);
             }
         }
     }
@@ -113,17 +126,12 @@ public class AcknowledgmentManager
     /// </summary>
     public void RemoveConnectionMessages(ulong connectionId)
     {
-        var toRemove = _pendingMessages.Values
-            .Where(m => m.ConnectionId == connectionId)
-            .Select(m => m.SequenceId)
-            .ToList();
-
-        foreach (var seqId in toRemove)
+        if (!_pendingByConnection.TryRemove(connectionId, out var removed))
         {
-            _pendingMessages.TryRemove(seqId, out _);
+            return;
         }
 
-        _logger.Info($"Removed {toRemove.Count} pending messages for connection {connectionId}");
+        _logger.Debug($"Removed {removed.Count} pending messages for connection {connectionId}");
     }
 
     private void CleanupExpiredMessages(object? state)
@@ -131,16 +139,23 @@ public class AcknowledgmentManager
         var now = DateTime.UtcNow;
         var maxAge = TimeSpan.FromSeconds(60);
 
-        var toRemove = _pendingMessages.Values
-            .Where(m => now - m.SentAt > maxAge && m.RetryCount >= _maxRetries)
-            .Select(m => m.SequenceId)
-            .ToList();
-
-        foreach (var seqId in toRemove)
+        foreach (var perConnection in _pendingByConnection)
         {
-            if (_pendingMessages.TryRemove(seqId, out var msg))
+            foreach (var pending in perConnection.Value)
             {
-                _logger.Warning($"Cleaned up expired message {seqId}");
+                var msg = pending.Value;
+                if (now - msg.SentAt > maxAge && msg.RetryCount >= _maxRetries)
+                {
+                    if (perConnection.Value.TryRemove(pending.Key, out _))
+                    {
+                        _logger.Warning($"Cleaned up expired message {pending.Key}");
+                    }
+                }
+            }
+
+            if (perConnection.Value.IsEmpty)
+            {
+                _pendingByConnection.TryRemove(perConnection.Key, out _);
             }
         }
     }

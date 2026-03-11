@@ -89,6 +89,8 @@ public static class Program
             })
             .ConfigureServices((context, services) =>
             {
+                StartupValidation.ValidateServerConfiguration(context.Configuration, context.HostingEnvironment);
+
                 // Configure options
                 services.Configure<ServerOptions>(
                     context.Configuration.GetSection(ServerOptions.SectionName));
@@ -102,9 +104,18 @@ public static class Program
                     context.Configuration.GetSection(DatabaseOptions.SectionName));
                 services.Configure<LoggingOptions>(
                     context.Configuration.GetSection(LoggingOptions.SectionName));
+                services.Configure<AvatarStorageOptions>(
+                    context.Configuration.GetSection(AvatarStorageOptions.SectionName));
+
+                var redisConnectionString = context.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
+                services.AddStackExchangeRedisCache(options =>
+                {
+                    options.Configuration = redisConnectionString;
+                    options.InstanceName = "aegis:";
+                });
 
                 // Register database
-                services.AddDbContext<AegisDbContext>((serviceProvider, options) =>
+                services.AddDbContextPool<AegisDbContext>((serviceProvider, options) =>
                 {
                     var databaseOptions = serviceProvider
                         .GetRequiredService<IOptions<DatabaseOptions>>()
@@ -118,6 +129,7 @@ public static class Program
 
                 // Register repositories
                 services.AddScoped<IUserRepository, UserRepository>();
+                services.AddScoped<IUserAvatarRepository, UserAvatarRepository>();
                 services.AddScoped<ISessionRepository, SessionRepository>();
                 services.AddScoped<IMessageRepository, MessageRepository>();
                 services.AddScoped<IChannelRepository, ChannelRepository>();
@@ -132,6 +144,7 @@ public static class Program
                 services.AddScoped<IUserAuthenticationService, UserAuthenticationService>();
                 services.AddScoped<IUserSearchService, UserSearchService>();
                 services.AddScoped<IUserProfileService, UserProfileService>();
+                services.AddSingleton<IAvatarStorageService, LocalAvatarStorageService>();
                 services.AddScoped<IChannelService, ChannelService>();
                 services.AddScoped<IGroupService, GroupService>();
                 services.AddScoped<IMessageService, MessageService>();
@@ -146,6 +159,7 @@ public static class Program
                     new CommonCryptoProviderAdapter(sp.GetRequiredService<AegisCryptoProvider>()));
                 services.AddSingleton<ISessionCryptoProvider>(sp => sp.GetRequiredService<AegisCryptoProvider>());
                 services.AddSingleton<SessionManager>();
+                services.AddSingleton<UserPresenceResolver>();
                 services.AddSingleton<IAntiSpamClient, AntiSpamClient>();
                 services.AddSingleton<AcknowledgmentManager>();
                 services.AddSingleton<MessageDeduplicator>();
@@ -169,33 +183,42 @@ public static class Program
                         sp.GetRequiredService<Aegis.Common.Logging.ILogger>());
                 });
 
-                // Register handlers as Scoped (they depend on scoped DB services)
-                services.AddScoped<IMessageHandler, HandshakeHandler>();
-                services.AddScoped<IMessageHandler, AuthHandler>();
-                services.AddScoped<IMessageHandler, PingHandler>();
-                services.AddScoped<IMessageHandler, MessageHandler>();
-                services.AddScoped<IMessageHandler, AckHandler>();
-                services.AddScoped<IMessageHandler, NackHandler>();
-                services.AddScoped<IMessageHandler, RetransmitRequestHandler>();
-                services.AddScoped<IMessageHandler, RegistrationHandler>();
-                services.AddScoped<IMessageHandler, UserSearchHandler>();
-                services.AddScoped<IMessageHandler, ChannelMessageHandler>();
-                services.AddScoped<IMessageHandler, ChannelCreateHandler>();
-                services.AddScoped<IMessageHandler, ChannelJoinHandler>();
-                services.AddScoped<IMessageHandler, PrivateChatMessageHandler>();
-                services.AddScoped<IMessageHandler, ChatListHandler>();
-                services.AddScoped<IMessageHandler, PrivateChatHistoryHandler>();
-                services.AddScoped<IMessageHandler, ChannelHistoryHandler>();
-                services.AddScoped<IMessageHandler, ProfileUpdateHandler>();
-                services.AddScoped<IMessageHandler, ProfileGetHandler>();
-                services.AddScoped<IMessageHandler, MessageEditHandler>();
-                services.AddScoped<IMessageHandler, MessageDeleteHandler>();
-                services.AddScoped<IMessageHandler, ChannelEditHandler>();
-                services.AddScoped<IMessageHandler, GroupCreateHandler>();
-                services.AddScoped<IMessageHandler, GroupEditHandler>();
-                services.AddScoped<IMessageHandler, GroupMessageSendHandler>();
-                services.AddScoped<IMessageHandler, MemberRoleUpdateHandler>();
-                services.AddScoped<IMessageHandler, MemberPermissionUpdateHandler>();
+                // Register handlers as scoped concrete types to resolve only the needed one per message
+                services.AddScoped<HandshakeHandler>();
+                services.AddScoped<AuthHandler>();
+                services.AddScoped<PingHandler>();
+                services.AddScoped<MessageHandler>();
+                services.AddScoped<AckHandler>();
+                services.AddScoped<NackHandler>();
+                services.AddScoped<RetransmitRequestHandler>();
+                services.AddScoped<RegistrationHandler>();
+                services.AddScoped<UserPresenceHandler>();
+                services.AddScoped<UserSearchHandler>();
+                services.AddScoped<ChannelMessageHandler>();
+                services.AddScoped<ChannelCreateHandler>();
+                services.AddScoped<ChannelJoinHandler>();
+                services.AddScoped<PrivateChatMessageHandler>();
+                services.AddScoped<ChatListHandler>();
+                services.AddScoped<PrivateChatHistoryHandler>();
+                services.AddScoped<ChannelHistoryHandler>();
+                services.AddScoped<ProfileUpdateHandler>();
+                services.AddScoped<ProfileGetHandler>();
+                services.AddScoped<ProfileAvatarAddHandler>();
+                services.AddScoped<ProfileAvatarListHandler>();
+                services.AddScoped<ProfileAvatarDeleteHandler>();
+                services.AddScoped<ProfileAvatarSetPrimaryHandler>();
+                services.AddScoped<ChannelLinkUpdateHandler>();
+                services.AddScoped<ChannelLinkGetHandler>();
+                services.AddScoped<ChannelResolveHandler>();
+                services.AddScoped<ChannelJoinByLinkHandler>();
+                services.AddScoped<MessageEditHandler>();
+                services.AddScoped<MessageDeleteHandler>();
+                services.AddScoped<ChannelEditHandler>();
+                services.AddScoped<GroupCreateHandler>();
+                services.AddScoped<GroupEditHandler>();
+                services.AddScoped<GroupMessageSendHandler>();
+                services.AddScoped<MemberRoleUpdateHandler>();
+                services.AddScoped<MemberPermissionUpdateHandler>();
                 services.AddScoped<MessageRouter>();
 
                 // Register hosted service
@@ -238,6 +261,7 @@ public class AegisMessengerService : BackgroundService
     private readonly RateLimiter _rateLimiter;
     private readonly SessionManager _sessionManager;
     private readonly MessageDeduplicator _messageDeduplicator;
+    private readonly HealthCheckService _healthCheckService;
     private readonly ProtocolSecurityOptions _protocolSecurityOptions;
     private readonly ILogger<AegisMessengerService> _logger;
     private readonly ServerOptions _serverOptions;
@@ -249,6 +273,7 @@ public class AegisMessengerService : BackgroundService
         RateLimiter rateLimiter,
         SessionManager sessionManager,
         MessageDeduplicator messageDeduplicator,
+        HealthCheckService healthCheckService,
         Microsoft.Extensions.Options.IOptions<ProtocolSecurityOptions> protocolSecurityOptions,
         ILogger<AegisMessengerService> logger,
         Microsoft.Extensions.Options.IOptions<ServerOptions> serverOptions)
@@ -259,6 +284,7 @@ public class AegisMessengerService : BackgroundService
         _rateLimiter = rateLimiter;
         _sessionManager = sessionManager;
         _messageDeduplicator = messageDeduplicator;
+        _healthCheckService = healthCheckService;
         _protocolSecurityOptions = protocolSecurityOptions.Value;
         _logger = logger;
         _serverOptions = serverOptions.Value;
@@ -272,6 +298,8 @@ public class AegisMessengerService : BackgroundService
         _server.OnClientDisconnected += OnClientDisconnected;
         _server.OnMessageReceived += async (context, data) =>
             await ProcessMessageAsync(context, data, stoppingToken);
+
+        _ = Task.Run(() => HealthLoggingLoopAsync(stoppingToken), stoppingToken);
 
         try
         {
@@ -294,16 +322,74 @@ public class AegisMessengerService : BackgroundService
     private void OnClientConnected(ConnectionContext context)
     {
         _sessionManager.CreateSession(context.ConnectionId);
+        _healthCheckService.RecordConnectionAccepted();
         _logger.LogInformation("Client {ConnectionId} connected from {RemoteEndPoint}", 
             context.ConnectionId, context.Socket.RemoteEndPoint);
     }
 
     private void OnClientDisconnected(ConnectionContext context)
     {
+        var authenticated = _sessionManager.GetAuthenticatedSession(context.ConnectionId);
+        if (authenticated != null)
+        {
+            _ = PersistOfflinePresenceAsync(authenticated.UserId, context.ConnectionId);
+        }
+
         _rateLimiter.RemoveConnection(context.ConnectionId);
         _messageDeduplicator.ClearConnection(context.ConnectionId);
         _sessionManager.RemoveSession(context.ConnectionId);
+        _healthCheckService.RecordConnectionClosed();
         _logger.LogInformation("Client {ConnectionId} disconnected", context.ConnectionId);
+    }
+
+    private async Task HealthLoggingLoopAsync(CancellationToken cancellationToken)
+    {
+        var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                _healthCheckService.LogStatus();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal shutdown path.
+        }
+        finally
+        {
+            timer.Dispose();
+        }
+    }
+
+    private async Task PersistOfflinePresenceAsync(ulong userId, ulong connectionId)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var userRepository = scope.ServiceProvider.GetRequiredService<IUserRepository>();
+            var sessionRepository = scope.ServiceProvider.GetRequiredService<ISessionRepository>();
+
+            var user = await userRepository.GetByIdAsync(userId);
+            if (user != null)
+            {
+                user.LastSeenAt = DateTime.UtcNow;
+                user.UpdatedAt = DateTime.UtcNow;
+                await userRepository.UpdateAsync(user);
+            }
+
+            var dbSession = await sessionRepository.GetByConnectionIdAsync(connectionId.ToString());
+            if (dbSession != null)
+            {
+                dbSession.LastActivityAt = DateTime.UtcNow;
+                dbSession.IsActive = false;
+                await sessionRepository.UpdateAsync(dbSession);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist offline presence for user {UserId}", userId);
+        }
     }
 
     private async Task ProcessMessageAsync(
@@ -384,6 +470,7 @@ public class AegisMessengerService : BackgroundService
             }
 
             _sessionManager.UpdateActivity(context.ConnectionId);
+            _healthCheckService.RecordMessageProcessed();
 
             // Create a scope per message so scoped services (DB, repos, handlers) are properly managed
             using var scope = _scopeFactory.CreateScope();
