@@ -25,12 +25,11 @@ RUN dotnet publish "Aegis.Server.csproj" -c Release -o /app/publish
 FROM mcr.microsoft.com/dotnet/runtime:10.0 AS final
 WORKDIR /app
 
-# Create non-root user
-RUN adduser --disabled-password --gecos '' aegis && chown -R aegis /app
-USER aegis
-
 # Copy published files
-COPY --from=build /app/publish .
+COPY --from=build --chown=$APP_UID:$APP_UID /app/publish .
+
+# Use the non-root user provided by .NET runtime images
+USER $APP_UID
 
 # Expose port
 EXPOSE 8888
