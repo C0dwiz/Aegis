@@ -729,18 +729,18 @@ namespace Aegis.Data.Migrations
                                             AND c.column_name = 'Id'
                                             AND kcu.column_name = 'Id'
                                     LOOP
-                                        seq_name := format('%I_Id_seq', r.table_name);
+                                        seq_name := lower(r.table_name) || '_id_seq';
 
                                         EXECUTE format('CREATE SEQUENCE IF NOT EXISTS %I', seq_name);
                                         EXECUTE format('ALTER SEQUENCE %I OWNED BY %I.%I', seq_name, r.table_name, 'Id');
                                         EXECUTE format(
-                                            'SELECT setval(%L, COALESCE((SELECT MAX(%I)::bigint FROM %I), 0) + 1, false)',
+                                            'SELECT setval(%L::regclass, COALESCE((SELECT MAX(%I)::bigint FROM %I), 0) + 1, false)',
                                             seq_name,
                                             'Id',
                                             r.table_name
                                         );
                                         EXECUTE format(
-                                            'ALTER TABLE %I ALTER COLUMN %I SET DEFAULT nextval(%L)',
+                                            'ALTER TABLE %I ALTER COLUMN %I SET DEFAULT nextval(%L::regclass)',
                                             r.table_name,
                                             'Id',
                                             seq_name
