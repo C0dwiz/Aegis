@@ -167,23 +167,6 @@ AutoTest.Net/
 # Web workbench (safari)
 webbench
 
-# Local database files
-*.db
-*.sqlite
-*.sqlite3
-
-# Environment variables
-.env
-.env.local
-.env.development
-.env.test
-.env.production
-
-# Kubernetes
-*.yaml
-*.yml
-!k8s/
-
 # Terraform
 *.tf
 *.tfstate
@@ -241,8 +224,3 @@ aegis.pid
 master.key
 server.pfx
 client.*
-
-
-*.db
-
-.venv/

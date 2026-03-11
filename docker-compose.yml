@@ -1,0 +1,98 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aegis-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aegis}
+      POSTGRES_USER: ${POSTGRES_USER:-aegis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - aegis_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aegis} -d ${POSTGRES_DB:-aegis}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: aegis-redis
+    restart: unless-stopped
+    volumes:
+      - aegis_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  aegis-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.build
+    container_name: aegis-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      AEGIS_Database__Provider: PostgreSQL
+      AEGIS_Database__ConnectionString: ${AEGIS_DB_CONNECTION_STRING}
+      AEGIS_Redis__ConnectionString: ${AEGIS_REDIS_CONNECTION_STRING:-redis:6379}
+      AEGIS_AvatarStorage__BaseDirectory: /data/media/avatars
+      AEGIS_AvatarStorage__PublicBaseUrl: ${AEGIS_AVATAR_PUBLIC_BASE_URL}
+      AEGIS_AvatarStorage__MaxUploadBytes: "5242880"
+      AEGIS_AvatarStorage__MaxWidth: "512"
+      AEGIS_AvatarStorage__MaxHeight: "512"
+      AEGIS_Logging__Console: "true"
+      AEGIS_Logging__File: "false"
+      AEGIS_ProtocolSecurity__RequireEncryptedPayloadAfterHandshake: ${AEGIS_REQUIRE_ENCRYPTED_PAYLOAD_AFTER_HANDSHAKE:-true}
+    ports:
+      - "8888:8888"
+    volumes:
+      - aegis_media_data:/data/media
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc ': > /dev/tcp/127.0.0.1/8888'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  aegis-botapi:
+    build:
+      context: .
+      dockerfile: Dockerfile.botapi
+    container_name: aegis-botapi
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      aegis-server:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_URLS: http://+:5000
+      Database__Provider: PostgreSQL
+      Database__ConnectionString: ${AEGIS_DB_CONNECTION_STRING}
+      Redis__ConnectionString: ${AEGIS_REDIS_CONNECTION_STRING:-redis:6379}
+      AvatarStorage__BaseDirectory: /data/media/avatars
+      ConnectionStrings__Default: ${AEGIS_DB_CONNECTION_STRING}
+    ports:
+      - "5000:5000"
+    volumes:
+      - aegis_media_data:/data/media
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc ': > /dev/tcp/127.0.0.1/5000'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+volumes:
+  aegis_pg_data:
+  aegis_redis_data:
+  aegis_media_data:

@@ -1,0 +1,10 @@
+name: aegis_client
+description: Dart client library for the Aegis Messenger Protocol.
+version: 0.1.0
+repository: https://github.com/your-org/aegis
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dev_dependencies:
+  test: ^1.24.0
