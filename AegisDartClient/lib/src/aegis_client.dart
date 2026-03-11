@@ -94,9 +94,50 @@ class AegisClient {
   // ─── Connection ────────────────────────────────────────────────────────────
 
   /// Connect to the Aegis server and complete the protocol handshake.
-  Future<void> connect(String host, int port, {Duration? timeout}) async {
-    await _transport.connect(host, port, timeout: timeout);
-    await _sendHandshake();
+  Future<void> connect(
+    String host,
+    int port, {
+    Duration? timeout,
+    String? transportMaskingKey,
+    bool enableMaskingAutoFallback = true,
+  }) async {
+    final hasMaskingKey = transportMaskingKey != null && transportMaskingKey.trim().isNotEmpty;
+
+    if (!hasMaskingKey || !enableMaskingAutoFallback) {
+      await _transport.connect(
+        host,
+        port,
+        timeout: timeout,
+        transportMaskingKey: transportMaskingKey,
+      );
+      await _sendHandshake();
+      return;
+    }
+
+    try {
+      await _transport.connect(
+        host,
+        port,
+        timeout: timeout,
+        transportMaskingKey: transportMaskingKey,
+      );
+      await _sendHandshake();
+    } catch (firstError) {
+      await _transport.disconnect();
+
+      try {
+        await _transport.connect(
+          host,
+          port,
+          timeout: timeout,
+        );
+        await _sendHandshake();
+      } catch (secondError) {
+        throw Exception(
+          'Failed connect with masking and fallback. maskedError: $firstError; plainError: $secondError',
+        );
+      }
+    }
   }
 
   /// Disconnect from the server.

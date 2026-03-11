@@ -11,6 +11,8 @@ internal static class StartupValidation
         var dbConnectionString = configuration[$"{DatabaseOptions.SectionName}:ConnectionString"] ?? string.Empty;
         var redisConnectionString = configuration["Redis:ConnectionString"] ?? string.Empty;
         var requireEncryptedAfterHandshake = configuration.GetValue<bool>($"{ProtocolSecurityOptions.SectionName}:RequireEncryptedPayloadAfterHandshake");
+        var enableTransportMasking = configuration.GetValue<bool>($"{ServerOptions.SectionName}:EnableTransportMasking");
+        var transportMaskingKey = configuration[$"{ServerOptions.SectionName}:TransportMaskingKey"] ?? string.Empty;
 
         if (string.IsNullOrWhiteSpace(dbConnectionString))
         {
@@ -20,6 +22,11 @@ internal static class StartupValidation
         if (string.IsNullOrWhiteSpace(redisConnectionString))
         {
             throw new InvalidOperationException("Redis connection string is required for server startup.");
+        }
+
+        if (enableTransportMasking && string.IsNullOrWhiteSpace(transportMaskingKey))
+        {
+            throw new InvalidOperationException("Server:TransportMaskingKey must be set when Server:EnableTransportMasking=true.");
         }
 
         if (environment.IsProduction())

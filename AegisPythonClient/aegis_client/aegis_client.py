@@ -94,9 +94,37 @@ class AegisClient:
     def add_disconnect_listener(self, listener) -> None:
         self._transport.add_disconnect_listener(listener)
 
-    def connect(self, host: str, port: int, timeout: Optional[float] = None) -> None:
-        self._transport.connect(host, port, timeout)
-        self._perform_handshake()
+    def connect(
+        self,
+        host: str,
+        port: int,
+        timeout: Optional[float] = None,
+        transport_masking_key: Optional[str] = None,
+        enable_masking_auto_fallback: bool = True,
+    ) -> None:
+        has_masking_key = bool(transport_masking_key and transport_masking_key.strip())
+
+        if not has_masking_key or not enable_masking_auto_fallback:
+            self._transport.connect(host, port, timeout, transport_masking_key)
+            self._perform_handshake()
+            return
+
+        try:
+            self._transport.connect(host, port, timeout, transport_masking_key)
+            self._perform_handshake()
+        except Exception as first_error:
+            try:
+                self._transport.disconnect()
+            except Exception:
+                pass
+
+            try:
+                self._transport.connect(host, port, timeout, None)
+                self._perform_handshake()
+            except Exception as second_error:
+                raise ProtocolError(
+                    f"Failed connect with masking and fallback. masked_error={first_error}; plain_error={second_error}"
+                ) from second_error
 
     def authenticate(self, auth_token: str, client_info: str = "AegisPythonClient") -> AuthResponse:
         return self._authenticate(token=auth_token, client_info=client_info)

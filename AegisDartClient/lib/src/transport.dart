@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'message.dart';
@@ -13,6 +14,9 @@ class AegisTransport {
   bool _isConnected = false;
   int _nextSequenceId = 1;
   Uint8List _pendingBytes = Uint8List(0);
+  Uint8List _transportMaskingKey = Uint8List(0);
+  int _inboundMaskOffset = 0;
+  int _outboundMaskOffset = 0;
   
   final StreamController<Message> _messageController = StreamController<Message>.broadcast();
   final StreamController<void> _disconnectController = StreamController<void>.broadcast();
@@ -27,7 +31,12 @@ class AegisTransport {
   bool get isConnected => _isConnected;
 
   /// Connect to Aegis server
-  Future<void> connect(String host, int port, {Duration? timeout}) async {
+  Future<void> connect(
+    String host,
+    int port, {
+    Duration? timeout,
+    String? transportMaskingKey,
+  }) async {
     if (_isConnected) {
       throw ConnectionException('Already connected to server');
     }
@@ -40,6 +49,12 @@ class AegisTransport {
       
       _isConnected = true;
       _nextSequenceId = 1;
+        _pendingBytes = Uint8List(0);
+        _inboundMaskOffset = 0;
+        _outboundMaskOffset = 0;
+        _transportMaskingKey = (transportMaskingKey != null && transportMaskingKey.trim().isNotEmpty)
+          ? Uint8List.fromList(utf8.encode(transportMaskingKey))
+          : Uint8List(0);
       
       AegisLogger.info('Connected to $host:$port');
       
@@ -85,7 +100,8 @@ class AegisTransport {
 
       // Encode and send message
       final data = MessageEncoder.encode(message);
-      _socket.add(data);
+      final outgoing = _applyOutboundMask(data);
+      _socket.add(outgoing);
       await _socket.flush();
       
       AegisLogger.debug('Message sent successfully');
@@ -125,9 +141,11 @@ class AegisTransport {
       return;
     }
 
-    final merged = Uint8List(_pendingBytes.length + data.length);
+    final incoming = _applyInboundMask(data);
+
+    final merged = Uint8List(_pendingBytes.length + incoming.length);
     merged.setRange(0, _pendingBytes.length, _pendingBytes);
-    merged.setRange(_pendingBytes.length, merged.length, data);
+    merged.setRange(_pendingBytes.length, merged.length, incoming);
     _pendingBytes = merged;
 
     while (_pendingBytes.length >= ProtocolConstants.headerSize) {
@@ -165,6 +183,36 @@ class AegisTransport {
         _pendingBytes = Uint8List.fromList(_pendingBytes.sublist(frameSize));
       }
     }
+  }
+
+  Uint8List _applyInboundMask(Uint8List data) {
+    if (_transportMaskingKey.isEmpty) {
+      return data;
+    }
+
+    final masked = Uint8List.fromList(data);
+    for (var i = 0; i < masked.length; i++) {
+      final keyIndex = (_inboundMaskOffset + i) % _transportMaskingKey.length;
+      masked[i] = masked[i] ^ _transportMaskingKey[keyIndex];
+    }
+
+    _inboundMaskOffset += masked.length;
+    return masked;
+  }
+
+  Uint8List _applyOutboundMask(Uint8List data) {
+    if (_transportMaskingKey.isEmpty) {
+      return data;
+    }
+
+    final masked = Uint8List.fromList(data);
+    for (var i = 0; i < masked.length; i++) {
+      final keyIndex = (_outboundMaskOffset + i) % _transportMaskingKey.length;
+      masked[i] = masked[i] ^ _transportMaskingKey[keyIndex];
+    }
+
+    _outboundMaskOffset += masked.length;
+    return masked;
   }
 
   /// Cleanup resources

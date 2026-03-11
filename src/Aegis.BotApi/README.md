@@ -29,7 +29,7 @@ Edit `src/Aegis.BotApi/appsettings.json`:
   "Bots": [
     {
       "Name": "demo-bot",
-      "Token": "CHANGE_ME_BOT_TOKEN",
+      "Token": "demobot:AAFxEq2lNyXGFsTKEoPGJEbuLj5xH5XD4bc",
       "UserId": 1
     }
   ]
@@ -38,17 +38,25 @@ Edit `src/Aegis.BotApi/appsettings.json`:
 
 `UserId` is the sender identity for bot messages.
 
+Token format is strict Telegram-like: `prefix:secret`.
+
+- `prefix`: bot identifier (for example bot username), not numeric id only.
+- `secret`: URL-safe token part (`A-Za-z0-9_-`), like Telegram hashes.
+
 ## Endpoints
 
-- `GET /bot/{token}/getMe`
-- `POST /bot/{token}/sendMessage`
-- `POST /bot/{token}/sendPhoto`
-- `POST /bot/{token}/sendDocument`
-- `POST /bot/{token}/sendMedia`
-- `POST /bot/{token}/sendFile`
-- `POST /bot/{token}/sendVoiceMessage`
-- `POST /bot/{token}/editMessageText`
-- `POST /bot/{token}/deleteMessage`
+Telegram style (primary):
+
+- `GET /bot{token}/getMe`
+- `POST /bot{token}/sendMessage`
+- `POST /bot{token}/sendPhoto`
+- `POST /bot{token}/sendDocument`
+- `POST /bot{token}/sendVoice`
+- `POST /bot{token}/sendAnimation`
+- `POST /bot{token}/sendVideo`
+- `POST /bot{token}/sendAudio`
+- `POST /bot{token}/editMessageText`
+- `POST /bot{token}/deleteMessage`
 
 The contract is Telegram-like:
 

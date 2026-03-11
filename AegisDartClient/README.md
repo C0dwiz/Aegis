@@ -35,6 +35,11 @@ void main() async {
   try {
     // Подключение к серверу
     await client.connect('localhost', 8888);
+
+    // Если на сервере включен Server:EnableTransportMasking
+    // await client.connect('localhost', 8888, transportMaskingKey: 'your-shared-mask-key');
+    // По умолчанию включен auto-fallback: при handshake fail в masking-режиме
+    // клиент автоматически переподключится без masking.
     
     // Регистрация нового пользователя
     final registrationResponse = await client.register(
@@ -100,7 +105,7 @@ void main() async {
 Основной класс клиента с методами:
 
 #### Базовые методы:
-- `connect(host, port)` - подключение к серверу
+- `connect(host, port, {timeout, transportMaskingKey, enableMaskingAutoFallback})` - подключение к серверу
 - `authenticate(token)` - аутентификация
 - `sendMessage(text, toUserId)` - отправка сообщения (legacy)
 - `ping()` - отправка ping для поддержания соединения

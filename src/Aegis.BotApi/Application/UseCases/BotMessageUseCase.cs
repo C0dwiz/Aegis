@@ -42,7 +42,7 @@ internal sealed class BotMessageUseCase : IBotMessageUseCase
         var bot = await _authenticator.AuthenticateAsync(token);
         if (bot == null)
         {
-            return UseCaseResponse<BotIdentity>.Fail(BotErrorCode.Unauthorized, "Unauthorized");
+            return UseCaseResponse<BotIdentity>.Fail(BotErrorCode.Unauthorized, "Unauthorized token or bot not found");
         }
 
         return UseCaseResponse<BotIdentity>.Ok(bot);
@@ -55,7 +55,7 @@ internal sealed class BotMessageUseCase : IBotMessageUseCase
             var bot = await _authenticator.AuthenticateAsync(token);
             if (bot == null)
             {
-                return UseCaseResponse<MessageView>.Fail(BotErrorCode.Unauthorized, "Unauthorized");
+                return UseCaseResponse<MessageView>.Fail(BotErrorCode.Unauthorized, "Unauthorized token or bot not found");
             }
 
             if (!command.Chat.IsValid)
@@ -122,7 +122,7 @@ internal sealed class BotMessageUseCase : IBotMessageUseCase
         var bot = await _authenticator.AuthenticateAsync(token);
         if (bot == null)
         {
-            return UseCaseResponse<MessageView>.Fail(BotErrorCode.Unauthorized, "Unauthorized");
+            return UseCaseResponse<MessageView>.Fail(BotErrorCode.Unauthorized, "Unauthorized token or bot not found");
         }
 
         if (!command.Chat.IsValid)
@@ -169,7 +169,7 @@ internal sealed class BotMessageUseCase : IBotMessageUseCase
         var bot = await _authenticator.AuthenticateAsync(token);
         if (bot == null)
         {
-            return UseCaseResponse<bool>.Fail(BotErrorCode.Unauthorized, "Unauthorized");
+            return UseCaseResponse<bool>.Fail(BotErrorCode.Unauthorized, "Unauthorized token or bot not found");
         }
 
         if (!command.Chat.IsValid)

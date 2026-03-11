@@ -169,7 +169,7 @@ public class BotManagementService : IBotManagementService
 
                     return [
                         $"Done. Bot @{bot.Username} created.",
-                        "Use this token in Bot API Authorization header:",
+                        "Use this token in Bot API URL path: /bot{token}/...",
                         token
                     ];
                 }
@@ -214,7 +214,7 @@ public class BotManagementService : IBotManagementService
 
     public async Task<(ulong BotUserId, string BotName)?> ValidateBotTokenAsync(string rawToken)
     {
-        if (string.IsNullOrWhiteSpace(rawToken))
+        if (!IsTokenFormatValid(rawToken))
         {
             return null;
         }
@@ -230,6 +230,57 @@ public class BotManagementService : IBotManagementService
         await _botTokenRepository.UpdateAsync(token);
 
         return (token.Bot.UserId, token.Bot.User.Username);
+    }
+
+    private static bool IsTokenFormatValid(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return false;
+        }
+
+        var separatorIndex = token.IndexOf(':');
+        if (separatorIndex <= 0 || separatorIndex != token.LastIndexOf(':') || separatorIndex == token.Length - 1)
+        {
+            return false;
+        }
+
+        var prefix = token.AsSpan(0, separatorIndex);
+        var secret = token.AsSpan(separatorIndex + 1);
+
+        if (prefix.Length is < 3 or > 64 || secret.Length is < 20 or > 128)
+        {
+            return false;
+        }
+
+        var hasLetterInPrefix = false;
+        foreach (var ch in prefix)
+        {
+            if (char.IsLetter(ch))
+            {
+                hasLetterInPrefix = true;
+            }
+
+            if (!char.IsLetterOrDigit(ch) && ch != '_' && ch != '-' && ch != '.')
+            {
+                return false;
+            }
+        }
+
+        if (!hasLetterInPrefix)
+        {
+            return false;
+        }
+
+        foreach (var ch in secret)
+        {
+            if (!char.IsLetterOrDigit(ch) && ch != '_' && ch != '-')
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private async Task<string?> ValidateNewBotUsernameAsync(string username)
@@ -292,7 +343,8 @@ public class BotManagementService : IBotManagementService
         }
 
         var secret = GenerateTokenSecret();
-        var rawToken = $"{bot.UserId}:{secret}";
+        var tokenPrefix = NormalizeTokenPrefix(bot.Username);
+        var rawToken = $"{tokenPrefix}:{secret}";
         var hash = HashToken(rawToken);
 
         await _botTokenRepository.CreateAsync(new BotToken
@@ -303,6 +355,17 @@ public class BotManagementService : IBotManagementService
         });
 
         return rawToken;
+    }
+
+    private static string NormalizeTokenPrefix(string username)
+    {
+        var normalized = (username ?? string.Empty).Trim();
+        if (normalized.StartsWith('@'))
+        {
+            normalized = normalized[1..];
+        }
+
+        return normalized.ToLowerInvariant();
     }
 
     private static string NormalizeUsername(string value)

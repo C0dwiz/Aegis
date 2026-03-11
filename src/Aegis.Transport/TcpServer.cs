@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Collections.Concurrent;
 using System.Buffers;
 using System.Threading.Channels;
+using System.Text;
 using Aegis.Common;
 using Aegis.Common.Logging;
 using Aegis.Common.Errors;
@@ -22,6 +23,9 @@ public class TcpServer : IDisposable
     private readonly CancellationTokenSource _cts;
     private readonly ConcurrentDictionary<ulong, ConnectionContext> _connections;
     private readonly RateLimiter? _rateLimiter;
+    private readonly TimeSpan _partialFrameTimeout;
+    private readonly int _maxIncompleteFrameDrops;
+    private readonly byte[] _transportMaskingKey;
     private ulong _nextConnectionId;
     private bool _disposed;
     
@@ -30,6 +34,7 @@ public class TcpServer : IDisposable
     public int BufferSize { get; }
     public bool EnableIPv6 { get; }
     public TimeSpan IdleTimeout { get; }
+    public bool EnableTransportMasking => _transportMaskingKey.Length > 0;
     
     public event Func<ConnectionContext, ReadOnlyMemory<byte>, Task>? OnMessageReceived;
     public event Action<ConnectionContext>? OnClientConnected;
@@ -41,6 +46,9 @@ public class TcpServer : IDisposable
         int bufferSize = 8192,
         bool enableIPv6 = false,
         int idleTimeoutSeconds = 300,
+        int partialFrameTimeoutMs = 300,
+        int maxIncompleteFrameDrops = 3,
+        string? transportMaskingKey = null,
         RateLimiter? rateLimiter = null,
         ILogger? logger = null)
     {
@@ -49,6 +57,11 @@ public class TcpServer : IDisposable
         BufferSize = bufferSize;
         EnableIPv6 = enableIPv6;
         IdleTimeout = TimeSpan.FromSeconds(Math.Max(5, idleTimeoutSeconds));
+        _partialFrameTimeout = TimeSpan.FromMilliseconds(Math.Clamp(partialFrameTimeoutMs, 50, 5000));
+        _maxIncompleteFrameDrops = Math.Max(1, maxIncompleteFrameDrops);
+        _transportMaskingKey = string.IsNullOrWhiteSpace(transportMaskingKey)
+            ? Array.Empty<byte>()
+            : Encoding.UTF8.GetBytes(transportMaskingKey);
         _rateLimiter = rateLimiter;
         _logger = logger ?? new NullLogger();
         _listener = CreateListener(enableIPv6);
@@ -161,13 +174,29 @@ public class TcpServer : IDisposable
                 int bytesReceived;
                 using (var idleTimeout = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token))
                 {
-                    idleTimeout.CancelAfter(IdleTimeout);
+                    var waitMs = GetReceiveWaitMs(context);
+                    idleTimeout.CancelAfter(TimeSpan.FromMilliseconds(waitMs));
                     try
                     {
                         bytesReceived = await socket.ReceiveAsync(buffer, SocketFlags.None, idleTimeout.Token);
                     }
                     catch (OperationCanceledException) when (!_cts.Token.IsCancellationRequested)
                     {
+                        if (context.TryDropExpiredIncompleteFrame(_partialFrameTimeout, out var droppedBytes))
+                        {
+                            _logger.Warning(
+                                $"Connection {context.ConnectionId}: dropped incomplete frame buffer ({droppedBytes} bytes) after timeout {_partialFrameTimeout.TotalMilliseconds:F0}ms [{context.IncompleteFrameDropCount}/{_maxIncompleteFrameDrops}]");
+
+                            if (context.IncompleteFrameDropCount >= _maxIncompleteFrameDrops)
+                            {
+                                _logger.Warning(
+                                    $"Connection {context.ConnectionId} closed after exceeding incomplete-frame drop threshold ({_maxIncompleteFrameDrops})");
+                                break;
+                            }
+
+                            continue;
+                        }
+
                         _logger.Warning($"Connection {context.ConnectionId} closed due to idle timeout ({IdleTimeout.TotalSeconds:F0}s)");
                         break;
                     }
@@ -181,7 +210,13 @@ public class TcpServer : IDisposable
                 
                 context.UpdateActivity();
 
-                context.AppendIncomingData(buffer.Span.Slice(0, bytesReceived));
+                var incomingChunk = buffer.Span.Slice(0, bytesReceived);
+                if (EnableTransportMasking)
+                {
+                    context.ApplyInboundMaskInPlace(incomingChunk, _transportMaskingKey);
+                }
+
+                context.AppendIncomingData(incomingChunk);
 
                 while (context.TryReadNextFrame(out var frame, out var frameLength))
                 {
@@ -198,6 +233,18 @@ public class TcpServer : IDisposable
             frameQueue.Writer.TryComplete();
             await consumerTask;
         }
+    }
+
+    private int GetReceiveWaitMs(ConnectionContext context)
+    {
+        var idleMs = Math.Max(1, (int)Math.Ceiling(IdleTimeout.TotalMilliseconds));
+        if (!context.HasPendingIncomingData)
+        {
+            return idleMs;
+        }
+
+        var incompleteMs = context.GetRemainingIncompleteFrameWaitMs(_partialFrameTimeout);
+        return Math.Max(1, Math.Min(idleMs, incompleteMs));
     }
 
     private async Task ConsumeFramesAsync(ConnectionContext context, ChannelReader<PendingFrame> reader)
@@ -240,7 +287,26 @@ public class TcpServer : IDisposable
         
         try
         {
-            await socket.SendAsync(data, SocketFlags.None, _cts.Token);
+            if (!EnableTransportMasking)
+            {
+                await socket.SendAsync(data, SocketFlags.None, _cts.Token);
+            }
+            else
+            {
+                var rented = ArrayPool<byte>.Shared.Rent(data.Length);
+                try
+                {
+                    var span = rented.AsSpan(0, data.Length);
+                    data.Span.CopyTo(span);
+                    context.ApplyOutboundMaskInPlace(span, _transportMaskingKey);
+                    await socket.SendAsync(rented.AsMemory(0, data.Length), SocketFlags.None, _cts.Token);
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(rented);
+                }
+            }
+
             context.UpdateActivity();
         }
         catch (SocketException ex)

@@ -179,6 +179,9 @@ public static class Program
                         options.BufferSize,
                         options.EnableIPv6,
                         options.IdleTimeoutSeconds,
+                        options.PartialFrameTimeoutMs,
+                        options.MaxIncompleteFrameDrops,
+                        options.EnableTransportMasking ? options.TransportMaskingKey : null,
                         sp.GetRequiredService<RateLimiter>(),
                         sp.GetRequiredService<Aegis.Common.Logging.ILogger>());
                 });

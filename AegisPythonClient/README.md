@@ -34,6 +34,11 @@ def main():
     try:
         # Подключение к серверу
         client.connect('localhost', 8888)
+
+        # Если на сервере включен Server:EnableTransportMasking
+        # client.connect('localhost', 8888, transport_masking_key='your-shared-mask-key')
+        # По умолчанию включен auto-fallback: при handshake fail в masking-режиме
+        # клиент автоматически переподключится без masking.
         
         # Регистрация нового пользователя
         registration_response = client.register(
@@ -99,7 +104,7 @@ if __name__ == "__main__":
 Основной класс клиента с методами:
 
 #### Базовые методы:
-- `connect(host, port)` - подключение к серверу
+- `connect(host, port, timeout=None, transport_masking_key=None, enable_masking_auto_fallback=True)` - подключение к серверу
 - `authenticate(token)` - аутентификация
 - `send_message(text, to_user_id)` - отправка сообщения (legacy)
 - `ping()` - отправка ping для поддержания соединения

@@ -9,6 +9,10 @@ public class ServerOptions
     public int BufferSize { get; set; } = 8192;
     public bool EnableIPv6 { get; set; }
     public int IdleTimeoutSeconds { get; set; } = 300;
+    public int PartialFrameTimeoutMs { get; set; } = 300;
+    public int MaxIncompleteFrameDrops { get; set; } = 3;
+    public bool EnableTransportMasking { get; set; } = false;
+    public string TransportMaskingKey { get; set; } = string.Empty;
     public int GracefulShutdownTimeoutSeconds { get; set; } = 30;
 }
 

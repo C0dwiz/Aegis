@@ -17,11 +17,17 @@ public class ConnectionContext : IDisposable
     private readonly byte[] _sendBuffer;
     private byte[] _incomingBuffer;
     private int _incomingLength;
+    private DateTime? _incompleteFrameLastUpdatedAt;
+    private int _incompleteFrameDropCount;
+    private long _inboundMaskOffset;
+    private long _outboundMaskOffset;
     
     public Socket Socket { get; }
     public ulong ConnectionId { get; }
     public ulong NextSequenceId { get; private set; }
     public DateTime LastActivity { get; private set; }
+    public bool HasPendingIncomingData => _incomingLength > 0;
+    public int IncompleteFrameDropCount => _incompleteFrameDropCount;
     
     public ConnectionContext(Socket socket, ulong connectionId, int bufferSize = 8192)
     {
@@ -31,6 +37,8 @@ public class ConnectionContext : IDisposable
         _sendBuffer = ArrayPool<byte>.Shared.Rent(bufferSize);
         _incomingBuffer = ArrayPool<byte>.Shared.Rent(bufferSize * 2);
         _incomingLength = 0;
+        _incompleteFrameLastUpdatedAt = null;
+        _incompleteFrameDropCount = 0;
         LastActivity = DateTime.UtcNow;
     }
     
@@ -41,9 +49,15 @@ public class ConnectionContext : IDisposable
 
     public void AppendIncomingData(ReadOnlySpan<byte> data)
     {
+        if (data.Length == 0)
+        {
+            return;
+        }
+
         EnsureIncomingCapacity(data.Length);
         data.CopyTo(_incomingBuffer.AsSpan(_incomingLength));
         _incomingLength += data.Length;
+        _incompleteFrameLastUpdatedAt = DateTime.UtcNow;
     }
 
     public bool TryReadNextFrame(out byte[] frame, out int frameLength)
@@ -76,10 +90,85 @@ public class ConnectionContext : IDisposable
         if (remaining > 0)
         {
             Buffer.BlockCopy(_incomingBuffer, frameSize, _incomingBuffer, 0, remaining);
+            _incompleteFrameLastUpdatedAt = DateTime.UtcNow;
+        }
+        else
+        {
+            _incompleteFrameLastUpdatedAt = null;
+            _incompleteFrameDropCount = 0;
         }
 
         _incomingLength = remaining;
         return true;
+    }
+
+    public bool TryDropExpiredIncompleteFrame(TimeSpan timeout, out int droppedBytes)
+    {
+        droppedBytes = 0;
+        if (_incomingLength == 0)
+        {
+            _incompleteFrameLastUpdatedAt = null;
+            _incompleteFrameDropCount = 0;
+            return false;
+        }
+
+        var lastUpdatedAt = _incompleteFrameLastUpdatedAt ?? DateTime.UtcNow;
+        if (DateTime.UtcNow - lastUpdatedAt < timeout)
+        {
+            return false;
+        }
+
+        droppedBytes = _incomingLength;
+        Array.Clear(_incomingBuffer, 0, _incomingLength);
+        _incomingLength = 0;
+        _incompleteFrameLastUpdatedAt = null;
+        _incompleteFrameDropCount++;
+        return true;
+    }
+
+    public int GetRemainingIncompleteFrameWaitMs(TimeSpan timeout)
+    {
+        if (_incomingLength == 0)
+        {
+            return int.MaxValue;
+        }
+
+        var lastUpdatedAt = _incompleteFrameLastUpdatedAt ?? DateTime.UtcNow;
+        var elapsed = DateTime.UtcNow - lastUpdatedAt;
+        var remaining = timeout - elapsed;
+        if (remaining <= TimeSpan.Zero)
+        {
+            return 1;
+        }
+
+        var remainingMs = (int)Math.Ceiling(remaining.TotalMilliseconds);
+        return Math.Max(1, remainingMs);
+    }
+
+    public void ApplyInboundMaskInPlace(Span<byte> buffer, ReadOnlySpan<byte> maskKey)
+    {
+        ApplyMask(buffer, maskKey, ref _inboundMaskOffset);
+    }
+
+    public void ApplyOutboundMaskInPlace(Span<byte> buffer, ReadOnlySpan<byte> maskKey)
+    {
+        ApplyMask(buffer, maskKey, ref _outboundMaskOffset);
+    }
+
+    private static void ApplyMask(Span<byte> buffer, ReadOnlySpan<byte> maskKey, ref long offset)
+    {
+        if (maskKey.Length == 0 || buffer.Length == 0)
+        {
+            return;
+        }
+
+        for (var i = 0; i < buffer.Length; i++)
+        {
+            var keyIndex = (int)((offset + i) % maskKey.Length);
+            buffer[i] ^= maskKey[keyIndex];
+        }
+
+        offset += buffer.Length;
     }
 
     public bool TryReadNextFrame(out byte[] frame)

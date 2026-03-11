@@ -8,31 +8,35 @@ public static class BotEndpoints
 {
     public static IEndpointRouteBuilder MapBotEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/bot/{token}/getMe", GetMe)
+        // Telegram Bot API style routes: /bot{token}/{method}
+        app.MapGet("/bot{token}/getMe", GetMe)
             .WithName("GetMe");
 
-        app.MapPost("/bot/{token}/sendMessage", SendMessage)
+        app.MapPost("/bot{token}/sendMessage", SendMessage)
             .WithName("SendMessage");
 
-        app.MapPost("/bot/{token}/sendPhoto", SendPhoto)
+        app.MapPost("/bot{token}/sendPhoto", SendPhoto)
             .WithName("SendPhoto");
 
-        app.MapPost("/bot/{token}/sendDocument", SendDocument)
+        app.MapPost("/bot{token}/sendDocument", SendDocument)
             .WithName("SendDocument");
 
-        app.MapPost("/bot/{token}/sendMedia", SendMedia)
-            .WithName("SendMedia");
+        app.MapPost("/bot{token}/sendVoice", SendVoiceMessage)
+            .WithName("SendVoice");
 
-        app.MapPost("/bot/{token}/sendFile", SendFile)
-            .WithName("SendFile");
+        app.MapPost("/bot{token}/sendAnimation", SendMedia)
+            .WithName("SendAnimation");
 
-        app.MapPost("/bot/{token}/sendVoiceMessage", SendVoiceMessage)
-            .WithName("SendVoiceMessage");
+        app.MapPost("/bot{token}/sendVideo", SendMedia)
+            .WithName("SendVideo");
 
-        app.MapPost("/bot/{token}/editMessageText", EditMessageText)
+        app.MapPost("/bot{token}/sendAudio", SendFile)
+            .WithName("SendAudio");
+
+        app.MapPost("/bot{token}/editMessageText", EditMessageText)
             .WithName("EditMessageText");
 
-        app.MapPost("/bot/{token}/deleteMessage", DeleteMessage)
+        app.MapPost("/bot{token}/deleteMessage", DeleteMessage)
             .WithName("DeleteMessage");
 
         return app;

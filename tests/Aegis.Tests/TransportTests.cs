@@ -20,7 +20,7 @@ public class TransportTests
         using var cts = new CancellationTokenSource(TestTimeoutMs);
         
         // Arrange
-        var server = new TcpServer(0, 100, 1024, false, 300, null, _logger);
+        var server = new TcpServer(0, 100, 1024, false, 300, rateLimiter: null, logger: _logger);
         
         try
         {
@@ -49,7 +49,7 @@ public class TransportTests
         var port = GetFreeTcpPort();
         
         // Arrange
-        var server = new TcpServer(port, 100, 1024, false, 300, null, _logger);
+        var server = new TcpServer(port, 100, 1024, false, 300, rateLimiter: null, logger: _logger);
         var connectedTcs = new TaskCompletionSource<ConnectionContext>();
         var disconnectedTcs = new TaskCompletionSource<ConnectionContext>();
         
@@ -83,6 +83,144 @@ public class TransportTests
         {
             await server.StopAsync();
             throw;
+        }
+        finally
+        {
+            await server.StopAsync();
+            cts.Cancel();
+        }
+    }
+
+    [Fact]
+    public async Task TcpServer_WithTransportMasking_ShouldDecodeInboundMaskedFrames()
+    {
+        using var cts = new CancellationTokenSource(TestTimeoutMs);
+        var port = GetFreeTcpPort();
+        const string maskingKey = "test-mask-key";
+
+        var server = new TcpServer(
+            port,
+            100,
+            1024,
+            false,
+            300,
+            transportMaskingKey: maskingKey,
+            rateLimiter: null,
+            logger: _logger);
+
+        var messageTcs = new TaskCompletionSource<byte[]>();
+        server.OnMessageReceived += (ctx, data) =>
+        {
+            messageTcs.TrySetResult(data.ToArray());
+            return Task.CompletedTask;
+        };
+
+        var startTask = Task.Run(() => server.StartAsync(port), cts.Token);
+        await Task.Delay(100, cts.Token);
+
+        try
+        {
+            using var client = new TcpClient();
+            await ConnectWithRetryAsync(client, IPAddress.Loopback, port, cts.Token);
+
+            var originalMessage = new Message
+            {
+                Magic = ProtocolConstants.Magic,
+                VersionMajor = ProtocolConstants.VersionMajor,
+                VersionMinor = ProtocolConstants.VersionMinor,
+                Type = MessageType.Ping,
+                SequenceId = 42,
+                Payload = new byte[] { 1, 2, 3, 4 },
+                PayloadLength = 4,
+                Mac = new byte[ProtocolConstants.MacSize]
+            };
+
+            var originalFrame = new byte[Message.TotalSize(originalMessage)];
+            MessageEncoder.Encode(originalMessage, originalFrame);
+
+            var maskedFrame = ApplyMask(originalFrame, System.Text.Encoding.UTF8.GetBytes(maskingKey), 0);
+
+            await client.GetStream().WriteAsync(maskedFrame, cts.Token);
+            await client.GetStream().FlushAsync(cts.Token);
+
+            var receivedFrame = await messageTcs.Task.WaitAsync(TimeSpan.FromMilliseconds(1500), cts.Token);
+            Assert.Equal(originalFrame, receivedFrame);
+        }
+        finally
+        {
+            await server.StopAsync();
+            cts.Cancel();
+        }
+    }
+
+    [Fact]
+    public async Task TcpServer_WithTransportMasking_ShouldMaskOutboundFrames()
+    {
+        using var cts = new CancellationTokenSource(TestTimeoutMs);
+        var port = GetFreeTcpPort();
+        const string maskingKey = "test-mask-key";
+
+        var server = new TcpServer(
+            port,
+            100,
+            1024,
+            false,
+            300,
+            transportMaskingKey: maskingKey,
+            rateLimiter: null,
+            logger: _logger);
+
+        var connectedTcs = new TaskCompletionSource<ConnectionContext>();
+        server.OnClientConnected += ctx => connectedTcs.TrySetResult(ctx);
+
+        _ = Task.Run(() => server.StartAsync(port), cts.Token);
+        await Task.Delay(100, cts.Token);
+
+        try
+        {
+            using var client = new TcpClient();
+            await ConnectWithRetryAsync(client, IPAddress.Loopback, port, cts.Token);
+
+            var connectedContext = await connectedTcs.Task
+                .WaitAsync(TimeSpan.FromMilliseconds(500), cts.Token);
+
+            var originalMessage = new Message
+            {
+                Magic = ProtocolConstants.Magic,
+                VersionMajor = ProtocolConstants.VersionMajor,
+                VersionMinor = ProtocolConstants.VersionMinor,
+                Type = MessageType.Ping,
+                SequenceId = 99,
+                Payload = new byte[] { 9, 8, 7, 6, 5 },
+                PayloadLength = 5,
+                Mac = new byte[ProtocolConstants.MacSize]
+            };
+
+            var originalFrame = new byte[Message.TotalSize(originalMessage)];
+            MessageEncoder.Encode(originalMessage, originalFrame);
+
+            await server.SendToConnectionAsync(connectedContext.ConnectionId, originalFrame);
+
+            var stream = client.GetStream();
+            var received = new byte[originalFrame.Length];
+            var read = 0;
+            while (read < received.Length)
+            {
+                var n = await stream.ReadAsync(received.AsMemory(read, received.Length - read), cts.Token);
+                if (n == 0)
+                {
+                    break;
+                }
+                read += n;
+            }
+
+            Assert.Equal(originalFrame.Length, read);
+
+            var expectedMasked = ApplyMask(originalFrame, System.Text.Encoding.UTF8.GetBytes(maskingKey), 0);
+            Assert.Equal(expectedMasked, received);
+
+            var unmasked = ApplyMask(received, System.Text.Encoding.UTF8.GetBytes(maskingKey), 0);
+            Assert.Equal(originalFrame, unmasked);
         }
         finally
         {
@@ -268,7 +406,7 @@ public class TransportTests
     public void TcpServer_Constructor_ShouldInitializeCorrectly()
     {
         // Act
-        var server = new TcpServer(8080, 100, 2048, false, 300, null, _logger);
+        var server = new TcpServer(8080, 100, 2048, false, 300, rateLimiter: null, logger: _logger);
         
         // Assert
         Assert.Equal(8080, server.Port);
@@ -280,11 +418,55 @@ public class TransportTests
     public void TcpServer_SendAsync_WithNullContext_ShouldThrowException()
     {
         // Arrange
-        var server = new TcpServer(8080, 100, 2048, false, 300, null, _logger);
+        var server = new TcpServer(8080, 100, 2048, false, 300, rateLimiter: null, logger: _logger);
         
         // Act & Assert
         Assert.ThrowsAsync<ArgumentNullException>(async () => 
             await server.SendAsync(null!, new byte[] { 1, 2, 3 }));
+    }
+
+    [Fact]
+    public async Task ConnectionContext_TryDropExpiredIncompleteFrame_ShouldDropOnlyAfterTimeout()
+    {
+        using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        var context = new ConnectionContext(socket, 9001ul, 256);
+
+        context.AppendIncomingData(new byte[] { 0x01, 0x02, 0x03, 0x04 });
+        Assert.True(context.HasPendingIncomingData);
+
+        Assert.False(context.TryDropExpiredIncompleteFrame(TimeSpan.FromMilliseconds(60), out _));
+
+        await Task.Delay(80);
+
+        Assert.True(context.TryDropExpiredIncompleteFrame(TimeSpan.FromMilliseconds(60), out var droppedBytes));
+        Assert.Equal(4, droppedBytes);
+        Assert.False(context.HasPendingIncomingData);
+        Assert.Equal(1, context.IncompleteFrameDropCount);
+    }
+
+    [Fact]
+    public void ConnectionContext_TransportMasking_ShouldRoundTripAcrossChunks()
+    {
+        using var sendSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        using var receiveSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        var sender = new ConnectionContext(sendSocket, 111ul, 256);
+        var receiver = new ConnectionContext(receiveSocket, 222ul, 256);
+
+        var key = System.Text.Encoding.UTF8.GetBytes("mask-key-123");
+        var part1Original = new byte[] { 10, 20, 30, 40, 50 };
+        var part2Original = new byte[] { 60, 70, 80, 90 };
+
+        var part1Masked = (byte[])part1Original.Clone();
+        var part2Masked = (byte[])part2Original.Clone();
+
+        sender.ApplyOutboundMaskInPlace(part1Masked, key);
+        sender.ApplyOutboundMaskInPlace(part2Masked, key);
+
+        receiver.ApplyInboundMaskInPlace(part1Masked, key);
+        receiver.ApplyInboundMaskInPlace(part2Masked, key);
+
+        Assert.Equal(part1Original, part1Masked);
+        Assert.Equal(part2Original, part2Masked);
     }
     
     private class TestLogger : ILogger
@@ -312,5 +494,22 @@ public class TransportTests
         var port = endpoint.Port;
         listener.Stop();
         return port;
+    }
+
+    private static byte[] ApplyMask(byte[] input, byte[] key, int offset)
+    {
+        if (key.Length == 0)
+        {
+            return input.ToArray();
+        }
+
+        var output = input.ToArray();
+        for (var i = 0; i < output.Length; i++)
+        {
+            var keyIndex = (offset + i) % key.Length;
+            output[i] ^= key[keyIndex];
+        }
+
+        return output;
     }
 }

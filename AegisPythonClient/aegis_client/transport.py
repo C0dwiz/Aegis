@@ -49,12 +49,21 @@ class AegisTransport:
         self._message_events = EventHook()
         self._running = False
         self._lock = threading.Lock()
+        self._transport_masking_key: bytes = b""
+        self._inbound_mask_offset = 0
+        self._outbound_mask_offset = 0
 
     @property
     def is_connected(self) -> bool:
         return self._connected
 
-    def connect(self, host: str, port: int, timeout: Optional[float] = None) -> None:
+    def connect(
+        self,
+        host: str,
+        port: int,
+        timeout: Optional[float] = None,
+        transport_masking_key: Optional[str] = None,
+    ) -> None:
         if self._connected:
             return
 
@@ -63,6 +72,13 @@ class AegisTransport:
             self._socket.settimeout(None)
             self._connected = True
             self._running = True
+            self._inbound_mask_offset = 0
+            self._outbound_mask_offset = 0
+            self._transport_masking_key = (
+                transport_masking_key.encode("utf-8")
+                if transport_masking_key and transport_masking_key.strip()
+                else b""
+            )
             self._receive_thread = threading.Thread(target=self._receive_loop, daemon=True)
             self._receive_thread.start()
         except OSError as exc:
@@ -83,7 +99,9 @@ class AegisTransport:
             raise NotConnectedException("Not connected to server")
 
         try:
-            self._socket.sendall(message.to_bytes())
+            payload = message.to_bytes()
+            payload = self._apply_outbound_mask(payload)
+            self._socket.sendall(payload)
         except OSError as exc:
             self._connected = False
             raise ConnectionException(f"Failed to send message: {exc}") from exc
@@ -97,6 +115,7 @@ class AegisTransport:
                 if not data:
                     break
 
+                data = self._apply_inbound_mask(data)
                 buffer += data
 
                 while len(buffer) >= ProtocolConstants.HEADER_SIZE:
@@ -125,6 +144,32 @@ class AegisTransport:
     def _handle_message(self, message: Message) -> None:
         self._message_queue.put(message)
         self._message_events.emit(message)
+
+    def _apply_inbound_mask(self, data: bytes) -> bytes:
+        if not self._transport_masking_key:
+            return data
+
+        key = self._transport_masking_key
+        output = bytearray(data)
+        for i in range(len(output)):
+            key_index = (self._inbound_mask_offset + i) % len(key)
+            output[i] ^= key[key_index]
+
+        self._inbound_mask_offset += len(output)
+        return bytes(output)
+
+    def _apply_outbound_mask(self, data: bytes) -> bytes:
+        if not self._transport_masking_key:
+            return data
+
+        key = self._transport_masking_key
+        output = bytearray(data)
+        for i in range(len(output)):
+            key_index = (self._outbound_mask_offset + i) % len(key)
+            output[i] ^= key[key_index]
+
+        self._outbound_mask_offset += len(output)
+        return bytes(output)
 
     def _cleanup(self) -> None:
         try:
