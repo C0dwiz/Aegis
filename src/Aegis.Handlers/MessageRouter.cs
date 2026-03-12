@@ -14,6 +14,7 @@ public class MessageRouter
     private readonly ILogger _logger;
     private readonly IMessageSender _messageSender;
     
+    [ActivatorUtilitiesConstructor]
     public MessageRouter(IServiceProvider serviceProvider, IMessageSender messageSender, ILogger? logger = null)
     {
         _serviceProvider = serviceProvider;
