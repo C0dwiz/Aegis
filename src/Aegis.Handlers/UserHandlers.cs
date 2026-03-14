@@ -261,19 +261,16 @@ public class UserSearchHandler : IMessageHandler
         _presenceResolver = presenceResolver;
     }
 
-<<<<<<< HEAD
     public UserSearchHandler(
         IUserSearchService searchService,
         SessionManager sessionManager,
         IMessageSender messageSender,
-        IRateLimiter rateLimiter,
+        RateLimiter rateLimiter,
         ILogger<UserSearchHandler> logger)
         : this(searchService, sessionManager, messageSender, rateLimiter, logger, new UserPresenceResolver(sessionManager))
     {
     }
 
-=======
->>>>>>> 6ac199981bf5c0b55d05ab95a4c6f4054b574707
     public async ValueTask HandleAsync(ConnectionContext context, Aegis.Protocol.Message message)
     {
         try
