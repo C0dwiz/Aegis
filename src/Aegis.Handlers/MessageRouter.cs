@@ -64,12 +64,21 @@ public class MessageRouter
         _messageSender = messageSender;
     }
 
-    public MessageRouter(IEnumerable<IMessageHandler> handlers, IMessageSender messageSender, ILogger? logger = null)
+    private MessageRouter(Dictionary<Aegis.Protocol.MessageType, IMessageHandler> handlers, IMessageSender messageSender, ILogger? logger = null)
     {
         _serviceProvider = null;
-        _handlers = handlers.ToDictionary(h => h.Type, h => h);
+        _handlers = handlers;
         _logger = logger ?? new Aegis.Transport.NullLogger();
         _messageSender = messageSender;
+    }
+
+    public static MessageRouter ForHandlers(IEnumerable<IMessageHandler> handlers, IMessageSender messageSender, ILogger? logger = null)
+    {
+        return new MessageRouter(
+            handlers.ToDictionary(h => h.Type, h => h),
+            messageSender,
+            logger
+        );
     }
     
     public async ValueTask RouteAsync(ConnectionContext context, Message message)

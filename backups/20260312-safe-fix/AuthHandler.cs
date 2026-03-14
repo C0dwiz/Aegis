@@ -28,7 +28,7 @@ public class AuthResponse
 public class AuthHandler : IMessageHandler
 {
     private readonly IUserAuthenticationService _authService;
-    private readonly IRateLimiter _rateLimiter;
+    private readonly RateLimiter _rateLimiter;
     private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;
     private readonly IMessageRepository _messageRepository;
@@ -39,7 +39,7 @@ public class AuthHandler : IMessageHandler
     
     public AuthHandler(
         IUserAuthenticationService authService,
-        IRateLimiter rateLimiter,
+        RateLimiter rateLimiter,
         SessionManager sessionManager,
         IMessageSender messageSender,
         IMessageRepository messageRepository,
@@ -55,36 +55,6 @@ public class AuthHandler : IMessageHandler
         _logger = logger;
     }
 
-    public AuthHandler(
-        IUserAuthenticationService authService,
-        RateLimiter rateLimiter,
-        SessionManager sessionManager,
-        IMessageSender messageSender,
-        IMessageRepository messageRepository,
-        IUserSearchService userSearchService,
-        ILogger<AuthHandler> logger)
-    {
-        _authService = authService;
-        _rateLimiter = rateLimiter;
-        _sessionManager = sessionManager;
-        _messageSender = messageSender;
-        _messageRepository = messageRepository;
-        _getUsernamesByIds = async ids =>
-        {
-            var result = new Dictionary<ulong, string>();
-            foreach (var id in ids.Distinct())
-            {
-                var user = await userSearchService.FindUserByIdAsync(id);
-                if (user != null)
-                {
-                    result[id] = user.Username;
-                }
-            }
-            return result;
-        };
-        _logger = logger;
-    }
-    
     public async ValueTask HandleAsync(ConnectionContext context, Message message)
     {
         try
