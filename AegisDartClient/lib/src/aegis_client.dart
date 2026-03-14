@@ -566,8 +566,6 @@ class AegisClient {
     String? mimeType,
     int? replyToMessageId,
   }) async {
-    _requireAuthenticated();
-
     final resolvedFileName = fileName ??
         switch (mediaKind) {
           MediaKind.photo => 'photo.jpg',
@@ -599,13 +597,47 @@ class AegisClient {
       sizeBytes: mediaBytes.length,
     );
 
+    return sendMediaBatch(
+      chatType: chatType,
+      chatId: chatId,
+      attachments: [attachment],
+      caption: caption,
+      parseMode: parseMode,
+      replyToMessageId: replyToMessageId,
+      forcedContentType: contentType,
+    );
+  }
+
+  /// Send up to 10 mixed attachments in a single message (images/files/audio/video/etc).
+  Future<MediaSendResponse> sendMediaBatch({
+    required ChatTargetType chatType,
+    required int chatId,
+    required List<MediaAttachmentPayload> attachments,
+    String? caption,
+    ParseMode? parseMode,
+    int? replyToMessageId,
+    MessageContentType? forcedContentType,
+  }) async {
+    _requireAuthenticated();
+
+    if (attachments.isEmpty) {
+      throw ArgumentError('attachments must not be empty');
+    }
+
+    if (attachments.length > 10) {
+      throw ArgumentError('A maximum of 10 attachments is allowed per message');
+    }
+
+    final contentType = forcedContentType ?? _resolveBatchContentType(attachments);
+
     switch (chatType) {
       case ChatTargetType.private:
         final request = PrivateChatMessageRequest(
           toUserId: chatId,
           content: caption,
           contentType: contentType,
-          attachment: attachment,
+          attachment: attachments.first,
+          attachments: attachments,
           parseMode: parseMode?.value,
         );
         final msg = Message.withType(
@@ -625,7 +657,8 @@ class AegisClient {
           content: caption,
           contentType: contentType,
           replyToMessageId: replyToMessageId,
-          attachment: attachment,
+          attachment: attachments.first,
+          attachments: attachments,
           parseMode: parseMode?.value,
         );
         final msg = Message.withType(
@@ -645,7 +678,8 @@ class AegisClient {
           content: caption,
           contentType: contentType,
           replyToMessageId: replyToMessageId,
-          attachment: attachment,
+          attachment: attachments.first,
+          attachments: attachments,
           parseMode: parseMode?.value,
         );
         final msg = Message.withType(
@@ -659,6 +693,24 @@ class AegisClient {
         return GroupMessageSendResponse.fromBytes(response.payload)
           .toMediaSendResponse();
     }
+  }
+
+  MessageContentType _resolveBatchContentType(List<MediaAttachmentPayload> attachments) {
+    final mimes = attachments.map((item) => item.mimeType.toLowerCase()).toList(growable: false);
+
+    if (mimes.every((mime) => mime.startsWith('image/'))) {
+      return MessageContentType.image;
+    }
+
+    if (mimes.every((mime) => mime.startsWith('video/'))) {
+      return MessageContentType.video;
+    }
+
+    if (mimes.every((mime) => mime.startsWith('audio/'))) {
+      return MessageContentType.audio;
+    }
+
+    return MessageContentType.file;
   }
 
   /// Unified file sending helper built on top of [sendMedia].

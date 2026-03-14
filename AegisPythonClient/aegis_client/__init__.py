@@ -17,6 +17,7 @@ from .message_payloads import (
     PrivateChatHistoryRequest, PrivateChatHistoryResponse, PrivateChatHistoryItem,
     ChannelHistoryRequest, ChannelHistoryResponse, ChannelHistoryItem,
     PrivateChatMessageEvent, ChannelMessageEvent,
+    MediaAttachment, parse_media_attachments,
     MessageContentType, ChannelType
 )
 from .exceptions import (
@@ -39,6 +40,7 @@ __all__ = [
     "PrivateChatHistoryRequest", "PrivateChatHistoryResponse", "PrivateChatHistoryItem",
     "ChannelHistoryRequest", "ChannelHistoryResponse", "ChannelHistoryItem",
     "PrivateChatMessageEvent", "ChannelMessageEvent",
+    "MediaAttachment", "parse_media_attachments",
     "MessageContentType", "ChannelType",
     "AegisException", "ConnectionException", 
     "NotConnectedException", "TimeoutException", "ProtocolError",

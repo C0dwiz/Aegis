@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Collections.Concurrent;
 using System.Buffers;
 using System.Threading.Channels;
+using System.Threading;
 using System.Text;
 using Aegis.Common;
 using Aegis.Common.Logging;
@@ -22,12 +23,14 @@ public class TcpServer : IDisposable
     private readonly Socket _listener;
     private readonly CancellationTokenSource _cts;
     private readonly ConcurrentDictionary<ulong, ConnectionContext> _connections;
-    private readonly RateLimiter? _rateLimiter;
+    private readonly IRateLimiter? _rateLimiter;
     private readonly TimeSpan _partialFrameTimeout;
     private readonly int _maxIncompleteFrameDrops;
     private readonly byte[] _transportMaskingKey;
+    private readonly SemaphoreSlim _stopSemaphore;
     private ulong _nextConnectionId;
     private bool _disposed;
+    private bool _stopped;
     
     public int Port { get; }
     public int MaxConnections { get; }
@@ -49,7 +52,7 @@ public class TcpServer : IDisposable
         int partialFrameTimeoutMs = 300,
         int maxIncompleteFrameDrops = 3,
         string? transportMaskingKey = null,
-        RateLimiter? rateLimiter = null,
+        IRateLimiter? rateLimiter = null,
         ILogger? logger = null)
     {
         Port = port;
@@ -67,6 +70,7 @@ public class TcpServer : IDisposable
         _listener = CreateListener(enableIPv6);
         _cts = new CancellationTokenSource();
         _connections = new ConcurrentDictionary<ulong, ConnectionContext>();
+        _stopSemaphore = new SemaphoreSlim(1, 1);
     }
     
     public async Task StartAsync(int port = 0)
@@ -268,10 +272,11 @@ public class TcpServer : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
-        
-        var stopTask = StopAsync();
+
+        StopAsync().GetAwaiter().GetResult();
         _listener.Dispose();
         _cts.Dispose();
+        _stopSemaphore.Dispose();
         
         _disposed = true;
         GC.SuppressFinalize(this);
@@ -289,7 +294,7 @@ public class TcpServer : IDisposable
         {
             if (!EnableTransportMasking)
             {
-                await socket.SendAsync(data, SocketFlags.None, _cts.Token);
+                await SendAllAsync(socket, data, _cts.Token);
             }
             else
             {
@@ -299,7 +304,7 @@ public class TcpServer : IDisposable
                     var span = rented.AsSpan(0, data.Length);
                     data.Span.CopyTo(span);
                     context.ApplyOutboundMaskInPlace(span, _transportMaskingKey);
-                    await socket.SendAsync(rented.AsMemory(0, data.Length), SocketFlags.None, _cts.Token);
+                    await SendAllAsync(socket, rented.AsMemory(0, data.Length), _cts.Token);
                 }
                 finally
                 {
@@ -325,18 +330,47 @@ public class TcpServer : IDisposable
     
     public async Task StopAsync()
     {
-        _cts.Cancel();
-        _listener.Close();
-        
-        foreach (var connection in _connections.Values)
+        await _stopSemaphore.WaitAsync();
+        try
         {
-            try { connection.Socket.Shutdown(SocketShutdown.Both); }
-            catch { }
-            connection.Dispose();
+            if (_stopped)
+            {
+                return;
+            }
+
+            _stopped = true;
+            _cts.Cancel();
+            _listener.Close();
+
+            foreach (var connection in _connections.Values)
+            {
+                try { connection.Socket.Shutdown(SocketShutdown.Both); }
+                catch { }
+                connection.Dispose();
+            }
+
+            _connections.Clear();
+            _logger.Info("TCP server stopped");
         }
-        
-        _connections.Clear();
-        _logger.Info("TCP server stopped");
+        finally
+        {
+            _stopSemaphore.Release();
+        }
+    }
+
+    private static async Task SendAllAsync(Socket socket, ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
+    {
+        var totalSent = 0;
+        while (totalSent < data.Length)
+        {
+            var sent = await socket.SendAsync(data.Slice(totalSent), SocketFlags.None, cancellationToken);
+            if (sent <= 0)
+            {
+                throw new TransportError("Socket send returned 0 bytes");
+            }
+
+            totalSent += sent;
+        }
     }
 
     private bool CanAcceptConnection(Socket socket)

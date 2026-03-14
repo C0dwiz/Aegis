@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Aegis.Common\Aegis.Common.csproj" />
+    <ProjectReference Include="..\Aegis.Protocol\Aegis.Protocol.csproj" />
   </ItemGroup>
 
   <ItemGroup>

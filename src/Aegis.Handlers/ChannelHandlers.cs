@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Aegis.Common;
 using Aegis.Data.Entities;
+using Aegis.Data.Policies;
 using Aegis.Data.Repositories;
 using Aegis.Data.Services;
 using Aegis.Protocol;
@@ -18,6 +19,7 @@ public record ChannelMessageRequest(
     MessageContentType ContentType = MessageContentType.Text,
     ulong? ReplyToMessageId = null,
     MediaAttachmentPayload? Attachment = null,
+    IReadOnlyList<MediaAttachmentPayload>? Attachments = null,
     string? ParseMode = null
 );
 
@@ -83,6 +85,7 @@ public record PrivateChatMessageRequest(
     string? Content,
     MessageContentType ContentType = MessageContentType.Text,
     MediaAttachmentPayload? Attachment = null,
+    IReadOnlyList<MediaAttachmentPayload>? Attachments = null,
     string? ParseMode = null
 );
 
@@ -107,6 +110,12 @@ internal sealed record StoredMediaContent(
     long? SizeBytes
 );
 
+internal sealed record StoredMediaBatchContent(
+    string Kind,
+    string? Text,
+    IReadOnlyList<MediaAttachmentPayload> Attachments
+);
+
 /// <summary>
 /// Private chat message response payload
 /// </summary>
@@ -126,6 +135,7 @@ public class ChannelMessageHandler : IMessageHandler
     private readonly IChannelRepository _channelRepository;
     private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;
+    private readonly DomainRulesAdapter _domainRules;
     private readonly ILogger<ChannelMessageHandler> _logger;
 
     public ChannelMessageHandler(
@@ -133,12 +143,14 @@ public class ChannelMessageHandler : IMessageHandler
         IChannelRepository channelRepository,
         SessionManager sessionManager,
         IMessageSender messageSender,
+        DomainRulesAdapter domainRules,
         ILogger<ChannelMessageHandler> logger)
     {
         _messageService = messageService;
         _channelRepository = channelRepository;
         _sessionManager = sessionManager;
         _messageSender = messageSender;
+        _domainRules = domainRules;
         _logger = logger;
     }
 
@@ -160,8 +172,21 @@ public class ChannelMessageHandler : IMessageHandler
                 return;
             }
 
-            var contentType = MediaPayloadBuilder.ResolveContentType(payload.ContentType, payload.Attachment);
-            var normalizedContent = MediaPayloadBuilder.BuildMessageContent(payload.Content, payload.Attachment, payload.ParseMode);
+            if (!_domainRules.TryValidateMessageSend(
+                scope: "channel",
+                targetId: payload.ChannelId,
+                senderUserId: session.UserId,
+                content: payload.Content,
+                attachmentCount: MediaPayloadBuilder.GetNormalizedAttachmentCount(payload.Attachment, payload.Attachments),
+                requestedContentType: (int)payload.ContentType,
+                out var ruleError))
+            {
+                await SendResponseAsync(context, message.SequenceId, new ChannelMessageResponse(false, MessageText: ruleError ?? "Message violates domain rules"));
+                return;
+            }
+
+            var contentType = MediaPayloadBuilder.ResolveContentType(payload.ContentType, payload.Attachment, payload.Attachments);
+            var normalizedContent = MediaPayloadBuilder.BuildMessageContent(payload.Content, payload.Attachment, payload.Attachments, payload.ParseMode);
 
             var channelMsg = await _messageService.SendChannelMessageAsync(
                 payload.ChannelId, session.UserId, normalizedContent,
@@ -222,12 +247,12 @@ public class ChannelMessageHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, ChannelMessageResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        await _messageSender.SendProtocolMessageAsync(
-            context.ConnectionId,
-            (ushort)MessageType.ChannelMessage,
+        await HandlerResponseSender.SendAsync(
+            _messageSender,
+            context,
+            MessageType.ChannelMessage,
             sequenceId,
-            payload);
+            response);
     }
 }
 
@@ -293,12 +318,12 @@ public class ChannelCreateHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, ChannelCreateResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        await _messageSender.SendProtocolMessageAsync(
-            context.ConnectionId,
-            (ushort)MessageType.ChannelCreate,
+        await HandlerResponseSender.SendAsync(
+            _messageSender,
+            context,
+            MessageType.ChannelCreate,
             sequenceId,
-            payload);
+            response);
     }
 }
 
@@ -313,6 +338,7 @@ public class PrivateChatMessageHandler : IMessageHandler
     private readonly IBotManagementService _botManagementService;
     private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;
+    private readonly DomainRulesAdapter _domainRules;
     private readonly ILogger<PrivateChatMessageHandler> _logger;
 
     public PrivateChatMessageHandler(
@@ -321,6 +347,7 @@ public class PrivateChatMessageHandler : IMessageHandler
         IBotManagementService botManagementService,
         SessionManager sessionManager,
         IMessageSender messageSender,
+        DomainRulesAdapter domainRules,
         ILogger<PrivateChatMessageHandler> logger)
     {
         _messageService = messageService;
@@ -328,6 +355,7 @@ public class PrivateChatMessageHandler : IMessageHandler
         _botManagementService = botManagementService;
         _sessionManager = sessionManager;
         _messageSender = messageSender;
+        _domainRules = domainRules;
         _logger = logger;
     }
 
@@ -349,8 +377,21 @@ public class PrivateChatMessageHandler : IMessageHandler
                 return;
             }
 
-            var contentType = MediaPayloadBuilder.ResolveContentType(payload.ContentType, payload.Attachment);
-            var normalizedContent = MediaPayloadBuilder.BuildMessageContent(payload.Content, payload.Attachment, payload.ParseMode);
+            if (!_domainRules.TryValidateMessageSend(
+                scope: "private",
+                targetId: payload.ToUserId,
+                senderUserId: session.UserId,
+                content: payload.Content,
+                attachmentCount: MediaPayloadBuilder.GetNormalizedAttachmentCount(payload.Attachment, payload.Attachments),
+                requestedContentType: (int)payload.ContentType,
+                out var ruleError))
+            {
+                await SendResponseAsync(context, message.SequenceId, new PrivateChatMessageResponse(false, MessageText: ruleError ?? "Message violates domain rules"));
+                return;
+            }
+
+            var contentType = MediaPayloadBuilder.ResolveContentType(payload.ContentType, payload.Attachment, payload.Attachments);
+            var normalizedContent = MediaPayloadBuilder.BuildMessageContent(payload.Content, payload.Attachment, payload.Attachments, payload.ParseMode);
 
             // Intercept messages sent to BotFather and execute command flow.
             if (await _botManagementService.IsBotFatherAsync(payload.ToUserId))
@@ -427,22 +468,28 @@ public class PrivateChatMessageHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, PrivateChatMessageResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        await _messageSender.SendProtocolMessageAsync(
-            context.ConnectionId,
-            (ushort)MessageType.PrivateChatMessage,
+        await HandlerResponseSender.SendAsync(
+            _messageSender,
+            context,
+            MessageType.PrivateChatMessage,
             sequenceId,
-            payload);
+            response);
     }
 }
 
 internal static class MediaPayloadBuilder
 {
+    private const int MaxAttachmentsPerMessage = MediaPolicy.MaxAttachmentsPerMessage;
+    private const long MaxSingleAttachmentBytes = MediaPolicy.MaxSingleAttachmentBytes;
+    private const long MaxTotalAttachmentsBytes = MediaPolicy.MaxTotalAttachmentsBytes;
+
     public static MessageContentType ResolveContentType(
         MessageContentType requestedType,
-        MediaAttachmentPayload? attachment)
+        MediaAttachmentPayload? attachment,
+        IReadOnlyList<MediaAttachmentPayload>? attachments = null)
     {
-        if (attachment == null)
+        var normalizedAttachments = NormalizeAttachments(attachment, attachments);
+        if (normalizedAttachments.Count == 0)
         {
             return requestedType;
         }
@@ -452,17 +499,41 @@ internal static class MediaPayloadBuilder
             return requestedType;
         }
 
-        if (attachment.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        if (normalizedAttachments.Count > 1)
+        {
+            var allImages = normalizedAttachments.All(a => a.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase));
+            if (allImages)
+            {
+                return MessageContentType.Image;
+            }
+
+            var allVideo = normalizedAttachments.All(a => a.MimeType.StartsWith("video/", StringComparison.OrdinalIgnoreCase));
+            if (allVideo)
+            {
+                return MessageContentType.Video;
+            }
+
+            var allAudio = normalizedAttachments.All(a => a.MimeType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase));
+            if (allAudio)
+            {
+                return MessageContentType.Audio;
+            }
+
+            return MessageContentType.File;
+        }
+
+        var single = normalizedAttachments[0];
+        if (single.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
         {
             return MessageContentType.Image;
         }
 
-        if (attachment.MimeType.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
+        if (single.MimeType.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
         {
             return MessageContentType.Video;
         }
 
-        if (attachment.MimeType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+        if (single.MimeType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
         {
             return MessageContentType.Audio;
         }
@@ -477,22 +548,41 @@ internal static class MediaPayloadBuilder
         "html"
     };
 
-    public static string BuildMessageContent(string? text, MediaAttachmentPayload? attachment, string? parseMode)
+    public static string BuildMessageContent(string? text, MediaAttachmentPayload? attachment, IReadOnlyList<MediaAttachmentPayload>? attachments, string? parseMode)
     {
         var normalizedText = BuildTextWithFormatting(text, parseMode);
-        if (attachment == null)
+        var normalizedAttachments = NormalizeAttachments(attachment, attachments);
+        if (normalizedAttachments.Count == 0)
         {
             return normalizedText ?? string.Empty;
         }
 
-        var stored = new StoredMediaContent(
+        ValidateAttachments(normalizedAttachments);
+
+        if (normalizedAttachments.Count == 1)
+        {
+            var single = normalizedAttachments[0];
+            var storedSingle = new StoredMediaContent(
+                Text: normalizedText,
+                FileName: single.FileName,
+                MimeType: single.MimeType,
+                Base64Data: single.Base64Data,
+                SizeBytes: single.SizeBytes);
+
+            return JsonSerializer.Serialize(storedSingle);
+        }
+
+        var stored = new StoredMediaBatchContent(
+            Kind: "media-batch",
             Text: normalizedText,
-            FileName: attachment.FileName,
-            MimeType: attachment.MimeType,
-            Base64Data: attachment.Base64Data,
-            SizeBytes: attachment.SizeBytes);
+            Attachments: normalizedAttachments);
 
         return JsonSerializer.Serialize(stored);
+    }
+
+    public static int GetNormalizedAttachmentCount(MediaAttachmentPayload? attachment, IReadOnlyList<MediaAttachmentPayload>? attachments)
+    {
+        return NormalizeAttachments(attachment, attachments).Count;
     }
 
     public static string ExtractDisplayText(string? text, string? parseMode)
@@ -531,6 +621,105 @@ internal static class MediaPayloadBuilder
 
         var normalized = parseMode.Trim().ToLowerInvariant();
         return AllowedParseModes.Contains(normalized) ? normalized : null;
+    }
+
+    private static IReadOnlyList<MediaAttachmentPayload> NormalizeAttachments(
+        MediaAttachmentPayload? attachment,
+        IReadOnlyList<MediaAttachmentPayload>? attachments)
+    {
+        if (attachment == null && (attachments == null || attachments.Count == 0))
+        {
+            return Array.Empty<MediaAttachmentPayload>();
+        }
+
+        if (attachment == null)
+        {
+            return attachments ?? Array.Empty<MediaAttachmentPayload>();
+        }
+
+        if (attachments == null || attachments.Count == 0)
+        {
+            return new[] { attachment };
+        }
+
+        var combined = new List<MediaAttachmentPayload>(attachments.Count + 1) { attachment };
+        combined.AddRange(attachments);
+        return combined;
+    }
+
+    private static void ValidateAttachments(IReadOnlyList<MediaAttachmentPayload> attachments)
+    {
+        if (attachments.Count == 0)
+        {
+            return;
+        }
+
+        if (attachments.Count > MaxAttachmentsPerMessage)
+        {
+            throw new ArgumentException($"Maximum {MaxAttachmentsPerMessage} attachments are allowed per message");
+        }
+
+        long totalBytes = 0;
+        foreach (var attachment in attachments)
+        {
+            if (string.IsNullOrWhiteSpace(attachment.FileName))
+            {
+                throw new ArgumentException("Attachment file name is required");
+            }
+
+            if (string.IsNullOrWhiteSpace(attachment.MimeType))
+            {
+                throw new ArgumentException("Attachment MIME type is required");
+            }
+
+            if (string.IsNullOrWhiteSpace(attachment.Base64Data))
+            {
+                throw new ArgumentException("Attachment base64 payload is required");
+            }
+
+            var estimatedBytes = EstimateDecodedBytes(attachment.Base64Data);
+            if (estimatedBytes <= 0)
+            {
+                throw new ArgumentException("Attachment payload is empty");
+            }
+
+            if (estimatedBytes > MaxSingleAttachmentBytes)
+            {
+                throw new ArgumentException($"Attachment '{attachment.FileName}' exceeds {MaxSingleAttachmentBytes / 1024}KB limit");
+            }
+
+            if (attachment.SizeBytes.HasValue && attachment.SizeBytes.Value != estimatedBytes)
+            {
+                throw new ArgumentException($"Attachment '{attachment.FileName}' size metadata mismatch");
+            }
+
+            totalBytes += estimatedBytes;
+            if (totalBytes > MaxTotalAttachmentsBytes)
+            {
+                throw new ArgumentException($"Total attachments payload exceeds {MaxTotalAttachmentsBytes / 1024}KB limit");
+            }
+        }
+    }
+
+    private static int EstimateDecodedBytes(string base64Data)
+    {
+        var base64 = base64Data.Trim();
+        if (base64.Length == 0)
+        {
+            return 0;
+        }
+
+        var padding = 0;
+        if (base64.EndsWith("==", StringComparison.Ordinal))
+        {
+            padding = 2;
+        }
+        else if (base64.EndsWith("=", StringComparison.Ordinal))
+        {
+            padding = 1;
+        }
+
+        return Math.Max(0, (base64.Length * 3 / 4) - padding);
     }
 }
 
@@ -618,11 +807,11 @@ public class ChannelJoinHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, ChannelJoinResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        await _messageSender.SendProtocolMessageAsync(
-            context.ConnectionId,
-            (ushort)MessageType.ChannelJoin,
+        await HandlerResponseSender.SendAsync(
+            _messageSender,
+            context,
+            MessageType.ChannelJoin,
             sequenceId,
-            payload);
+            response);
     }
 }

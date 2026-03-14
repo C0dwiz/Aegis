@@ -50,6 +50,7 @@ public record GroupMessageSendRequest(
     Aegis.Data.Entities.MessageContentType ContentType = Aegis.Data.Entities.MessageContentType.Text,
     ulong? ReplyToMessageId = null,
     MediaAttachmentPayload? Attachment = null,
+    IReadOnlyList<MediaAttachmentPayload>? Attachments = null,
     string? ParseMode = null
 );
 
@@ -154,21 +155,12 @@ public class ChannelEditHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, ChannelEditResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        var msg = new Message
-        {
-            Magic = ProtocolConstants.Magic,
-            VersionMajor = ProtocolConstants.VersionMajor,
-            VersionMinor = ProtocolConstants.VersionMinor,
-            Type = MessageType.ChannelEditResponse,
-            SequenceId = sequenceId,
-            PayloadLength = (uint)payload.Length,
-            Payload = payload,
-            Mac = new byte[ProtocolConstants.MacSize]
-        };
-        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length + ProtocolConstants.MacSize];
-        MessageEncoder.Encode(msg, buffer);
-        await _messageSender.SendMessageAsync(context.ConnectionId, buffer);
+        await HandlerResponseSender.SendAsync(
+            _messageSender,
+            context,
+            MessageType.ChannelEditResponse,
+            sequenceId,
+            response);
     }
 }
 
@@ -232,21 +224,12 @@ public class GroupCreateHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, GroupCreateResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        var msg = new Message
-        {
-            Magic = ProtocolConstants.Magic,
-            VersionMajor = ProtocolConstants.VersionMajor,
-            VersionMinor = ProtocolConstants.VersionMinor,
-            Type = MessageType.GroupCreateResponse,
-            SequenceId = sequenceId,
-            PayloadLength = (uint)payload.Length,
-            Payload = payload,
-            Mac = new byte[ProtocolConstants.MacSize]
-        };
-        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length + ProtocolConstants.MacSize];
-        MessageEncoder.Encode(msg, buffer);
-        await _messageSender.SendMessageAsync(context.ConnectionId, buffer);
+        await HandlerResponseSender.SendAsync(
+            _messageSender,
+            context,
+            MessageType.GroupCreateResponse,
+            sequenceId,
+            response);
     }
 }
 
@@ -315,21 +298,12 @@ public class GroupEditHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, GroupEditResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        var msg = new Message
-        {
-            Magic = ProtocolConstants.Magic,
-            VersionMajor = ProtocolConstants.VersionMajor,
-            VersionMinor = ProtocolConstants.VersionMinor,
-            Type = MessageType.GroupEditResponse,
-            SequenceId = sequenceId,
-            PayloadLength = (uint)payload.Length,
-            Payload = payload,
-            Mac = new byte[ProtocolConstants.MacSize]
-        };
-        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length + ProtocolConstants.MacSize];
-        MessageEncoder.Encode(msg, buffer);
-        await _messageSender.SendMessageAsync(context.ConnectionId, buffer);
+        await HandlerResponseSender.SendAsync(
+            _messageSender,
+            context,
+            MessageType.GroupEditResponse,
+            sequenceId,
+            response);
     }
 }
 
@@ -342,17 +316,20 @@ public class GroupMessageSendHandler : IMessageHandler
     private readonly IMessageService _messageService;
     private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;
+    private readonly DomainRulesAdapter _domainRules;
     private readonly ILogger<GroupMessageSendHandler> _logger;
 
     public GroupMessageSendHandler(
         IMessageService messageService,
         SessionManager sessionManager,
         IMessageSender messageSender,
+        DomainRulesAdapter domainRules,
         ILogger<GroupMessageSendHandler> logger)
     {
         _messageService = messageService;
         _sessionManager = sessionManager;
         _messageSender = messageSender;
+        _domainRules = domainRules;
         _logger = logger;
     }
 
@@ -374,8 +351,21 @@ public class GroupMessageSendHandler : IMessageHandler
                 return;
             }
 
-            var contentType = MediaPayloadBuilder.ResolveContentType(request.ContentType, request.Attachment);
-            var normalizedContent = MediaPayloadBuilder.BuildMessageContent(request.Content, request.Attachment, request.ParseMode);
+            if (!_domainRules.TryValidateMessageSend(
+                scope: "group",
+                targetId: request.GroupId,
+                senderUserId: session.UserId,
+                content: request.Content,
+                attachmentCount: MediaPayloadBuilder.GetNormalizedAttachmentCount(request.Attachment, request.Attachments),
+                requestedContentType: (int)request.ContentType,
+                out var ruleError))
+            {
+                await SendResponseAsync(context, message.SequenceId, new GroupMessageSendResponse(false, Message: ruleError ?? "Message violates domain rules"));
+                return;
+            }
+
+            var contentType = MediaPayloadBuilder.ResolveContentType(request.ContentType, request.Attachment, request.Attachments);
+            var normalizedContent = MediaPayloadBuilder.BuildMessageContent(request.Content, request.Attachment, request.Attachments, request.ParseMode);
 
             var msg = await _messageService.SendGroupMessageAsync(
                 request.GroupId, session.UserId, normalizedContent,
@@ -403,21 +393,12 @@ public class GroupMessageSendHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, GroupMessageSendResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        var msg = new Message
-        {
-            Magic = ProtocolConstants.Magic,
-            VersionMajor = ProtocolConstants.VersionMajor,
-            VersionMinor = ProtocolConstants.VersionMinor,
-            Type = MessageType.GroupMessageResponse,
-            SequenceId = sequenceId,
-            PayloadLength = (uint)payload.Length,
-            Payload = payload,
-            Mac = new byte[ProtocolConstants.MacSize]
-        };
-        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length + ProtocolConstants.MacSize];
-        MessageEncoder.Encode(msg, buffer);
-        await _messageSender.SendMessageAsync(context.ConnectionId, buffer);
+        await HandlerResponseSender.SendAsync(
+            _messageSender,
+            context,
+            MessageType.GroupMessageResponse,
+            sequenceId,
+            response);
     }
 }
 
@@ -431,6 +412,7 @@ public class MemberRoleUpdateHandler : IMessageHandler
     private readonly IGroupService _groupService;
     private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;
+    private readonly DomainRulesAdapter _domainRules;
     private readonly ILogger<MemberRoleUpdateHandler> _logger;
 
     public MemberRoleUpdateHandler(
@@ -438,12 +420,14 @@ public class MemberRoleUpdateHandler : IMessageHandler
         IGroupService groupService,
         SessionManager sessionManager,
         IMessageSender messageSender,
+        DomainRulesAdapter domainRules,
         ILogger<MemberRoleUpdateHandler> logger)
     {
         _channelService = channelService;
         _groupService = groupService;
         _sessionManager = sessionManager;
         _messageSender = messageSender;
+        _domainRules = domainRules;
         _logger = logger;
     }
 
@@ -465,24 +449,32 @@ public class MemberRoleUpdateHandler : IMessageHandler
                 return;
             }
 
-            switch (request.Scope)
+            if (!_domainRules.TryValidateRoleUpdate(
+                scope: request.Scope,
+                targetId: request.TargetId,
+                actorUserId: session.UserId,
+                targetUserId: request.TargetUserId,
+                newRole: request.NewRole,
+                out var ruleError))
             {
-                case "channel":
-                    await _channelService.UpdateMemberRoleAsync(
-                        request.TargetId, session.UserId, request.TargetUserId,
-                        (Aegis.Data.Entities.ChannelMemberRole)request.NewRole);
-                    break;
-
-                case "group":
-                    await _groupService.UpdateMemberRoleAsync(
-                        request.TargetId, session.UserId, request.TargetUserId,
-                        (Aegis.Data.Entities.GroupMemberRole)request.NewRole);
-                    break;
-
-                default:
-                    await SendResponseAsync(context, message.SequenceId, new MemberRoleUpdateResponse(false, "Invalid scope"));
-                    return;
+                await SendResponseAsync(context, message.SequenceId, new MemberRoleUpdateResponse(false, ruleError ?? "Role update violates domain rules"));
+                return;
             }
+
+            if (!_domainRules.TryResolveAdminScope(request.Scope, out var resolvedScope, out var scopeError))
+            {
+                await SendResponseAsync(context, message.SequenceId, new MemberRoleUpdateResponse(false, scopeError ?? "Invalid scope"));
+                return;
+            }
+
+            await _domainRules.ApplyRoleUpdateAsync(
+                resolvedScope,
+                _channelService,
+                _groupService,
+                request.TargetId,
+                session.UserId,
+                request.TargetUserId,
+                request.NewRole);
 
             await SendResponseAsync(context, message.SequenceId, new MemberRoleUpdateResponse(true, "Role updated"));
             _logger.LogInformation("Role updated for user {TargetUserId} in {Scope} {TargetId} to {NewRole} by {ActorUserId}",
@@ -505,21 +497,12 @@ public class MemberRoleUpdateHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, MemberRoleUpdateResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        var msg = new Message
-        {
-            Magic = ProtocolConstants.Magic,
-            VersionMajor = ProtocolConstants.VersionMajor,
-            VersionMinor = ProtocolConstants.VersionMinor,
-            Type = MessageType.MemberRoleUpdateResponse,
-            SequenceId = sequenceId,
-            PayloadLength = (uint)payload.Length,
-            Payload = payload,
-            Mac = new byte[ProtocolConstants.MacSize]
-        };
-        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length + ProtocolConstants.MacSize];
-        MessageEncoder.Encode(msg, buffer);
-        await _messageSender.SendMessageAsync(context.ConnectionId, buffer);
+        await HandlerResponseSender.SendAsync(
+            _messageSender,
+            context,
+            MessageType.MemberRoleUpdateResponse,
+            sequenceId,
+            response);
     }
 }
 
@@ -533,6 +516,7 @@ public class MemberPermissionUpdateHandler : IMessageHandler
     private readonly IGroupService _groupService;
     private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;
+    private readonly DomainRulesAdapter _domainRules;
     private readonly ILogger<MemberPermissionUpdateHandler> _logger;
 
     public MemberPermissionUpdateHandler(
@@ -540,12 +524,14 @@ public class MemberPermissionUpdateHandler : IMessageHandler
         IGroupService groupService,
         SessionManager sessionManager,
         IMessageSender messageSender,
+        DomainRulesAdapter domainRules,
         ILogger<MemberPermissionUpdateHandler> logger)
     {
         _channelService = channelService;
         _groupService = groupService;
         _sessionManager = sessionManager;
         _messageSender = messageSender;
+        _domainRules = domainRules;
         _logger = logger;
     }
 
@@ -567,7 +553,18 @@ public class MemberPermissionUpdateHandler : IMessageHandler
                 return;
             }
 
-            var permissions = new MemberPermissions(
+            if (!_domainRules.TryValidatePermissionUpdate(
+                scope: request.Scope,
+                targetId: request.TargetId,
+                actorUserId: session.UserId,
+                targetUserId: request.TargetUserId,
+                out var ruleError))
+            {
+                await SendResponseAsync(context, message.SequenceId, new MemberPermissionUpdateResponse(false, ruleError ?? "Permission update violates domain rules"));
+                return;
+            }
+
+            var permissions = _domainRules.BuildMemberPermissions(
                 request.CanSendMessages,
                 request.CanDeleteOthersMessages,
                 request.CanEditInfo,
@@ -576,22 +573,20 @@ public class MemberPermissionUpdateHandler : IMessageHandler
                 request.CanPinMessages,
                 request.CanManageRoles);
 
-            switch (request.Scope)
+            if (!_domainRules.TryResolveAdminScope(request.Scope, out var resolvedScope, out var scopeError))
             {
-                case "channel":
-                    await _channelService.UpdateMemberPermissionsAsync(
-                        request.TargetId, session.UserId, request.TargetUserId, permissions);
-                    break;
-
-                case "group":
-                    await _groupService.UpdateMemberPermissionsAsync(
-                        request.TargetId, session.UserId, request.TargetUserId, permissions);
-                    break;
-
-                default:
-                    await SendResponseAsync(context, message.SequenceId, new MemberPermissionUpdateResponse(false, "Invalid scope"));
-                    return;
+                await SendResponseAsync(context, message.SequenceId, new MemberPermissionUpdateResponse(false, scopeError ?? "Invalid scope"));
+                return;
             }
+
+            await _domainRules.ApplyPermissionUpdateAsync(
+                resolvedScope,
+                _channelService,
+                _groupService,
+                request.TargetId,
+                session.UserId,
+                request.TargetUserId,
+                permissions);
 
             await SendResponseAsync(context, message.SequenceId, new MemberPermissionUpdateResponse(true, "Permissions updated"));
             _logger.LogInformation("Permissions updated for user {TargetUserId} in {Scope} {TargetId} by {ActorUserId}",
@@ -614,20 +609,11 @@ public class MemberPermissionUpdateHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, MemberPermissionUpdateResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        var msg = new Message
-        {
-            Magic = ProtocolConstants.Magic,
-            VersionMajor = ProtocolConstants.VersionMajor,
-            VersionMinor = ProtocolConstants.VersionMinor,
-            Type = MessageType.MemberPermissionUpdateResponse,
-            SequenceId = sequenceId,
-            PayloadLength = (uint)payload.Length,
-            Payload = payload,
-            Mac = new byte[ProtocolConstants.MacSize]
-        };
-        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length + ProtocolConstants.MacSize];
-        MessageEncoder.Encode(msg, buffer);
-        await _messageSender.SendMessageAsync(context.ConnectionId, buffer);
+        await HandlerResponseSender.SendAsync(
+            _messageSender,
+            context,
+            MessageType.MemberPermissionUpdateResponse,
+            sequenceId,
+            response);
     }
 }

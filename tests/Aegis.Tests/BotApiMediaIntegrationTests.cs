@@ -74,6 +74,67 @@ public class BotApiMediaIntegrationTests
         sut.MessageService.VerifyNoOtherCalls();
     }
 
+    [Fact]
+    public async Task SendMediaBatch_MoreThanTenAttachments_ShouldReturnValidationError()
+    {
+        var sut = CreateSut();
+        var attachments = Enumerable.Range(1, 11)
+            .Select(i => new BotMediaAttachmentRequest(
+                FileName: $"f{i}.bin",
+                MimeType: "application/octet-stream",
+                Base64Data: Convert.ToBase64String(new byte[] { (byte)i, (byte)(i + 1), (byte)(i + 2) }),
+                SizeBytes: 3))
+            .ToList();
+
+        var request = new SendMediaBatchRequest(ChatId: "c:10", Attachments: attachments, Caption: "too many");
+
+        var command = sut.Mapper.Map(request);
+        var response = await sut.UseCase.SendMessageAsync("token", command);
+
+        Assert.False(response.Success);
+        Assert.Equal(BotErrorCode.Validation, response.ErrorCode);
+        Assert.Contains("up to 10", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        sut.MessageService.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task SendMediaBatch_MixedAttachments_ShouldSendMessage()
+    {
+        var sut = CreateSut();
+        var attachments = new List<BotMediaAttachmentRequest>
+        {
+            new("img1.jpg", "image/jpeg", Convert.ToBase64String(new byte[] { 1, 2, 3 }), 3),
+            new("voice1.ogg", "audio/ogg", Convert.ToBase64String(new byte[] { 4, 5, 6, 7 }), 4),
+            new("archive.zip", "application/zip", Convert.ToBase64String(new byte[] { 8, 9, 10, 11 }), 4)
+        };
+
+        var request = new SendMediaBatchRequest(ChatId: "c:10", Attachments: attachments, Caption: "mixed");
+
+        sut.MessageService
+            .Setup(x => x.SendChannelMessageAsync(
+                10,
+                777,
+                It.Is<string>(content => content.Contains("bot-media-batch") && content.Contains("Attachments")),
+                MessageContentType.File,
+                null))
+            .ReturnsAsync(new ChannelMessage
+            {
+                Id = 55,
+                ChannelId = 10,
+                FromUserId = 777,
+                Content = "ok",
+                ContentType = MessageContentType.File,
+                CreatedAt = DateTime.UtcNow
+            });
+
+        var command = sut.Mapper.Map(request);
+        var response = await sut.UseCase.SendMessageAsync("token", command);
+
+        Assert.True(response.Success);
+        Assert.NotNull(response.Result);
+        sut.MessageService.VerifyAll();
+    }
+
     private static TestHarness CreateSut()
     {
         var auth = new Mock<IBotAuthenticator>();

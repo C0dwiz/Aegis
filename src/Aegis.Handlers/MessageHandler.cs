@@ -78,6 +78,7 @@ public class MessageHandler : IMessageHandler
             var normalizedContent = MediaPayloadBuilder.BuildMessageContent(
                 request.Content,
                 attachment: null,
+                attachments: null,
                 parseMode: request.ParseMode);
 
             var saved = await _messageService.SendPrivateMessageAsync(

@@ -12,6 +12,7 @@
     <ProjectReference Include="..\Aegis.Transport\Aegis.Transport.csproj" />
     <ProjectReference Include="..\Aegis.Crypto\Aegis.Crypto.csproj" />
     <ProjectReference Include="..\Aegis.Data\Aegis.Data.csproj" />
+    <ProjectReference Include="..\Aegis.DomainRules\Aegis.DomainRules.fsproj" />
   </ItemGroup>
   
   <ItemGroup>

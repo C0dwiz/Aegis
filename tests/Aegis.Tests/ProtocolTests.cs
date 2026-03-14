@@ -1,5 +1,6 @@
 using Xunit;
 using Aegis.Protocol;
+using Aegis.DomainRules;
 using Aegis.Common;
 using Aegis.Common.Errors;
 
@@ -73,5 +74,79 @@ public class ProtocolTests
         // Too old relative to highest sequence -> stale replay
         Assert.False(deduplicator.TryAcceptSequence(1, 100, out var staleReason));
         Assert.Contains("stale", staleReason);
+    }
+
+    [Fact]
+    public void Decode_RandomGarbage_ShouldOnlyYieldProtocolErrorsOrValidMessages()
+    {
+        var random = new Random(1337);
+
+        for (var i = 0; i < 300; i++)
+        {
+            var size = random.Next(0, 512);
+            var data = new byte[size];
+            random.NextBytes(data);
+
+            try
+            {
+                var message = MessageEncoder.Decode(data);
+                Assert.Equal(ProtocolConstants.Magic, message.Magic);
+                Assert.True(message.PayloadLength <= ProtocolConstants.MaxPayloadSize);
+            }
+            catch (ProtocolError)
+            {
+                // Expected for malformed frames.
+            }
+        }
+    }
+
+    [Fact]
+    public void Decode_MalformedHeaderLengths_ShouldThrowProtocolError()
+    {
+        var message = new Message
+        {
+            Magic = ProtocolConstants.Magic,
+            VersionMajor = ProtocolConstants.VersionMajor,
+            VersionMinor = ProtocolConstants.VersionMinor,
+            Type = MessageType.Message,
+            SequenceId = 321,
+            Payload = new byte[] { 1, 2, 3, 4 },
+            PayloadLength = 4,
+            Mac = new byte[ProtocolConstants.MacSize]
+        };
+
+        var frame = new byte[Message.TotalSize(message)];
+        MessageEncoder.Encode(message, frame);
+
+        // Corrupt payload length field in header: set max uint to trigger bounds violation.
+        frame[15] = 0xFF;
+        frame[16] = 0xFF;
+        frame[17] = 0xFF;
+        frame[18] = 0xFF;
+
+        Assert.Throws<ProtocolError>(() => MessageEncoder.Decode(frame));
+    }
+
+    [Fact]
+    public void ProtocolSafetyFacade_ValidateFrameEnvelope_ShouldReturnErrorForInvalidSize()
+    {
+        var error = ProtocolSafetyFacade.ValidateFrameEnvelope(
+            frameLength: 40,
+            payloadLength: 100,
+            headerSize: ProtocolConstants.HeaderSize,
+            macSize: ProtocolConstants.MacSize,
+            maxPayload: ProtocolConstants.MaxPayloadSize);
+
+        Assert.NotNull(error);
+        Assert.Contains("Invalid frame size", error);
+    }
+
+    [Fact]
+    public void ProtocolSafetyFacade_IsRoutableInboundType_ShouldMatchKnownAndUnknownTypes()
+    {
+        Assert.True(ProtocolSafetyFacade.IsRoutableInboundType((ushort)MessageType.Handshake));
+        Assert.True(ProtocolSafetyFacade.IsRoutableInboundType((ushort)MessageType.PrivateChatMessage));
+        Assert.False(ProtocolSafetyFacade.IsRoutableInboundType((ushort)MessageType.Error));
+        Assert.False(ProtocolSafetyFacade.IsRoutableInboundType(65000));
     }
 }

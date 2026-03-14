@@ -28,7 +28,7 @@ public class AuthResponse
 public class AuthHandler : IMessageHandler
 {
     private readonly IUserAuthenticationService _authService;
-    private readonly RateLimiter _rateLimiter;
+    private readonly IRateLimiter _rateLimiter;
     private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;
     private readonly IMessageRepository _messageRepository;
@@ -39,7 +39,7 @@ public class AuthHandler : IMessageHandler
     
     public AuthHandler(
         IUserAuthenticationService authService,
-        RateLimiter rateLimiter,
+        IRateLimiter rateLimiter,
         SessionManager sessionManager,
         IMessageSender messageSender,
         IMessageRepository messageRepository,
@@ -57,7 +57,7 @@ public class AuthHandler : IMessageHandler
 
     public AuthHandler(
         IUserAuthenticationService authService,
-        RateLimiter rateLimiter,
+        IRateLimiter rateLimiter,
         SessionManager sessionManager,
         IMessageSender messageSender,
         IMessageRepository messageRepository,

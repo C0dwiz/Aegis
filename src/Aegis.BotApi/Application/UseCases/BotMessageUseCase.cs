@@ -4,6 +4,7 @@ using Aegis.BotApi.Domain;
 using Aegis.BotApi.Infrastructure.Auth;
 using Aegis.Data.Services;
 using Aegis.Data.Entities;
+using Aegis.Data.Policies;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
 
@@ -11,6 +12,12 @@ namespace Aegis.BotApi.Application.UseCases;
 
 internal sealed class BotMessageUseCase : IBotMessageUseCase
 {
+    private sealed record BotMediaAttachmentEnvelope(
+        string FileName,
+        string MimeType,
+        string Base64Data,
+        long? SizeBytes = null);
+
     private sealed record BotMediaEnvelope(
         string Kind,
         string? Text,
@@ -18,7 +25,14 @@ internal sealed class BotMessageUseCase : IBotMessageUseCase
         string MimeType,
         string Base64Data);
 
-    private const int MaxMediaPayloadBytes = 15 * 1024 * 1024;
+    private sealed record BotMediaBatchEnvelope(
+        string Kind,
+        string? Text,
+        IReadOnlyList<BotMediaAttachmentEnvelope>? Attachments);
+
+    private const int MaxMediaPayloadBytes = MediaPolicy.MaxSingleAttachmentBytes;
+    private const int MaxBatchAttachments = MediaPolicy.MaxAttachmentsPerMessage;
+    private const int MaxBatchPayloadBytes = MediaPolicy.MaxTotalAttachmentsBytes;
 
     private readonly IBotAuthenticator _authenticator;
     private readonly IMessageService _messageService;
@@ -210,19 +224,87 @@ internal sealed class BotMessageUseCase : IBotMessageUseCase
             return "Invalid media payload format";
         }
 
-        if (envelope == null || !string.Equals(envelope.Kind, "bot-media", StringComparison.Ordinal))
+        if (envelope == null)
         {
             return "Invalid media payload envelope";
         }
 
-        if (string.IsNullOrWhiteSpace(envelope.Base64Data))
+        if (string.Equals(envelope.Kind, "bot-media", StringComparison.Ordinal))
+        {
+            return ValidateSingleMedia(envelope.Base64Data);
+        }
+
+        if (string.Equals(envelope.Kind, "bot-media-batch", StringComparison.Ordinal))
+        {
+            BotMediaBatchEnvelope? batchEnvelope;
+            try
+            {
+                batchEnvelope = JsonSerializer.Deserialize<BotMediaBatchEnvelope>(content);
+            }
+            catch
+            {
+                return "Invalid media payload envelope";
+            }
+
+            if (batchEnvelope?.Attachments == null || batchEnvelope.Attachments.Count == 0)
+            {
+                return "Media batch must include at least one attachment";
+            }
+
+            if (batchEnvelope.Attachments.Count > MaxBatchAttachments)
+            {
+                return $"Media batch supports up to {MaxBatchAttachments} attachments";
+            }
+
+            var totalBytes = 0;
+            foreach (var attachment in batchEnvelope.Attachments)
+            {
+                if (string.IsNullOrWhiteSpace(attachment.Base64Data))
+                {
+                    return "Media payload is empty";
+                }
+
+                try
+                {
+                    var bytes = Convert.FromBase64String(attachment.Base64Data);
+                    if (bytes.Length == 0)
+                    {
+                        return "Media payload is empty";
+                    }
+
+                    if (bytes.Length > MaxMediaPayloadBytes)
+                    {
+                        return $"Media payload exceeds {MaxMediaPayloadBytes / 1024}KB limit";
+                    }
+
+                    totalBytes += bytes.Length;
+                    if (totalBytes > MaxBatchPayloadBytes)
+                    {
+                        return $"Media batch exceeds {MaxBatchPayloadBytes / 1024}KB total limit";
+                    }
+                }
+                catch
+                {
+                    return "Media payload must be valid base64";
+                }
+            }
+
+            return null;
+        }
+
+        return "Invalid media payload envelope";
+    }
+
+    private static string? ValidateSingleMedia(string base64Data)
+    {
+        if (string.IsNullOrWhiteSpace(base64Data))
         {
             return "Media payload is empty";
         }
 
         try
         {
-            var bytes = Convert.FromBase64String(envelope.Base64Data);
+            var bytes = Convert.FromBase64String(base64Data);
             if (bytes.Length == 0)
             {
                 return "Media payload is empty";
@@ -230,7 +312,7 @@ internal sealed class BotMessageUseCase : IBotMessageUseCase
 
             if (bytes.Length > MaxMediaPayloadBytes)
             {
-                return $"Media payload exceeds {MaxMediaPayloadBytes / (1024 * 1024)}MB limit";
+                return $"Media payload exceeds {MaxMediaPayloadBytes / 1024}KB limit";
             }
         }
         catch

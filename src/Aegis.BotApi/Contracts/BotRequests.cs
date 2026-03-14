@@ -43,6 +43,20 @@ public sealed record SendMediaRequest(
     [property: JsonPropertyName("mime_type")] string? MimeType = null,
     [property: JsonPropertyName("content_type")] MessageContentType? ContentType = null);
 
+public sealed record BotMediaAttachmentRequest(
+    [property: JsonPropertyName("file_name")] string FileName,
+    [property: JsonPropertyName("mime_type")] string MimeType,
+    [property: JsonPropertyName("base64_data")] string Base64Data,
+    [property: JsonPropertyName("size_bytes")] long? SizeBytes = null);
+
+public sealed record SendMediaBatchRequest(
+    [property: JsonPropertyName("chat_id")] string ChatId,
+    [property: JsonPropertyName("attachments")] IReadOnlyList<BotMediaAttachmentRequest> Attachments,
+    [property: JsonPropertyName("caption")] string? Caption = null,
+    [property: JsonPropertyName("parse_mode")] string? ParseMode = null,
+    [property: JsonPropertyName("reply_markup")] ReplyMarkupRequest? ReplyMarkup = null,
+    [property: JsonPropertyName("content_type")] MessageContentType? ContentType = null);
+
 public sealed record SendFileRequest(
     [property: JsonPropertyName("chat_id")] string ChatId,
     [property: JsonPropertyName("file_base64")] string FileBase64,

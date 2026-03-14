@@ -19,4 +19,10 @@ public sealed record MessageResult(
     [property: JsonPropertyName("date")] DateTime Date,
     [property: JsonPropertyName("file_name")] string? FileName = null,
     [property: JsonPropertyName("mime_type")] string? MimeType = null,
-    [property: JsonPropertyName("parse_mode")] string? ParseMode = null);
+    [property: JsonPropertyName("parse_mode")] string? ParseMode = null,
+    [property: JsonPropertyName("attachments")] IReadOnlyList<MessageAttachmentResult>? Attachments = null);
+
+public sealed record MessageAttachmentResult(
+    [property: JsonPropertyName("file_name")] string FileName,
+    [property: JsonPropertyName("mime_type")] string MimeType,
+    [property: JsonPropertyName("size_bytes")] long? SizeBytes = null);

@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using Aegis.DomainRules;
 using Aegis.Common.Errors;
 
 namespace Aegis.Protocol;
@@ -71,12 +72,17 @@ public static class MessageEncoder
         message.PayloadLength = BinaryPrimitives.ReadUInt32BigEndian(data.Slice(offset));
         offset += sizeof(uint);
         
-        if (message.PayloadLength > ProtocolConstants.MaxPayloadSize)
-            throw new ProtocolError($"Payload too large: {message.PayloadLength}");
-        
+        var frameError = ProtocolSafetyFacade.ValidateFrameEnvelope(
+            data.Length,
+            message.PayloadLength,
+            ProtocolConstants.HeaderSize,
+            ProtocolConstants.MacSize,
+            ProtocolConstants.MaxPayloadSize);
+
+        if (frameError != null)
+            throw new ProtocolError(frameError);
+
         var expectedSize = ProtocolConstants.HeaderSize + checked((int)message.PayloadLength) + ProtocolConstants.MacSize;
-        if (data.Length != expectedSize)
-            throw new ProtocolError($"Invalid frame size: expected {expectedSize}, got {data.Length}");
 
         if (data.Length - offset < message.PayloadLength + ProtocolConstants.MacSize)
             throw new ProtocolError("Incomplete message");

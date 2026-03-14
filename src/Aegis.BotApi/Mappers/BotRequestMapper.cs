@@ -15,6 +15,17 @@ internal sealed class BotRequestMapper
         string MimeType,
         string Base64Data);
 
+    private sealed record BotMediaAttachmentEnvelope(
+        string FileName,
+        string MimeType,
+        string Base64Data,
+        long? SizeBytes = null);
+
+    private sealed record BotMediaBatchContentEnvelope(
+        string Kind,
+        string? Text,
+        IReadOnlyList<BotMediaAttachmentEnvelope> Attachments);
+
     private readonly ChatIdResolver _chatIdResolver;
     private readonly RichContentFormatter _contentFormatter;
 
@@ -127,6 +138,29 @@ internal sealed class BotRequestMapper
             MessageContentType.Audio);
     }
 
+    public SendMessageCommand Map(SendMediaBatchRequest request)
+    {
+        var normalizedText = _contentFormatter.BuildContent(request.Caption ?? string.Empty, request.ParseMode, request.ReplyMarkup);
+        var normalizedAttachments = (request.Attachments ?? Array.Empty<BotMediaAttachmentRequest>())
+            .Select(a => new BotMediaAttachmentEnvelope(
+                FileName: string.IsNullOrWhiteSpace(a.FileName) ? "file.bin" : a.FileName,
+                MimeType: string.IsNullOrWhiteSpace(a.MimeType) ? "application/octet-stream" : a.MimeType,
+                Base64Data: a.Base64Data,
+                SizeBytes: a.SizeBytes))
+            .ToList();
+
+        var resolved = _chatIdResolver.Resolve(request.ChatId);
+        var contentType = request.ContentType ?? InferContentTypeForBatch(normalizedAttachments);
+
+        var envelope = new BotMediaBatchContentEnvelope(
+            Kind: "bot-media-batch",
+            Text: normalizedText,
+            Attachments: normalizedAttachments);
+
+        var content = JsonSerializer.Serialize(envelope);
+        return new SendMessageCommand(resolved, content, contentType);
+    }
+
     public EditMessageCommand Map(EditMessageTextRequest request)
     {
         var resolved = _chatIdResolver.Resolve(request.ChatId);
@@ -188,6 +222,31 @@ internal sealed class BotRequestMapper
         }
 
         if (mimeType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+        {
+            return MessageContentType.Audio;
+        }
+
+        return MessageContentType.File;
+    }
+
+    private static MessageContentType InferContentTypeForBatch(IReadOnlyList<BotMediaAttachmentEnvelope> attachments)
+    {
+        if (attachments.Count == 0)
+        {
+            return MessageContentType.File;
+        }
+
+        if (attachments.All(a => a.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)))
+        {
+            return MessageContentType.Image;
+        }
+
+        if (attachments.All(a => a.MimeType.StartsWith("video/", StringComparison.OrdinalIgnoreCase)))
+        {
+            return MessageContentType.Video;
+        }
+
+        if (attachments.All(a => a.MimeType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase)))
         {
             return MessageContentType.Audio;
         }

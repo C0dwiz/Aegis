@@ -153,11 +153,22 @@ class ParsedMediaAttachment {
   List<int> decodeBytes() => base64Decode(base64Data);
 }
 
-ParsedMediaAttachment? tryParseMediaAttachment(
+class ParsedMediaEnvelope {
+  final String? text;
+  final List<ParsedMediaAttachment> attachments;
+
+  ParsedMediaEnvelope({
+    this.text,
+    required this.attachments,
+  });
+}
+
+ParsedMediaEnvelope? tryParseMediaAttachments(
   String content,
   MessageContentType contentType,
 ) {
   if (contentType != MessageContentType.image &&
+      contentType != MessageContentType.video &&
       contentType != MessageContentType.file &&
       contentType != MessageContentType.audio) {
     return null;
@@ -169,25 +180,64 @@ ParsedMediaAttachment? tryParseMediaAttachment(
       return null;
     }
 
-    final fileName = decoded['FileName'] ?? decoded['fileName'];
-    final mimeType = decoded['MimeType'] ?? decoded['mimeType'];
-    final base64Data = decoded['Base64Data'] ?? decoded['base64Data'];
+    ParsedMediaAttachment? parseAttachment(dynamic node, String? fallbackText) {
+      if (node is! Map<String, dynamic>) {
+        return null;
+      }
 
-    if (fileName is! String || mimeType is! String || base64Data is! String) {
-      return null;
+      final fileName = node['FileName'] ?? node['fileName'];
+      final mimeType = node['MimeType'] ?? node['mimeType'];
+      final base64Data = node['Base64Data'] ?? node['base64Data'];
+
+      if (fileName is! String || mimeType is! String || base64Data is! String) {
+        return null;
+      }
+
+      final size = node['SizeBytes'] ?? node['sizeBytes'];
+      return ParsedMediaAttachment(
+        text: (node['Text'] ?? node['text']) as String? ?? fallbackText,
+        fileName: fileName,
+        mimeType: mimeType,
+        base64Data: base64Data,
+        sizeBytes: size is int ? size : int.tryParse('${size ?? ''}'),
+      );
     }
 
-    final size = decoded['SizeBytes'] ?? decoded['sizeBytes'];
-    return ParsedMediaAttachment(
-      text: (decoded['Text'] ?? decoded['text']) as String?,
-      fileName: fileName,
-      mimeType: mimeType,
-      base64Data: base64Data,
-      sizeBytes: size is int ? size : int.tryParse('${size ?? ''}'),
-    );
+    final rootText = (decoded['Text'] ?? decoded['text']) as String?;
+
+    final attachmentsNode = decoded['Attachments'] ?? decoded['attachments'];
+    if (attachmentsNode is List) {
+      final parsed = attachmentsNode
+          .map((item) => parseAttachment(item, rootText))
+          .whereType<ParsedMediaAttachment>()
+          .toList(growable: false);
+
+      if (parsed.isNotEmpty) {
+        return ParsedMediaEnvelope(text: rootText, attachments: parsed);
+      }
+    }
+
+    final single = parseAttachment(decoded, rootText);
+    if (single != null) {
+      return ParsedMediaEnvelope(text: rootText, attachments: [single]);
+    }
+
+    return null;
   } catch (_) {
     return null;
   }
+}
+
+ParsedMediaAttachment? tryParseMediaAttachment(
+  String content,
+  MessageContentType contentType,
+) {
+  final parsed = tryParseMediaAttachments(content, contentType);
+  if (parsed == null || parsed.attachments.isEmpty) {
+    return null;
+  }
+
+  return parsed.attachments.first;
 }
 
 /// Registration request payload
@@ -433,6 +483,7 @@ class ChannelMessageRequest {
   final MessageContentType contentType;
   final int? replyToMessageId;
   final MediaAttachmentPayload? attachment;
+  final List<MediaAttachmentPayload>? attachments;
   final String? parseMode;
 
   ChannelMessageRequest({
@@ -441,6 +492,7 @@ class ChannelMessageRequest {
     this.contentType = MessageContentType.text,
     this.replyToMessageId,
     this.attachment,
+    this.attachments,
     this.parseMode,
   });
 
@@ -450,6 +502,8 @@ class ChannelMessageRequest {
     'ContentType': contentType.value,
     if (replyToMessageId != null) 'ReplyToMessageId': replyToMessageId,
     if (attachment != null) 'Attachment': attachment!.toJson(),
+    if (attachments != null)
+      'Attachments': attachments!.map((item) => item.toJson()).toList(),
     if (parseMode != null) 'ParseMode': parseMode,
   };
 
@@ -461,6 +515,9 @@ class ChannelMessageRequest {
     attachment: json['Attachment'] != null
         ? MediaAttachmentPayload.fromJson(json['Attachment'] as Map<String, dynamic>)
         : null,
+    attachments: (json['Attachments'] as List<dynamic>?)
+      ?.map((item) => MediaAttachmentPayload.fromJson(item as Map<String, dynamic>))
+      .toList(),
     parseMode: json['ParseMode'] as String?,
   );
 
@@ -754,6 +811,7 @@ class PrivateChatMessageRequest {
   final String? content;
   final MessageContentType contentType;
   final MediaAttachmentPayload? attachment;
+  final List<MediaAttachmentPayload>? attachments;
   final String? parseMode;
 
   PrivateChatMessageRequest({
@@ -761,6 +819,7 @@ class PrivateChatMessageRequest {
     this.content,
     this.contentType = MessageContentType.text,
     this.attachment,
+    this.attachments,
     this.parseMode,
   });
 
@@ -769,6 +828,8 @@ class PrivateChatMessageRequest {
     'Content': content,
     'ContentType': contentType.value,
     if (attachment != null) 'Attachment': attachment!.toJson(),
+    if (attachments != null)
+      'Attachments': attachments!.map((item) => item.toJson()).toList(),
     if (parseMode != null) 'ParseMode': parseMode,
   };
 
@@ -779,6 +840,9 @@ class PrivateChatMessageRequest {
     attachment: json['Attachment'] != null
         ? MediaAttachmentPayload.fromJson(json['Attachment'] as Map<String, dynamic>)
         : null,
+    attachments: (json['Attachments'] as List<dynamic>?)
+      ?.map((item) => MediaAttachmentPayload.fromJson(item as Map<String, dynamic>))
+      .toList(),
     parseMode: json['ParseMode'] as String?,
   );
 
@@ -951,6 +1015,9 @@ class PrivateChatHistoryItem {
 
   ParsedMediaAttachment? get attachment =>
       tryParseMediaAttachment(content, contentType);
+
+    List<ParsedMediaAttachment> get attachments =>
+      tryParseMediaAttachments(content, contentType)?.attachments ?? const <ParsedMediaAttachment>[];
 }
 
 /// Private chat history response payload
@@ -1045,6 +1112,9 @@ class ChannelHistoryItem {
 
   ParsedMediaAttachment? get attachment =>
       tryParseMediaAttachment(content, contentType);
+
+    List<ParsedMediaAttachment> get attachments =>
+      tryParseMediaAttachments(content, contentType)?.attachments ?? const <ParsedMediaAttachment>[];
 }
 
 /// Channel history response payload
@@ -1126,6 +1196,9 @@ class PrivateChatMessageEvent {
 
   ParsedMediaAttachment? get attachment =>
       tryParseMediaAttachment(content, contentType);
+
+    List<ParsedMediaAttachment> get attachments =>
+      tryParseMediaAttachments(content, contentType)?.attachments ?? const <ParsedMediaAttachment>[];
 }
 
 /// Incoming channel message event payload
@@ -1174,6 +1247,9 @@ class ChannelMessageEvent {
 
   ParsedMediaAttachment? get attachment =>
       tryParseMediaAttachment(content, contentType);
+
+    List<ParsedMediaAttachment> get attachments =>
+      tryParseMediaAttachments(content, contentType)?.attachments ?? const <ParsedMediaAttachment>[];
 }
 
 /// Message entity (stored/delivered message, not the wire-level frame)
@@ -1241,6 +1317,9 @@ class ChatMessage {
 
   ParsedMediaAttachment? get attachment =>
       tryParseMediaAttachment(content, contentType);
+
+    List<ParsedMediaAttachment> get attachments =>
+      tryParseMediaAttachments(content, contentType)?.attachments ?? const <ParsedMediaAttachment>[];
 }
 
 /// Private chat entity
@@ -1767,6 +1846,7 @@ class GroupMessageSendRequest {
   final MessageContentType contentType;
   final int? replyToMessageId;
   final MediaAttachmentPayload? attachment;
+  final List<MediaAttachmentPayload>? attachments;
   final String? parseMode;
 
   GroupMessageSendRequest({
@@ -1775,6 +1855,7 @@ class GroupMessageSendRequest {
     this.contentType = MessageContentType.text,
     this.replyToMessageId,
     this.attachment,
+    this.attachments,
     this.parseMode,
   });
 
@@ -1784,6 +1865,8 @@ class GroupMessageSendRequest {
     'ContentType': contentType.value,
     if (replyToMessageId != null) 'ReplyToMessageId': replyToMessageId,
     if (attachment != null) 'Attachment': attachment!.toJson(),
+    if (attachments != null)
+      'Attachments': attachments!.map((item) => item.toJson()).toList(),
     if (parseMode != null) 'ParseMode': parseMode,
   };
 

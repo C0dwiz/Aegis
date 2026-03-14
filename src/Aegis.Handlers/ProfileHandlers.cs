@@ -13,7 +13,9 @@ public record ProfileUpdateRequest(
     string? DisplayName = null,
     string? AvatarUrl = null,
     string? Bio = null,
-    string? Username = null
+    string? Username = null,
+    string? Location = null,
+    DateOnly? BirthDate = null
 );
 
 public record ProfileUpdateResponse(
@@ -41,6 +43,8 @@ public record ProfileData(
     IReadOnlyList<ProfileAvatarData> Avatars,
     string PresenceStatus = UserPresenceStatus.LongAgo,
     string? Bio = null,
+    string? Location = null,
+    DateOnly? BirthDate = null,
     string? Email = null,
     DateTime CreatedAt = default,
     DateTime? LastSeenAt = null
@@ -131,7 +135,9 @@ public class ProfileUpdateHandler : IMessageHandler
                 request.DisplayName,
                 request.AvatarUrl,
                 request.Bio,
-                request.Username);
+                request.Username,
+                request.Location,
+                request.BirthDate);
 
             var profileData = new ProfileData(
                 user.Id, user.Username, user.DisplayName,
@@ -140,7 +146,7 @@ public class ProfileUpdateHandler : IMessageHandler
                     .Select(a => new ProfileAvatarData(a.Id, a.AvatarUrl, a.IsPrimary, a.CreatedAt))
                     .ToList(),
                 _presenceResolver.Resolve(user.Id, user.LastSeenAt),
-                user.Bio, user.Email,
+                user.Bio, user.Location, user.BirthDate, user.Email,
                 user.CreatedAt, user.LastSeenAt);
 
             await SendResponseAsync(context, message.SequenceId, 
@@ -165,21 +171,12 @@ public class ProfileUpdateHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, ProfileUpdateResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        var msg = new Message
-        {
-            Magic = ProtocolConstants.Magic,
-            VersionMajor = ProtocolConstants.VersionMajor,
-            VersionMinor = ProtocolConstants.VersionMinor,
-            Type = MessageType.ProfileUpdateResponse,
-            SequenceId = sequenceId,
-            PayloadLength = (uint)payload.Length,
-            Payload = payload,
-            Mac = new byte[ProtocolConstants.MacSize]
-        };
-        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length + ProtocolConstants.MacSize];
-        MessageEncoder.Encode(msg, buffer);
-        await _messageSender.SendMessageAsync(context.ConnectionId, buffer);
+        await HandlerResponseSender.SendAsync(
+            _messageSender,
+            context,
+            MessageType.ProfileUpdateResponse,
+            sequenceId,
+            response);
     }
 }
 
@@ -269,7 +266,7 @@ public class ProfileGetHandler : IMessageHandler
                     .Select(a => new ProfileAvatarData(a.Id, a.AvatarUrl, a.IsPrimary, a.CreatedAt))
                     .ToList(),
                 _presenceResolver.Resolve(user.Id, user.LastSeenAt),
-                user.Bio, email,
+                user.Bio, user.Location, user.BirthDate, email,
                 user.CreatedAt, user.LastSeenAt);
 
             await SendResponseAsync(context, message.SequenceId, new ProfileGetResponse(true, Profile: profileData));
@@ -283,21 +280,12 @@ public class ProfileGetHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, ProfileGetResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
-        var msg = new Message
-        {
-            Magic = ProtocolConstants.Magic,
-            VersionMajor = ProtocolConstants.VersionMajor,
-            VersionMinor = ProtocolConstants.VersionMinor,
-            Type = MessageType.ProfileGetResponse,
-            SequenceId = sequenceId,
-            PayloadLength = (uint)payload.Length,
-            Payload = payload,
-            Mac = new byte[ProtocolConstants.MacSize]
-        };
-        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length + ProtocolConstants.MacSize];
-        MessageEncoder.Encode(msg, buffer);
-        await _messageSender.SendMessageAsync(context.ConnectionId, buffer);
+        await HandlerResponseSender.SendAsync(
+            _messageSender,
+            context,
+            MessageType.ProfileGetResponse,
+            sequenceId,
+            response);
     }
 }
 

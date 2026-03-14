@@ -341,6 +341,7 @@ public class HandlerTests
         var mockRegistrationService = new Mock<IUserRegistrationService>();
         var mockSearchService = new Mock<IUserSearchService>();
         var rateLimiter = new RateLimiter(new Aegis.Common.Configuration.RateLimitOptions());
+        var domainRules = new DomainRulesAdapter(new Aegis.DomainRules.MessageDomainRules());
 
         var registrationHandler = new RegistrationHandler(mockRegistrationService.Object, _messageSender, rateLimiter, new Mock<ILogger<RegistrationHandler>>().Object);
         var searchHandler = new UserSearchHandler(mockSearchService.Object, _sessionManager, _messageSender, rateLimiter, new Mock<ILogger<UserSearchHandler>>().Object);
@@ -349,6 +350,7 @@ public class HandlerTests
             new Mock<IChannelRepository>().Object,
             _sessionManager,
             _messageSender,
+            domainRules,
             new Mock<Microsoft.Extensions.Logging.ILogger<ChannelMessageHandler>>().Object);
 
         var router = new MessageRouter(new IMessageHandler[] { registrationHandler, searchHandler, channelHandler }, _messageSender, _logger);
@@ -416,6 +418,7 @@ public class HandlerTests
         var mockRegistrationService = new Mock<IUserRegistrationService>();
         var mockSearchService = new Mock<IUserSearchService>();
         var rateLimiter = new RateLimiter(new Aegis.Common.Configuration.RateLimitOptions());
+        var domainRules = new DomainRulesAdapter(new Aegis.DomainRules.MessageDomainRules());
 
         var registrationHandler = new RegistrationHandler(mockRegistrationService.Object, _messageSender, rateLimiter, new Mock<ILogger<RegistrationHandler>>().Object);
         var searchHandler = new UserSearchHandler(mockSearchService.Object, _sessionManager, _messageSender, rateLimiter, new Mock<ILogger<UserSearchHandler>>().Object);
@@ -424,6 +427,7 @@ public class HandlerTests
             new Mock<IChannelRepository>().Object,
             _sessionManager,
             _messageSender,
+            domainRules,
             new Mock<Microsoft.Extensions.Logging.ILogger<ChannelMessageHandler>>().Object);
         var channelCreateHandler = new ChannelCreateHandler(
             new Mock<IChannelService>().Object,
@@ -436,6 +440,7 @@ public class HandlerTests
             new Mock<IBotManagementService>().Object,
             _sessionManager,
             _messageSender,
+            domainRules,
             new Mock<Microsoft.Extensions.Logging.ILogger<PrivateChatMessageHandler>>().Object);
 
         // Act & Assert

@@ -16,6 +16,8 @@ public class User
     public string? DisplayName { get; set; }
     public string? AvatarUrl { get; set; }
     public string? Bio { get; set; }
+    public string? Location { get; set; }
+    public DateOnly? BirthDate { get; set; }
     
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

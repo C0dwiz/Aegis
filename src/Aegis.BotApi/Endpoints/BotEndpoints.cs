@@ -33,6 +33,9 @@ public static class BotEndpoints
         app.MapPost("/bot{token}/sendAudio", SendFile)
             .WithName("SendAudio");
 
+        app.MapPost("/bot{token}/sendMediaBatch", SendMediaBatch)
+            .WithName("SendMediaBatch");
+
         app.MapPost("/bot{token}/editMessageText", EditMessageText)
             .WithName("EditMessageText");
 
@@ -106,6 +109,17 @@ public static class BotEndpoints
     private static async Task<IResult> SendVoiceMessage(
         string token,
         SendVoiceMessageRequest request,
+        BotRequestMapper requestMapper,
+        IBotMessageUseCase useCase)
+    {
+        var command = requestMapper.Map(request);
+        var response = await useCase.SendMessageAsync(token, command);
+        return BotResponseMapper.ToHttpResult(response);
+    }
+
+    private static async Task<IResult> SendMediaBatch(
+        string token,
+        SendMediaBatchRequest request,
         BotRequestMapper requestMapper,
         IBotMessageUseCase useCase)
     {

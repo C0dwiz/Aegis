@@ -247,14 +247,69 @@ class AegisClient:
             "SizeBytes": len(media_bytes),
         }
 
+        return self.send_media_batch(
+            chat_type=chat_type,
+            chat_id=chat_id,
+            attachments=[attachment],
+            caption=caption,
+            reply_to_message_id=reply_to_message_id,
+        )
+
+    def send_media_batch(
+        self,
+        chat_type: str,
+        chat_id: int,
+        attachments: Iterable[dict],
+        caption: Optional[str] = None,
+        reply_to_message_id: Optional[int] = None,
+    ):
+        if not self._transport.is_connected:
+            raise NotConnectedException()
+        if not self._is_authenticated:
+            raise AuthenticationException("Client is not authenticated")
+
+        normalized_attachments = []
+        for item in attachments:
+            file_name = str(item.get("FileName") or item.get("file_name") or item.get("fileName") or "").strip()
+            mime_type = str(item.get("MimeType") or item.get("mime_type") or item.get("mimeType") or "").strip()
+            base64_data = str(item.get("Base64Data") or item.get("base64_data") or item.get("base64Data") or "").strip()
+            size_bytes = item.get("SizeBytes") or item.get("size_bytes") or item.get("sizeBytes")
+
+            if not file_name or not mime_type or not base64_data:
+                raise ValueError("Each attachment must include FileName, MimeType and Base64Data")
+
+            normalized_attachments.append(
+                {
+                    "FileName": file_name,
+                    "MimeType": mime_type,
+                    "Base64Data": base64_data,
+                    **({"SizeBytes": int(size_bytes)} if size_bytes is not None else {}),
+                }
+            )
+
+        if not normalized_attachments:
+            raise ValueError("attachments must not be empty")
+
+        if len(normalized_attachments) > 10:
+            raise ValueError("At most 10 attachments are allowed per message")
+
+        inferred_content_type = MessageContentType.FILE
+        if all(a["MimeType"].lower().startswith("image/") for a in normalized_attachments):
+            inferred_content_type = MessageContentType.IMAGE
+        elif all(a["MimeType"].lower().startswith("video/") for a in normalized_attachments):
+            inferred_content_type = MessageContentType.VIDEO
+        elif all(a["MimeType"].lower().startswith("audio/") for a in normalized_attachments):
+            inferred_content_type = MessageContentType.AUDIO
+
         if chat_type == "private":
             request = PrivateChatMessageRequest(
                 to_user_id=chat_id,
                 content=caption or "",
-                content_type=content_type,
+                content_type=inferred_content_type,
             )
             payload = json.loads(request.to_bytes().decode("utf-8"))
-            payload["Attachment"] = attachment
+            payload["Attachment"] = normalized_attachments[0]
+            payload["Attachments"] = normalized_attachments
             sequence_id = self._send_request(
                 MessageType.PRIVATE_CHAT_MESSAGE,
                 json.dumps(payload).encode("utf-8"),
@@ -267,11 +322,12 @@ class AegisClient:
             request = ChannelMessageRequest(
                 channel_id=chat_id,
                 content=caption or "",
-                content_type=content_type,
+                content_type=inferred_content_type,
                 reply_to_message_id=reply_to_message_id,
             )
             payload = json.loads(request.to_bytes().decode("utf-8"))
-            payload["Attachment"] = attachment
+            payload["Attachment"] = normalized_attachments[0]
+            payload["Attachments"] = normalized_attachments
             sequence_id = self._send_request(
                 MessageType.CHANNEL_MESSAGE,
                 json.dumps(payload).encode("utf-8"),

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 
@@ -20,6 +20,74 @@ class ChannelType:
     PUBLIC = 0
     PRIVATE = 1
     GROUP = 2
+
+
+@dataclass
+class MediaAttachment:
+    file_name: str
+    mime_type: str
+    base64_data: str
+    size_bytes: Optional[int] = None
+    text: Optional[str] = None
+
+
+def parse_media_attachments(content: str, content_type: int) -> List[MediaAttachment]:
+    if content_type not in (
+        MessageContentType.IMAGE,
+        MessageContentType.VIDEO,
+        MessageContentType.AUDIO,
+        MessageContentType.FILE,
+    ):
+        return []
+
+    try:
+        decoded = json.loads(content)
+    except Exception:
+        return []
+
+    if not isinstance(decoded, dict):
+        return []
+
+    root_text = decoded.get("Text") or decoded.get("text")
+
+    def _parse_item(item: Any) -> Optional[MediaAttachment]:
+        if not isinstance(item, dict):
+            return None
+
+        file_name = item.get("FileName") or item.get("fileName")
+        mime_type = item.get("MimeType") or item.get("mimeType")
+        base64_data = item.get("Base64Data") or item.get("base64Data")
+        if not isinstance(file_name, str) or not isinstance(mime_type, str) or not isinstance(base64_data, str):
+            return None
+
+        size_value = item.get("SizeBytes") or item.get("sizeBytes")
+        size_bytes: Optional[int]
+        if isinstance(size_value, int):
+            size_bytes = size_value
+        else:
+            try:
+                size_bytes = int(size_value) if size_value is not None else None
+            except Exception:
+                size_bytes = None
+
+        text = item.get("Text") or item.get("text") or root_text
+        return MediaAttachment(
+            file_name=file_name,
+            mime_type=mime_type,
+            base64_data=base64_data,
+            size_bytes=size_bytes,
+            text=text if isinstance(text, str) else None,
+        )
+
+    attachments_node = decoded.get("Attachments") or decoded.get("attachments")
+    if isinstance(attachments_node, list):
+        parsed = [_parse_item(item) for item in attachments_node]
+        result = [item for item in parsed if item is not None]
+        if result:
+            return result
+
+    single = _parse_item(decoded)
+    return [single] if single is not None else []
 
 
 @dataclass
@@ -327,18 +395,25 @@ class PrivateChatHistoryItem:
     created_at: str
     from_username: Optional[str] = None
     username: Optional[str] = None
+    attachment: Optional[MediaAttachment] = None
+    attachments: List[MediaAttachment] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PrivateChatHistoryItem":
+        content = data.get("Content", "")
+        content_type = data.get("ContentType", MessageContentType.TEXT)
+        attachments = parse_media_attachments(content, content_type)
         return cls(
             id=data.get("Id", 0),
             from_user_id=data.get("FromUserId", 0),
             to_user_id=data.get("ToUserId", 0),
-            content=data.get("Content", ""),
-            content_type=data.get("ContentType", MessageContentType.TEXT),
+            content=content,
+            content_type=content_type,
             created_at=data.get("CreatedAt", ""),
             from_username=data.get("FromUsername"),
             username=data.get("Username"),
+            attachment=attachments[0] if attachments else None,
+            attachments=attachments,
         )
 
 
@@ -389,18 +464,25 @@ class ChannelHistoryItem:
     created_at: str
     from_username: Optional[str] = None
     channel_name: Optional[str] = None
+    attachment: Optional[MediaAttachment] = None
+    attachments: List[MediaAttachment] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChannelHistoryItem":
+        content = data.get("Content", "")
+        content_type = data.get("ContentType", MessageContentType.TEXT)
+        attachments = parse_media_attachments(content, content_type)
         return cls(
             id=data.get("Id", 0),
             channel_id=data.get("ChannelId", 0),
             from_user_id=data.get("FromUserId", 0),
-            content=data.get("Content", ""),
-            content_type=data.get("ContentType", MessageContentType.TEXT),
+            content=content,
+            content_type=content_type,
             created_at=data.get("CreatedAt", ""),
             from_username=data.get("FromUsername"),
             channel_name=data.get("ChannelName"),
+            attachment=attachments[0] if attachments else None,
+            attachments=attachments,
         )
 
 
@@ -437,19 +519,26 @@ class PrivateChatMessageEvent:
     created_at: str
     from_username: Optional[str] = None
     username: Optional[str] = None
+    attachment: Optional[MediaAttachment] = None
+    attachments: List[MediaAttachment] = field(default_factory=list)
 
     @classmethod
     def from_bytes(cls, data: bytes) -> "PrivateChatMessageEvent":
         json_data = json.loads(data.decode("utf-8"))
+        content = json_data.get("Content", "")
+        content_type = json_data.get("ContentType", MessageContentType.TEXT)
+        attachments = parse_media_attachments(content, content_type)
         return cls(
             id=json_data.get("Id", 0),
             from_user_id=json_data.get("FromUserId", 0),
             to_user_id=json_data.get("ToUserId", 0),
-            content=json_data.get("Content", ""),
-            content_type=json_data.get("ContentType", MessageContentType.TEXT),
+            content=content,
+            content_type=content_type,
             created_at=json_data.get("CreatedAt", ""),
             from_username=json_data.get("FromUsername"),
             username=json_data.get("Username"),
+            attachment=attachments[0] if attachments else None,
+            attachments=attachments,
         )
 
 
@@ -463,17 +552,24 @@ class ChannelMessageEvent:
     created_at: str
     from_username: Optional[str] = None
     channel_name: Optional[str] = None
+    attachment: Optional[MediaAttachment] = None
+    attachments: List[MediaAttachment] = field(default_factory=list)
 
     @classmethod
     def from_bytes(cls, data: bytes) -> "ChannelMessageEvent":
         json_data = json.loads(data.decode("utf-8"))
+        content = json_data.get("Content", "")
+        content_type = json_data.get("ContentType", MessageContentType.TEXT)
+        attachments = parse_media_attachments(content, content_type)
         return cls(
             id=json_data.get("Id", 0),
             channel_id=json_data.get("ChannelId", 0),
             from_user_id=json_data.get("FromUserId", 0),
-            content=json_data.get("Content", ""),
-            content_type=json_data.get("ContentType", MessageContentType.TEXT),
+            content=content,
+            content_type=content_type,
             created_at=json_data.get("CreatedAt", ""),
             from_username=json_data.get("FromUsername"),
             channel_name=json_data.get("ChannelName"),
+            attachment=attachments[0] if attachments else None,
+            attachments=attachments,
         )

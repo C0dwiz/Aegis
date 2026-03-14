@@ -1,4 +1,5 @@
 using Aegis.Protocol;
+using Aegis.DomainRules;
 using Aegis.Transport;
 using Aegis.Common.Logging;
 using Aegis.Common;
@@ -9,6 +10,46 @@ namespace Aegis.Handlers;
 
 public class MessageRouter
 {
+    private static readonly IReadOnlyDictionary<Aegis.Protocol.MessageType, Func<IServiceProvider, IMessageHandler>> HandlerResolvers
+        = new Dictionary<Aegis.Protocol.MessageType, Func<IServiceProvider, IMessageHandler>>
+    {
+        [Aegis.Protocol.MessageType.Handshake] = sp => sp.GetRequiredService<HandshakeHandler>(),
+        [Aegis.Protocol.MessageType.Auth] = sp => sp.GetRequiredService<AuthHandler>(),
+        [Aegis.Protocol.MessageType.Ping] = sp => sp.GetRequiredService<PingHandler>(),
+        [Aegis.Protocol.MessageType.Message] = sp => sp.GetRequiredService<MessageHandler>(),
+        [Aegis.Protocol.MessageType.Ack] = sp => sp.GetRequiredService<AckHandler>(),
+        [Aegis.Protocol.MessageType.Nack] = sp => sp.GetRequiredService<NackHandler>(),
+        [Aegis.Protocol.MessageType.RetransmitRequest] = sp => sp.GetRequiredService<RetransmitRequestHandler>(),
+        [Aegis.Protocol.MessageType.Register] = sp => sp.GetRequiredService<RegistrationHandler>(),
+        [Aegis.Protocol.MessageType.UserPresence] = sp => sp.GetRequiredService<UserPresenceHandler>(),
+        [Aegis.Protocol.MessageType.UserSearch] = sp => sp.GetRequiredService<UserSearchHandler>(),
+        [Aegis.Protocol.MessageType.ChannelMessage] = sp => sp.GetRequiredService<ChannelMessageHandler>(),
+        [Aegis.Protocol.MessageType.ChannelCreate] = sp => sp.GetRequiredService<ChannelCreateHandler>(),
+        [Aegis.Protocol.MessageType.ChannelJoin] = sp => sp.GetRequiredService<ChannelJoinHandler>(),
+        [Aegis.Protocol.MessageType.PrivateChatMessage] = sp => sp.GetRequiredService<PrivateChatMessageHandler>(),
+        [Aegis.Protocol.MessageType.ChatListRequest] = sp => sp.GetRequiredService<ChatListHandler>(),
+        [Aegis.Protocol.MessageType.PrivateChatHistoryRequest] = sp => sp.GetRequiredService<PrivateChatHistoryHandler>(),
+        [Aegis.Protocol.MessageType.ChannelHistoryRequest] = sp => sp.GetRequiredService<ChannelHistoryHandler>(),
+        [Aegis.Protocol.MessageType.ProfileUpdate] = sp => sp.GetRequiredService<ProfileUpdateHandler>(),
+        [Aegis.Protocol.MessageType.ProfileGet] = sp => sp.GetRequiredService<ProfileGetHandler>(),
+        [Aegis.Protocol.MessageType.ProfileAvatarAdd] = sp => sp.GetRequiredService<ProfileAvatarAddHandler>(),
+        [Aegis.Protocol.MessageType.ProfileAvatarList] = sp => sp.GetRequiredService<ProfileAvatarListHandler>(),
+        [Aegis.Protocol.MessageType.ProfileAvatarDelete] = sp => sp.GetRequiredService<ProfileAvatarDeleteHandler>(),
+        [Aegis.Protocol.MessageType.ProfileAvatarSetPrimary] = sp => sp.GetRequiredService<ProfileAvatarSetPrimaryHandler>(),
+        [Aegis.Protocol.MessageType.ChannelLinkUpdate] = sp => sp.GetRequiredService<ChannelLinkUpdateHandler>(),
+        [Aegis.Protocol.MessageType.ChannelLinkGet] = sp => sp.GetRequiredService<ChannelLinkGetHandler>(),
+        [Aegis.Protocol.MessageType.ChannelResolve] = sp => sp.GetRequiredService<ChannelResolveHandler>(),
+        [Aegis.Protocol.MessageType.ChannelJoinByLink] = sp => sp.GetRequiredService<ChannelJoinByLinkHandler>(),
+        [Aegis.Protocol.MessageType.MessageEdit] = sp => sp.GetRequiredService<MessageEditHandler>(),
+        [Aegis.Protocol.MessageType.MessageDelete] = sp => sp.GetRequiredService<MessageDeleteHandler>(),
+        [Aegis.Protocol.MessageType.ChannelEdit] = sp => sp.GetRequiredService<ChannelEditHandler>(),
+        [Aegis.Protocol.MessageType.GroupCreate] = sp => sp.GetRequiredService<GroupCreateHandler>(),
+        [Aegis.Protocol.MessageType.GroupEdit] = sp => sp.GetRequiredService<GroupEditHandler>(),
+        [Aegis.Protocol.MessageType.GroupMessageSend] = sp => sp.GetRequiredService<GroupMessageSendHandler>(),
+        [Aegis.Protocol.MessageType.MemberRoleUpdate] = sp => sp.GetRequiredService<MemberRoleUpdateHandler>(),
+        [Aegis.Protocol.MessageType.MemberPermissionUpdate] = sp => sp.GetRequiredService<MemberPermissionUpdateHandler>()
+    };
+
     private readonly IServiceProvider? _serviceProvider;
     private readonly Dictionary<Aegis.Protocol.MessageType, IMessageHandler>? _handlers;
     private readonly ILogger _logger;
@@ -48,6 +89,11 @@ public class MessageRouter
 
     private IMessageHandler? ResolveHandler(Aegis.Protocol.MessageType type)
     {
+        if (!ProtocolSafetyFacade.IsRoutableInboundType((ushort)type))
+        {
+            return null;
+        }
+
         if (_handlers != null && _handlers.TryGetValue(type, out var directHandler))
         {
             return directHandler;
@@ -58,45 +104,12 @@ public class MessageRouter
             return null;
         }
 
-        return type switch
+        if (HandlerResolvers.TryGetValue(type, out var resolver))
         {
-            Aegis.Protocol.MessageType.Handshake => _serviceProvider.GetRequiredService<HandshakeHandler>(),
-            Aegis.Protocol.MessageType.Auth => _serviceProvider.GetRequiredService<AuthHandler>(),
-            Aegis.Protocol.MessageType.Ping => _serviceProvider.GetRequiredService<PingHandler>(),
-            Aegis.Protocol.MessageType.Message => _serviceProvider.GetRequiredService<MessageHandler>(),
-            Aegis.Protocol.MessageType.Ack => _serviceProvider.GetRequiredService<AckHandler>(),
-            Aegis.Protocol.MessageType.Nack => _serviceProvider.GetRequiredService<NackHandler>(),
-            Aegis.Protocol.MessageType.RetransmitRequest => _serviceProvider.GetRequiredService<RetransmitRequestHandler>(),
-            Aegis.Protocol.MessageType.Register => _serviceProvider.GetRequiredService<RegistrationHandler>(),
-            Aegis.Protocol.MessageType.UserPresence => _serviceProvider.GetRequiredService<UserPresenceHandler>(),
-            Aegis.Protocol.MessageType.UserSearch => _serviceProvider.GetRequiredService<UserSearchHandler>(),
-            Aegis.Protocol.MessageType.ChannelMessage => _serviceProvider.GetRequiredService<ChannelMessageHandler>(),
-            Aegis.Protocol.MessageType.ChannelCreate => _serviceProvider.GetRequiredService<ChannelCreateHandler>(),
-            Aegis.Protocol.MessageType.ChannelJoin => _serviceProvider.GetRequiredService<ChannelJoinHandler>(),
-            Aegis.Protocol.MessageType.PrivateChatMessage => _serviceProvider.GetRequiredService<PrivateChatMessageHandler>(),
-            Aegis.Protocol.MessageType.ChatListRequest => _serviceProvider.GetRequiredService<ChatListHandler>(),
-            Aegis.Protocol.MessageType.PrivateChatHistoryRequest => _serviceProvider.GetRequiredService<PrivateChatHistoryHandler>(),
-            Aegis.Protocol.MessageType.ChannelHistoryRequest => _serviceProvider.GetRequiredService<ChannelHistoryHandler>(),
-            Aegis.Protocol.MessageType.ProfileUpdate => _serviceProvider.GetRequiredService<ProfileUpdateHandler>(),
-            Aegis.Protocol.MessageType.ProfileGet => _serviceProvider.GetRequiredService<ProfileGetHandler>(),
-            Aegis.Protocol.MessageType.ProfileAvatarAdd => _serviceProvider.GetRequiredService<ProfileAvatarAddHandler>(),
-            Aegis.Protocol.MessageType.ProfileAvatarList => _serviceProvider.GetRequiredService<ProfileAvatarListHandler>(),
-            Aegis.Protocol.MessageType.ProfileAvatarDelete => _serviceProvider.GetRequiredService<ProfileAvatarDeleteHandler>(),
-            Aegis.Protocol.MessageType.ProfileAvatarSetPrimary => _serviceProvider.GetRequiredService<ProfileAvatarSetPrimaryHandler>(),
-            Aegis.Protocol.MessageType.ChannelLinkUpdate => _serviceProvider.GetRequiredService<ChannelLinkUpdateHandler>(),
-            Aegis.Protocol.MessageType.ChannelLinkGet => _serviceProvider.GetRequiredService<ChannelLinkGetHandler>(),
-            Aegis.Protocol.MessageType.ChannelResolve => _serviceProvider.GetRequiredService<ChannelResolveHandler>(),
-            Aegis.Protocol.MessageType.ChannelJoinByLink => _serviceProvider.GetRequiredService<ChannelJoinByLinkHandler>(),
-            Aegis.Protocol.MessageType.MessageEdit => _serviceProvider.GetRequiredService<MessageEditHandler>(),
-            Aegis.Protocol.MessageType.MessageDelete => _serviceProvider.GetRequiredService<MessageDeleteHandler>(),
-            Aegis.Protocol.MessageType.ChannelEdit => _serviceProvider.GetRequiredService<ChannelEditHandler>(),
-            Aegis.Protocol.MessageType.GroupCreate => _serviceProvider.GetRequiredService<GroupCreateHandler>(),
-            Aegis.Protocol.MessageType.GroupEdit => _serviceProvider.GetRequiredService<GroupEditHandler>(),
-            Aegis.Protocol.MessageType.GroupMessageSend => _serviceProvider.GetRequiredService<GroupMessageSendHandler>(),
-            Aegis.Protocol.MessageType.MemberRoleUpdate => _serviceProvider.GetRequiredService<MemberRoleUpdateHandler>(),
-            Aegis.Protocol.MessageType.MemberPermissionUpdate => _serviceProvider.GetRequiredService<MemberPermissionUpdateHandler>(),
-            _ => null
-        };
+            return resolver(_serviceProvider);
+        }
+
+        return null;
     }
     
     private async Task SendErrorAsync(ConnectionContext context, ulong sequenceId, string error)

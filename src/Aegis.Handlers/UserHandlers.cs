@@ -97,13 +97,13 @@ public class RegistrationHandler : IMessageHandler
     
     private readonly IUserRegistrationService _registrationService;
     private readonly IMessageSender _messageSender;
-    private readonly RateLimiter _rateLimiter;
+    private readonly IRateLimiter _rateLimiter;
     private readonly ILogger<RegistrationHandler> _logger;
 
     public RegistrationHandler(
         IUserRegistrationService registrationService,
         IMessageSender messageSender,
-        RateLimiter rateLimiter,
+        IRateLimiter rateLimiter,
         ILogger<RegistrationHandler> logger)
     {
         _registrationService = registrationService;
@@ -241,7 +241,7 @@ public class UserSearchHandler : IMessageHandler
     private readonly IUserSearchService _searchService;
     private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;
-    private readonly RateLimiter _rateLimiter;
+    private readonly IRateLimiter _rateLimiter;
     private readonly ILogger<UserSearchHandler> _logger;
     private readonly UserPresenceResolver _presenceResolver;
 
@@ -249,7 +249,7 @@ public class UserSearchHandler : IMessageHandler
         IUserSearchService searchService,
         SessionManager sessionManager,
         IMessageSender messageSender,
-        RateLimiter rateLimiter,
+        IRateLimiter rateLimiter,
         ILogger<UserSearchHandler> logger,
         UserPresenceResolver presenceResolver)
     {
@@ -265,7 +265,7 @@ public class UserSearchHandler : IMessageHandler
         IUserSearchService searchService,
         SessionManager sessionManager,
         IMessageSender messageSender,
-        RateLimiter rateLimiter,
+        IRateLimiter rateLimiter,
         ILogger<UserSearchHandler> logger)
         : this(searchService, sessionManager, messageSender, rateLimiter, logger, new UserPresenceResolver(sessionManager))
     {

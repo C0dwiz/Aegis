@@ -375,6 +375,8 @@ public class UserSearchService : IUserSearchService
             DisplayName = source.DisplayName,
             AvatarUrl = source.AvatarUrl,
             Bio = source.Bio,
+            Location = source.Location,
+            BirthDate = source.BirthDate,
             IsActive = source.IsActive,
             CreatedAt = source.CreatedAt,
             UpdatedAt = source.UpdatedAt,
@@ -389,7 +391,7 @@ public class UserSearchService : IUserSearchService
 public interface IUserProfileService
 {
     Task<User?> GetProfileAsync(ulong userId);
-    Task<User> UpdateProfileAsync(ulong userId, string? displayName, string? avatarUrl, string? bio, string? username);
+    Task<User> UpdateProfileAsync(ulong userId, string? displayName, string? avatarUrl, string? bio, string? username, string? location, DateOnly? birthDate);
     Task<UserAvatar> AddAvatarAsync(ulong userId, string avatarUrl, bool makePrimary = false);
     Task<IReadOnlyList<UserAvatar>> GetAvatarsAsync(ulong userId);
     Task<bool> DeleteAvatarAsync(ulong userId, ulong avatarId);
@@ -492,7 +494,7 @@ public class UserProfileService : IUserProfileService
         return user;
     }
 
-    public async Task<User> UpdateProfileAsync(ulong userId, string? displayName, string? avatarUrl, string? bio, string? username)
+    public async Task<User> UpdateProfileAsync(ulong userId, string? displayName, string? avatarUrl, string? bio, string? username, string? location, DateOnly? birthDate)
     {
         var user = await _userRepository.GetByIdAsync(userId)
             ?? throw new InvalidOperationException("User not found");
@@ -538,6 +540,14 @@ public class UserProfileService : IUserProfileService
             }
         }
         if (bio != null) user.Bio = string.IsNullOrWhiteSpace(bio) ? null : bio.Trim();
+        if (location != null) user.Location = string.IsNullOrWhiteSpace(location) ? null : location.Trim();
+        if (birthDate != null)
+        {
+            if (birthDate.Value > DateOnly.FromDateTime(DateTime.UtcNow))
+                throw new ArgumentException("Birth date cannot be in the future");
+
+            user.BirthDate = birthDate.Value;
+        }
         user.UpdatedAt = DateTime.UtcNow;
 
         var updated = await _userRepository.UpdateAsync(user);

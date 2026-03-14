@@ -16,6 +16,8 @@ using Aegis.Transport;
 using Aegis.Data;
 using Aegis.Data.Repositories;
 using Aegis.Data.Services;
+using Aegis.DomainRules;
+using Aegis.Server.Services;
 
 namespace Aegis.Server;
 
@@ -44,6 +46,7 @@ public static class Program
     private static async Task InitializeDatabaseAsync(IHost host)
     {
         using var scope = host.Services.CreateScope();
+        var hostEnvironment = scope.ServiceProvider.GetRequiredService<IHostEnvironment>();
         var logger = scope.ServiceProvider
             .GetRequiredService<ILoggerFactory>()
             .CreateLogger("Aegis.Server.DatabaseInitialization");
@@ -62,8 +65,16 @@ public static class Program
         }
         catch (Exception ex)
         {
+            if (hostEnvironment.IsProduction())
+            {
+                logger.LogError(ex,
+                    "Database migration failed in production for provider {Provider}. Startup aborted.",
+                    databaseOptions.Provider);
+                throw;
+            }
+
             logger.LogWarning(ex,
-                "Database migration failed for provider {Provider}. Falling back to EnsureCreated().",
+                "Database migration failed for provider {Provider}. Falling back to EnsureCreated() in non-production environment.",
                 databaseOptions.Provider);
             await dbContext.Database.EnsureCreatedAsync();
         }
@@ -149,6 +160,8 @@ public static class Program
                 services.AddScoped<IGroupService, GroupService>();
                 services.AddScoped<IMessageService, MessageService>();
                 services.AddScoped<IBotManagementService, BotManagementService>();
+                services.AddSingleton<IMessageDomainRules, MessageDomainRules>();
+                services.AddSingleton<DomainRulesAdapter>();
 
                 // Register core services (singletons - no DB dependencies)
                 services.AddSingleton<Aegis.Common.Logging.ILogger>(_ =>
@@ -163,8 +176,13 @@ public static class Program
                 services.AddSingleton<IAntiSpamClient, AntiSpamClient>();
                 services.AddSingleton<AcknowledgmentManager>();
                 services.AddSingleton<MessageDeduplicator>();
-                services.AddSingleton<RateLimiter>(sp => 
-                    new RateLimiter(context.Configuration.GetSection(RateLimitOptions.SectionName).Get<RateLimitOptions>() ?? new()));
+                services.AddSingleton<IRateLimiter>(sp =>
+                {
+                    var options = context.Configuration.GetSection(RateLimitOptions.SectionName).Get<RateLimitOptions>() ?? new();
+                    var redis = context.Configuration["Redis:ConnectionString"];
+                    var logger = sp.GetRequiredService<ILogger<RedisRateLimiter>>();
+                    return new RedisRateLimiter(options, redis, logger);
+                });
                 services.AddSingleton<HealthCheckService>();
                 services.AddSingleton<GracefulShutdownManager>();
                 services.AddSingleton<IMessageSender, ServerMessageSender>();
@@ -182,7 +200,7 @@ public static class Program
                         options.PartialFrameTimeoutMs,
                         options.MaxIncompleteFrameDrops,
                         options.EnableTransportMasking ? options.TransportMaskingKey : null,
-                        sp.GetRequiredService<RateLimiter>(),
+                        sp.GetRequiredService<IRateLimiter>(),
                         sp.GetRequiredService<Aegis.Common.Logging.ILogger>());
                 });
 
@@ -261,7 +279,7 @@ public class AegisMessengerService : BackgroundService
     private readonly TcpServer _server;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly Aegis.Crypto.ICryptoProvider _crypto;
-    private readonly RateLimiter _rateLimiter;
+    private readonly IRateLimiter _rateLimiter;
     private readonly SessionManager _sessionManager;
     private readonly MessageDeduplicator _messageDeduplicator;
     private readonly HealthCheckService _healthCheckService;
@@ -273,7 +291,7 @@ public class AegisMessengerService : BackgroundService
         TcpServer server,
         IServiceScopeFactory scopeFactory,
         Aegis.Crypto.ICryptoProvider crypto,
-        RateLimiter rateLimiter,
+        IRateLimiter rateLimiter,
         SessionManager sessionManager,
         MessageDeduplicator messageDeduplicator,
         HealthCheckService healthCheckService,
@@ -325,6 +343,11 @@ public class AegisMessengerService : BackgroundService
     private void OnClientConnected(ConnectionContext context)
     {
         _sessionManager.CreateSession(context.ConnectionId);
+        var ipAddress = (context.Socket.RemoteEndPoint as System.Net.IPEndPoint)?.Address.ToString();
+        if (!string.IsNullOrWhiteSpace(ipAddress))
+        {
+            _rateLimiter.RegisterConnection(context.ConnectionId, ipAddress);
+        }
         _healthCheckService.RecordConnectionAccepted();
         _logger.LogInformation("Client {ConnectionId} connected from {RemoteEndPoint}", 
             context.ConnectionId, context.Socket.RemoteEndPoint);

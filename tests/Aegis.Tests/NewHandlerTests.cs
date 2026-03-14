@@ -14,6 +14,7 @@ using System.Text.Json;
 using Xunit;
 using Microsoft.EntityFrameworkCore.InMemory;
 using System.Net.Sockets;
+using System.Linq;
 
 namespace Aegis.Tests;
 
@@ -66,10 +67,11 @@ public class NewHandlerTests : IDisposable
         _mockChannelLogger = new Mock<ILogger<ChannelMessageHandler>>();
         _mockChannelCreateLogger = new Mock<ILogger<ChannelCreateHandler>>();
         _mockPrivateChatLogger = new Mock<ILogger<PrivateChatMessageHandler>>();
+        var domainRules = new DomainRulesAdapter(new Aegis.DomainRules.MessageDomainRules());
 
         _registrationHandler = new RegistrationHandler(_mockRegistrationService.Object, _mockMessageSender.Object, _rateLimiter, _mockRegistrationLogger.Object);
         _searchHandler = new UserSearchHandler(_mockSearchService.Object, _sessionManager, _mockMessageSender.Object, _rateLimiter, _mockSearchLogger.Object);
-        _channelMessageHandler = new ChannelMessageHandler(_mockMessageService.Object, _mockChannelRepository.Object, _sessionManager, _mockMessageSender.Object, _mockChannelLogger.Object);
+        _channelMessageHandler = new ChannelMessageHandler(_mockMessageService.Object, _mockChannelRepository.Object, _sessionManager, _mockMessageSender.Object, domainRules, _mockChannelLogger.Object);
         _channelCreateHandler = new ChannelCreateHandler(_mockChannelService.Object, _sessionManager, _mockMessageSender.Object, _mockChannelCreateLogger.Object);
         _privateChatMessageHandler = new PrivateChatMessageHandler(
             _mockMessageService.Object,
@@ -77,6 +79,7 @@ public class NewHandlerTests : IDisposable
             _mockBotManagementService.Object,
             _sessionManager,
             _mockMessageSender.Object,
+            domainRules,
             _mockPrivateChatLogger.Object);
     }
 
@@ -214,6 +217,121 @@ public class NewHandlerTests : IDisposable
 
         // Assert - no service calls should be made since there's no session
         _mockMessageService.Verify(x => x.SendChannelMessageAsync(It.IsAny<ulong>(), It.IsAny<ulong>(), It.IsAny<string>(), It.IsAny<MessageContentType>(), It.IsAny<ulong?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ChannelMessageHandler_HandleAsync_ShouldSupportMixedAttachmentsUpToTen()
+    {
+        using var mockSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        var context = new ConnectionContext(mockSocket, 22347ul);
+
+        _sessionManager.CreateSession(context.ConnectionId);
+        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32], new byte[32]);
+        _sessionManager.AuthenticateSession(context.ConnectionId, 1001, "sender");
+
+        var attachments = new List<MediaAttachmentPayload>
+        {
+            new("photo1.jpg", "image/jpeg", Convert.ToBase64String(new byte[] { 1, 2, 3 }), 3),
+            new("voice1.ogg", "audio/ogg", Convert.ToBase64String(new byte[] { 4, 5, 6, 7 }), 4),
+            new("archive.zip", "application/zip", Convert.ToBase64String(new byte[] { 8, 9, 10, 11, 12 }), 5)
+        };
+
+        var request = new ChannelMessageRequest(
+            ChannelId: 11,
+            Content: "media batch",
+            ContentType: MessageContentType.Text,
+            ReplyToMessageId: null,
+            Attachment: null,
+            Attachments: attachments,
+            ParseMode: null);
+
+        var payload = JsonSerializer.SerializeToUtf8Bytes(request);
+        var message = new Aegis.Protocol.Message
+        {
+            Type = MessageType.ChannelMessage,
+            SequenceId = 5,
+            Payload = payload
+        };
+
+        _mockMessageService
+            .Setup(x => x.SendChannelMessageAsync(
+                11,
+                1001,
+                It.Is<string>(s => s.Contains("\"media-batch\"") && s.Contains("\"Attachments\"")),
+                MessageContentType.File,
+                null))
+            .ReturnsAsync(new ChannelMessage
+            {
+                Id = 700,
+                ChannelId = 11,
+                FromUserId = 1001,
+                Content = "stored",
+                ContentType = MessageContentType.File,
+                CreatedAt = DateTime.UtcNow
+            });
+
+        _mockChannelRepository
+            .Setup(x => x.GetByIdAsync(11))
+            .ReturnsAsync(new Channel
+            {
+                Id = 11,
+                Name = "chan",
+                Type = ChannelType.Public,
+                CreatedByUserId = 1001
+            });
+
+        _mockChannelRepository
+            .Setup(x => x.GetChannelMembersAsync(11))
+            .ReturnsAsync(Array.Empty<ChannelMember>());
+
+        await _channelMessageHandler.HandleAsync(context, message);
+
+        _mockMessageService.VerifyAll();
+    }
+
+    [Fact]
+    public async Task PrivateChatMessageHandler_HandleAsync_ShouldRejectMoreThanTenAttachments()
+    {
+        using var mockSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        var context = new ConnectionContext(mockSocket, 32349ul);
+
+        _sessionManager.CreateSession(context.ConnectionId);
+        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32], new byte[32]);
+        _sessionManager.AuthenticateSession(context.ConnectionId, 42, "sender");
+
+        var attachments = Enumerable.Range(1, 11)
+            .Select(i => new MediaAttachmentPayload(
+                $"file{i}.bin",
+                "application/octet-stream",
+                Convert.ToBase64String(new byte[] { (byte)i, (byte)(i + 1), (byte)(i + 2) }),
+                3))
+            .ToList();
+
+        var request = new PrivateChatMessageRequest(
+            ToUserId: 99,
+            Content: "too many",
+            ContentType: MessageContentType.Text,
+            Attachment: null,
+            Attachments: attachments,
+            ParseMode: null);
+
+        var payload = JsonSerializer.SerializeToUtf8Bytes(request);
+        var message = new Aegis.Protocol.Message
+        {
+            Type = MessageType.PrivateChatMessage,
+            SequenceId = 7,
+            Payload = payload
+        };
+
+        _mockSearchService
+            .Setup(x => x.FindUserByIdAsync(99))
+            .ReturnsAsync(new User { Id = 99, Username = "peer", Email = "peer@example.com", PublicKey = "k", PasswordHash = "h" });
+
+        await _privateChatMessageHandler.HandleAsync(context, message);
+
+        _mockMessageService.Verify(
+            x => x.SendPrivateMessageAsync(It.IsAny<ulong>(), It.IsAny<ulong>(), It.IsAny<string>(), It.IsAny<MessageContentType>()),
+            Times.Never);
     }
 
     [Fact]

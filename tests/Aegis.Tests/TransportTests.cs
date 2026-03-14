@@ -229,6 +229,68 @@ public class TransportTests
         }
     }
 
+    [Fact]
+    public async Task TcpServer_ShouldProcessBurstOfFramesWithoutDropping()
+    {
+        using var cts = new CancellationTokenSource(TestTimeoutMs);
+        var port = GetFreeTcpPort();
+        var server = new TcpServer(port, 100, 1024, false, 300, rateLimiter: null, logger: _logger);
+
+        var expectedCount = 120;
+        var receivedCount = 0;
+        var completedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        server.OnMessageReceived += (ctx, data) =>
+        {
+            var current = Interlocked.Increment(ref receivedCount);
+            if (current >= expectedCount)
+            {
+                completedTcs.TrySetResult(true);
+            }
+
+            return Task.CompletedTask;
+        };
+
+        _ = Task.Run(() => server.StartAsync(port), cts.Token);
+        await Task.Delay(100, cts.Token);
+
+        try
+        {
+            using var client = new TcpClient();
+            await ConnectWithRetryAsync(client, IPAddress.Loopback, port, cts.Token);
+
+            var stream = client.GetStream();
+            for (var i = 0; i < expectedCount; i++)
+            {
+                var message = new Message
+                {
+                    Magic = ProtocolConstants.Magic,
+                    VersionMajor = ProtocolConstants.VersionMajor,
+                    VersionMinor = ProtocolConstants.VersionMinor,
+                    Type = MessageType.Ping,
+                    SequenceId = (ulong)(1000 + i),
+                    Payload = new byte[] { (byte)(i % 256), 1, 2, 3 },
+                    PayloadLength = 4,
+                    Mac = new byte[ProtocolConstants.MacSize]
+                };
+
+                var frame = new byte[Message.TotalSize(message)];
+                MessageEncoder.Encode(message, frame);
+                await stream.WriteAsync(frame, cts.Token);
+            }
+
+            await stream.FlushAsync(cts.Token);
+            await completedTcs.Task.WaitAsync(TimeSpan.FromMilliseconds(2500), cts.Token);
+
+            Assert.Equal(expectedCount, Volatile.Read(ref receivedCount));
+        }
+        finally
+        {
+            await server.StopAsync();
+            cts.Cancel();
+        }
+    }
+
     private static async Task ConnectWithRetryAsync(TcpClient client, IPAddress address, int port, CancellationToken cancellationToken)
     {
         Exception? lastError = null;

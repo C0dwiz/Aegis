@@ -70,6 +70,7 @@ public class AntiSpamClient : IAntiSpamClient, IDisposable
     private readonly double _learningRate = 0.06;
     private readonly double _spamThreshold = 0.83;
     private readonly int _autoPromoteTokenHits = 4;
+    private readonly bool _enableOnlineLearning;
 
     private readonly string _lexiconFilePath;
     private readonly string _modelFilePath;
@@ -78,11 +79,12 @@ public class AntiSpamClient : IAntiSpamClient, IDisposable
     private readonly Timer _flushLexiconTimer;
     private readonly Timer _saveModelTimer;
     
-    public AntiSpamClient(string serviceUrl = "http://localhost:8080")
+    public AntiSpamClient(string serviceUrl = "http://localhost:8080", bool enableOnlineLearning = false)
     {
         _connectionState = new ConcurrentDictionary<ulong, ConnectionRateState>();
         _candidateTokenHits = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         _lexicon = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _enableOnlineLearning = enableOnlineLearning;
         _weights = Vector<double>.Build.DenseOfArray(new[]
         {
             -2.1, // bias
@@ -120,27 +122,29 @@ public class AntiSpamClient : IAntiSpamClient, IDisposable
 
             var sample = ExtractFeatures(message);
             var analysis = Analyze(sample);
-            UpdateOnlineModel(sample);
-            UpdateDynamicLexicon(sample);
+
+            if (_enableOnlineLearning)
+            {
+                UpdateOnlineModel(sample);
+                UpdateDynamicLexicon(sample);
+            }
+
             UpdateConnectionStats(connectionId);
 
             var allowed = analysis.Score < _spamThreshold;
             return await Task.FromResult(allowed);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return await Task.FromResult(true);
+            Console.Error.WriteLine($"AntiSpam check failed for connection {connectionId}: {ex.Message}");
+            return await Task.FromResult(false);
         }
     }
 
     private AntiSpamResponse Analyze(FeatureBundle bundle)
     {
-        double probability;
-
-        lock (_modelSync)
-        {
-            probability = Sigmoid(_weights.DotProduct(bundle.Features));
-        }
+        var weightsSnapshot = _weights;
+        var probability = Sigmoid(weightsSnapshot.DotProduct(bundle.Features));
 
         return new AntiSpamResponse
         {
@@ -553,7 +557,10 @@ public class AntiSpamClient : IAntiSpamClient, IDisposable
             var snapshot = JsonSerializer.Deserialize<ModelSnapshot>(json);
             if (snapshot?.Weights is { Length: FeatureCount })
             {
-                _weights = Vector<double>.Build.DenseOfArray(snapshot.Weights);
+                lock (_modelSync)
+                {
+                    _weights = Vector<double>.Build.DenseOfArray(snapshot.Weights);
+                }
             }
         }
         catch

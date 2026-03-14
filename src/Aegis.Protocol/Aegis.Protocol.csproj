@@ -8,5 +8,6 @@
   
   <ItemGroup>
     <ProjectReference Include="..\Aegis.Common\Aegis.Common.csproj" />
+    <ProjectReference Include="..\Aegis.DomainRules\Aegis.DomainRules.fsproj" />
   </ItemGroup>
 </Project>

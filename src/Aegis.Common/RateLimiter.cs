@@ -8,10 +8,11 @@ namespace Aegis.Common;
 /// <summary>
 /// Rate limiter for protecting against spam and DoS attacks
 /// </summary>
-public class RateLimiter
+public class RateLimiter : IRateLimiter
 {
     private readonly ConcurrentDictionary<string, ConnectionRateLimit> _ipRateLimits;
     private readonly ConcurrentDictionary<ulong, MessageRateLimit> _connectionRateLimits;
+    private readonly ConcurrentDictionary<ulong, string> _connectionIpMap;
     private readonly RateLimitOptions _options;
     private readonly ILogger _logger;
     private Timer? _cleanupTimer;
@@ -20,6 +21,7 @@ public class RateLimiter
     {
         _ipRateLimits = new ConcurrentDictionary<string, ConnectionRateLimit>();
         _connectionRateLimits = new ConcurrentDictionary<ulong, MessageRateLimit>();
+        _connectionIpMap = new ConcurrentDictionary<ulong, string>();
         _options = options;
         _logger = logger ?? new NullLogger();
 
@@ -32,26 +34,37 @@ public class RateLimiter
     /// </summary>
     public bool CanConnect(string ipAddress)
     {
-        var limit = _ipRateLimits.AddOrUpdate(ipAddress,
-            _ => new ConnectionRateLimit(),
-            (_, existing) =>
-            {
-                // Reset if older than 1 minute
-                if (DateTime.UtcNow - existing.LastReset > TimeSpan.FromMinutes(1))
-                {
-                    return new ConnectionRateLimit();
-                }
-                return existing;
-            });
+        var limit = _ipRateLimits.GetOrAdd(ipAddress, _ => new ConnectionRateLimit());
+        var now = DateTime.UtcNow;
 
-        if (limit.ConnectionCount >= _options.MaxConnectionsPerIP)
+        lock (limit.Sync)
         {
-            _logger.Warning($"IP {ipAddress} exceeded max connections ({_options.MaxConnectionsPerIP})");
-            return false;
+            if (now - limit.LastReset > TimeSpan.FromMinutes(1))
+            {
+                limit.ConnectionCount = 0;
+                limit.LastReset = now;
+            }
+
+            if (limit.ConnectionCount >= _options.MaxConnectionsPerIP)
+            {
+                _logger.Warning($"IP {ipAddress} exceeded max connections ({_options.MaxConnectionsPerIP})");
+                return false;
+            }
+
+            limit.ConnectionCount++;
+            limit.LastReset = now;
+            return true;
+        }
+    }
+
+    public void RegisterConnection(ulong connectionId, string ipAddress)
+    {
+        if (string.IsNullOrWhiteSpace(ipAddress))
+        {
+            return;
         }
 
-        limit.ConnectionCount++;
-        return true;
+        _connectionIpMap[connectionId] = ipAddress;
     }
 
     /// <summary>
@@ -61,7 +74,11 @@ public class RateLimiter
     {
         if (_ipRateLimits.TryGetValue(ipAddress, out var limit))
         {
-            limit.ConnectionCount = Math.Max(0, limit.ConnectionCount - 1);
+            lock (limit.Sync)
+            {
+                limit.ConnectionCount = Math.Max(0, limit.ConnectionCount - 1);
+                limit.LastReset = DateTime.UtcNow;
+            }
         }
     }
 
@@ -71,27 +88,25 @@ public class RateLimiter
     public bool CanSendAuthRequest(ulong connectionId)
     {
         var now = DateTime.UtcNow;
-        var limit = _connectionRateLimits.AddOrUpdate(connectionId,
-            _ => new MessageRateLimit { LastReset = now },
-            (_, existing) =>
-            {
-                // Reset counter every minute
-                if (now - existing.LastReset > TimeSpan.FromMinutes(1))
-                {
-                    existing.AuthAttempts = 0;
-                    existing.LastReset = now;
-                }
-                return existing;
-            });
+        var limit = _connectionRateLimits.GetOrAdd(connectionId, _ => new MessageRateLimit { LastReset = now, LastMessageReset = now });
 
-        if (limit.AuthAttempts >= _options.MaxAuthAttemptsPerMinute)
+        lock (limit.Sync)
         {
-            _logger.Warning($"Connection {connectionId} exceeded max auth attempts");
-            return false;
-        }
+            if (now - limit.LastReset > TimeSpan.FromMinutes(1))
+            {
+                limit.AuthAttempts = 0;
+                limit.LastReset = now;
+            }
 
-        limit.AuthAttempts++;
-        return true;
+            if (limit.AuthAttempts >= _options.MaxAuthAttemptsPerMinute)
+            {
+                _logger.Warning($"Connection {connectionId} exceeded max auth attempts");
+                return false;
+            }
+
+            limit.AuthAttempts++;
+            return true;
+        }
     }
 
     /// <summary>
@@ -100,27 +115,25 @@ public class RateLimiter
     public bool CanSendMessage(ulong connectionId)
     {
         var now = DateTime.UtcNow;
-        var limit = _connectionRateLimits.AddOrUpdate(connectionId,
-            _ => new MessageRateLimit { LastReset = now },
-            (_, existing) =>
-            {
-                // Reset counter every second
-                if (now - existing.LastMessageReset > TimeSpan.FromSeconds(1))
-                {
-                    existing.MessageCount = 0;
-                    existing.LastMessageReset = now;
-                }
-                return existing;
-            });
+        var limit = _connectionRateLimits.GetOrAdd(connectionId, _ => new MessageRateLimit { LastReset = now, LastMessageReset = now });
 
-        if (limit.MessageCount >= _options.MaxMessagesPerSecond)
+        lock (limit.Sync)
         {
-            _logger.Warning($"Connection {connectionId} exceeded max messages per second");
-            return false;
-        }
+            if (now - limit.LastMessageReset > TimeSpan.FromSeconds(1))
+            {
+                limit.MessageCount = 0;
+                limit.LastMessageReset = now;
+            }
 
-        limit.MessageCount++;
-        return true;
+            if (limit.MessageCount >= _options.MaxMessagesPerSecond)
+            {
+                _logger.Warning($"Connection {connectionId} exceeded max messages per second");
+                return false;
+            }
+
+            limit.MessageCount++;
+            return true;
+        }
     }
 
     /// <summary>
@@ -129,6 +142,7 @@ public class RateLimiter
     public void RemoveConnection(ulong connectionId)
     {
         _connectionRateLimits.TryRemove(connectionId, out _);
+        _connectionIpMap.TryRemove(connectionId, out _);
     }
 
     private void CleanupExpiredEntries(object? state)
@@ -175,6 +189,7 @@ public class RateLimiter
 /// </summary>
 internal class ConnectionRateLimit
 {
+    public object Sync { get; } = new();
     public int ConnectionCount { get; set; } = 1;
     public DateTime LastReset { get; set; } = DateTime.UtcNow;
 }
@@ -184,6 +199,7 @@ internal class ConnectionRateLimit
 /// </summary>
 internal class MessageRateLimit
 {
+    public object Sync { get; } = new();
     public int AuthAttempts { get; set; }
     public int MessageCount { get; set; }
     public DateTime LastReset { get; set; } = DateTime.UtcNow;
