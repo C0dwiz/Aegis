@@ -226,3 +226,6 @@ server.pfx
 client.*
 
 .fake
+
+# Environment variables file
+.env

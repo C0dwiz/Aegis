@@ -78,7 +78,7 @@ public class HandlerTests
     {
         // Arrange
         var testHandler = new TestMessageHandler();
-        var router = new MessageRouter(new IMessageHandler[] { testHandler }, _messageSender, _logger);
+        var router = MessageRouter.ForHandlers(new IMessageHandler[] { testHandler }, _messageSender, _logger);
         var context = new TestConnectionContext(12345ul);
         var message = new Aegis.Protocol.Message
         {
@@ -106,7 +106,7 @@ public class HandlerTests
     public async Task MessageRouter_UnknownMessage_ShouldSendError()
     {
         // Arrange
-        var router = new MessageRouter(Array.Empty<IMessageHandler>(), _messageSender, _logger);
+        var router = MessageRouter.ForHandlers(Array.Empty<IMessageHandler>(), _messageSender, _logger);
         var context = new TestConnectionContext(12345ul);
         var message = new Aegis.Protocol.Message
         {
@@ -353,7 +353,7 @@ public class HandlerTests
             domainRules,
             new Mock<Microsoft.Extensions.Logging.ILogger<ChannelMessageHandler>>().Object);
 
-        var router = new MessageRouter(new IMessageHandler[] { registrationHandler, searchHandler, channelHandler }, _messageSender, _logger);
+        var router = MessageRouter.ForHandlers(new IMessageHandler[] { registrationHandler, searchHandler, channelHandler }, _messageSender, _logger);
         var context = new TestConnectionContext(12345ul);
         _sessionManager.CreateSession(context.ConnectionId);
         _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32], new byte[32]);
@@ -456,7 +456,7 @@ public class HandlerTests
     {
         // Arrange
         var testHandler = new TestMessageHandler();
-        var router = new MessageRouter(new IMessageHandler[] { testHandler }, _messageSender, _logger);
+        var router = MessageRouter.ForHandlers(new IMessageHandler[] { testHandler }, _messageSender, _logger);
         var context = new TestConnectionContext(12345ul);
         var message = new Aegis.Protocol.Message
         {
