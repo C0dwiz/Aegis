@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json;
 using Aegis.Common;
 using Aegis.Crypto;
 using Aegis.Protocol;
@@ -47,10 +46,9 @@ public class HandshakeHandler : IMessageHandler
             using var keyExchange = EcdhKeyExchange.GenerateKeyPair();
             var sharedSecret = keyExchange.ComputeSharedSecret(clientPublicKey);
             Span<byte> sessionKey = stackalloc byte[32];
-            Span<byte> macKey = stackalloc byte[32];
-            _cryptoProvider.DeriveKeys(sharedSecret, sessionKey, macKey);
+            _cryptoProvider.DeriveKeys(sharedSecret, sessionKey);
 
-            if (!_sessionManager.EstablishHandshake(context.ConnectionId, sessionKey, macKey))
+            if (!_sessionManager.EstablishHandshake(context.ConnectionId, sessionKey))
             {
                 await SendHandshakeResponseAsync(context, message.SequenceId, false, null, "Unable to establish handshake", allowUnsigned: true);
                 return;
@@ -82,7 +80,7 @@ public class HandshakeHandler : IMessageHandler
 
         try
         {
-            var request = JsonSerializer.Deserialize<HandshakeRequestPayload>(payload);
+            var request = PayloadSerializer.Deserialize<HandshakeRequestPayload>(payload);
             if (request != null && !string.IsNullOrWhiteSpace(request.PublicKey))
             {
                 return Convert.FromBase64String(request.PublicKey);
@@ -114,7 +112,7 @@ public class HandshakeHandler : IMessageHandler
         string message,
         bool allowUnsigned)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(new HandshakeResponsePayload(success, serverPublicKey, message));
+        var payload = PayloadSerializer.Serialize(new HandshakeResponsePayload(success, serverPublicKey, message));
         await _messageSender.SendProtocolMessageAsync(
             context.ConnectionId,
             (ushort)MessageType.Handshake,

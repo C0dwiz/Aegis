@@ -522,6 +522,7 @@ public interface IMessageRepository : IRepository<Message>
     Task<IEnumerable<Message>> GetUnreadMessagesAsync(ulong userId);
     Task<IDictionary<ulong, int>> GetUnreadCountsBySenderAsync(ulong userId);
     Task MarkMessagesDeliveredAsync(IEnumerable<ulong> messageIds);
+    Task MarkMessagesReadAsync(IEnumerable<ulong> messageIds, ulong readerUserId);
     Task<Message?> GetMessageForEditAsync(ulong messageId, ulong userId);
 }
 
@@ -607,6 +608,33 @@ public class MessageRepository : Repository<Message>, IMessageRepository
         {
             message.IsDelivered = true;
             message.DeliveredAt = now;
+        }
+
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task MarkMessagesReadAsync(IEnumerable<ulong> messageIds, ulong readerUserId)
+    {
+        var ids = messageIds.Distinct().ToArray();
+        if (ids.Length == 0)
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        var messages = await _context.Messages
+            .Where(m => ids.Contains(m.Id) && m.ToUserId == readerUserId && !m.IsRead && !m.IsDeleted)
+            .ToListAsync();
+
+        foreach (var message in messages)
+        {
+            message.IsRead = true;
+            message.ReadAt = now;
+            if (!message.IsDelivered)
+            {
+                message.IsDelivered = true;
+                message.DeliveredAt = now;
+            }
         }
 
         await _context.SaveChangesAsync();

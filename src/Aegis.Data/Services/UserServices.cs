@@ -25,15 +25,21 @@ public class UserRegistrationService : IUserRegistrationService
     private readonly IUserRepository _userRepository;
     private readonly ICryptoProvider _cryptoProvider;
     private readonly ILogger<UserRegistrationService> _logger;
+    private readonly Utils.FastIdGenerator _idGenerator;
+    private readonly IUserSearchIndexService _searchIndex;
 
     public UserRegistrationService(
         IUserRepository userRepository,
         ICryptoProvider cryptoProvider,
-        ILogger<UserRegistrationService> logger)
+        ILogger<UserRegistrationService> logger,
+        Utils.FastIdGenerator? idGenerator = null,
+        IUserSearchIndexService? searchIndex = null)
     {
         _userRepository = userRepository;
         _cryptoProvider = cryptoProvider;
         _logger = logger;
+        _idGenerator = idGenerator ?? new Utils.FastIdGenerator(1);
+        _searchIndex = searchIndex ?? new NoOpUserSearchIndexService();
     }
 
     internal static readonly Regex UsernameRegex = new(@"^[a-zA-Z0-9][a-zA-Z0-9_.-]{2,31}$", RegexOptions.Compiled);
@@ -68,6 +74,7 @@ public class UserRegistrationService : IUserRegistrationService
 
         var user = new User
         {
+            Id = (ulong)_idGenerator.NextId(),
             Username = username,
             Email = email,
             PasswordHash = passwordHash,
@@ -78,6 +85,7 @@ public class UserRegistrationService : IUserRegistrationService
         };
 
         var created = await _userRepository.CreateAsync(user);
+        await _searchIndex.IndexUserAsync(created);
         _logger.LogInformation("User registered: {UserId} ({Username})", created.Id, created.Username);
         return created;
     }
@@ -229,22 +237,33 @@ public class UserSearchService : IUserSearchService
 
     private readonly IUserRepository _userRepository;
     private readonly IDistributedCache? _cache;
+    private readonly IUserSearchIndexService _searchIndex;
     private readonly ILogger<UserSearchService> _logger;
 
     public UserSearchService(
         IUserRepository userRepository,
         IDistributedCache? cache,
         ILogger<UserSearchService> logger)
+        : this(userRepository, cache, null, logger)
+    {
+    }
+
+    public UserSearchService(
+        IUserRepository userRepository,
+        IDistributedCache? cache,
+        IUserSearchIndexService? searchIndex,
+        ILogger<UserSearchService> logger)
     {
         _userRepository = userRepository;
         _cache = cache;
+        _searchIndex = searchIndex ?? new NoOpUserSearchIndexService();
         _logger = logger;
     }
 
     public UserSearchService(
         IUserRepository userRepository,
         ILogger<UserSearchService> logger)
-        : this(userRepository, null, logger)
+        : this(userRepository, null, null, logger)
     {
     }
 
@@ -290,8 +309,43 @@ public class UserSearchService : IUserSearchService
 
     public async Task<IEnumerable<User>> SearchUsersByUsernameAsync(string pattern, int limit = 20)
     {
-        var users = await _userRepository.SearchByUsernameAsync(pattern);
-        return users.Take(limit);
+        var normalized = (pattern ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return Array.Empty<User>();
+        }
+
+        var safeLimit = Math.Clamp(limit, 1, 200);
+        if (_searchIndex.IsEnabled)
+        {
+            var userIds = await _searchIndex.SearchUserIdsByUsernameAsync(normalized, safeLimit);
+            if (userIds.Count > 0)
+            {
+                var usersById = new Dictionary<ulong, User>();
+                foreach (var userId in userIds)
+                {
+                    var found = await _userRepository.GetByIdAsync(userId);
+                    if (found != null)
+                    {
+                        usersById[userId] = found;
+                    }
+                }
+
+                var ordered = userIds
+                    .Where(usersById.ContainsKey)
+                    .Select(id => usersById[id])
+                    .Take(safeLimit)
+                    .ToList();
+
+                if (ordered.Count > 0)
+                {
+                    return ordered;
+                }
+            }
+        }
+
+        var users = await _userRepository.SearchByUsernameAsync(normalized);
+        return users.Take(safeLimit);
     }
 
     public async Task<IEnumerable<User>> SearchUsersAsync(string query, int limit = 20)
@@ -406,6 +460,7 @@ public class UserProfileService : IUserProfileService
     private readonly IUserAvatarRepository _avatarRepository;
     private readonly IAvatarStorageService _avatarStorage;
     private readonly IDistributedCache? _cache;
+    private readonly IUserSearchIndexService _searchIndex;
     private readonly ILogger<UserProfileService> _logger;
 
     public UserProfileService(
@@ -413,12 +468,14 @@ public class UserProfileService : IUserProfileService
         IUserAvatarRepository avatarRepository,
         IAvatarStorageService avatarStorage,
         IDistributedCache? cache,
+        IUserSearchIndexService? searchIndex,
         ILogger<UserProfileService> logger)
     {
         _userRepository = userRepository;
         _avatarRepository = avatarRepository;
         _avatarStorage = avatarStorage;
         _cache = cache;
+        _searchIndex = searchIndex ?? new NoOpUserSearchIndexService();
         _logger = logger;
     }
 
@@ -427,7 +484,7 @@ public class UserProfileService : IUserProfileService
         IUserAvatarRepository avatarRepository,
         IAvatarStorageService avatarStorage,
         ILogger<UserProfileService> logger)
-        : this(userRepository, avatarRepository, avatarStorage, null, logger)
+        : this(userRepository, avatarRepository, avatarStorage, null, null, logger)
     {
     }
 
@@ -435,14 +492,14 @@ public class UserProfileService : IUserProfileService
         IUserRepository userRepository,
         IUserAvatarRepository avatarRepository,
         ILogger<UserProfileService> logger)
-        : this(userRepository, avatarRepository, new PassThroughAvatarStorageService(), null, logger)
+        : this(userRepository, avatarRepository, new PassThroughAvatarStorageService(), null, null, logger)
     {
     }
 
     public UserProfileService(
         IUserRepository userRepository,
         ILogger<UserProfileService> logger)
-        : this(userRepository, new InMemoryAvatarRepository(), new PassThroughAvatarStorageService(), null, logger)
+        : this(userRepository, new InMemoryAvatarRepository(), new PassThroughAvatarStorageService(), null, null, logger)
     {
     }
 
@@ -552,6 +609,7 @@ public class UserProfileService : IUserProfileService
 
         var updated = await _userRepository.UpdateAsync(user);
         await InvalidateProfileCacheAsync(updated, previousUsername, previousEmail);
+        await _searchIndex.IndexUserAsync(updated);
         return updated;
     }
 
@@ -791,10 +849,13 @@ public record MemberPermissions(
 public class ChannelService : IChannelService
 {
     private readonly IChannelRepository _channelRepository;
+    private readonly Utils.FastIdGenerator _idGenerator;
 
     public ChannelService(IChannelRepository channelRepository)
     {
         _channelRepository = channelRepository;
+        // TODO: Передавать idGenerator через DI
+        _idGenerator = new Utils.FastIdGenerator(1); // nodeId=1 временно
     }
 
     public async Task<Channel> CreateChannelAsync(ulong creatorUserId, string name, string? description, ChannelType type)
@@ -804,6 +865,7 @@ public class ChannelService : IChannelService
 
         var channel = new Channel
         {
+            Id = (ulong)_idGenerator.NextId(),
             Name = name,
             Description = description,
             Type = type,
@@ -1169,10 +1231,13 @@ public interface IGroupService
 public class GroupService : IGroupService
 {
     private readonly IGroupRepository _groupRepository;
+    private readonly Utils.FastIdGenerator _idGenerator;
 
     public GroupService(IGroupRepository groupRepository)
     {
         _groupRepository = groupRepository;
+        // TODO: Передавать idGenerator через DI
+        _idGenerator = new Utils.FastIdGenerator(1); // nodeId=1 временно
     }
 
     public async Task<Group> CreateGroupAsync(ulong creatorUserId, string name, string? description)
@@ -1182,6 +1247,7 @@ public class GroupService : IGroupService
 
         var group = new Group
         {
+            Id = (ulong)_idGenerator.NextId(),
             Name = name,
             Description = description,
             CreatedByUserId = creatorUserId,

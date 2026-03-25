@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Aegis.Common;
 using Aegis.Data.Services;
 using Aegis.Protocol;
@@ -66,7 +65,7 @@ public class ChannelLinkUpdateHandler : IMessageHandler
             return;
         }
 
-        var request = JsonSerializer.Deserialize<ChannelLinkUpdateRequest>(message.Payload);
+        var request = PayloadSerializer.Deserialize<ChannelLinkUpdateRequest>(message.Payload);
         if (request == null || request.ChannelId == 0)
         {
             await SendAsync(context, message.SequenceId, new ChannelLinkResponse(false, Message: "Invalid payload"));
@@ -99,7 +98,7 @@ public class ChannelLinkUpdateHandler : IMessageHandler
             context.ConnectionId,
             (ushort)MessageType.ChannelLinkUpdateResponse,
             sequenceId,
-            JsonSerializer.SerializeToUtf8Bytes(response));
+            PayloadSerializer.Serialize(response));
     }
 }
 
@@ -130,7 +129,7 @@ public class ChannelLinkGetHandler : IMessageHandler
             return;
         }
 
-        var request = JsonSerializer.Deserialize<ChannelLinkRequest>(message.Payload);
+        var request = PayloadSerializer.Deserialize<ChannelLinkRequest>(message.Payload);
         if (request == null || request.ChannelId == 0)
         {
             await SendAsync(context, message.SequenceId, new ChannelLinkResponse(false, Message: "Invalid payload"));
@@ -158,7 +157,7 @@ public class ChannelLinkGetHandler : IMessageHandler
             context.ConnectionId,
             (ushort)MessageType.ChannelLinkGetResponse,
             sequenceId,
-            JsonSerializer.SerializeToUtf8Bytes(response));
+            PayloadSerializer.Serialize(response));
     }
 }
 
@@ -189,7 +188,7 @@ public class ChannelResolveHandler : IMessageHandler
             return;
         }
 
-        var request = JsonSerializer.Deserialize<ChannelResolveRequest>(message.Payload);
+        var request = PayloadSerializer.Deserialize<ChannelResolveRequest>(message.Payload);
         if (request == null || string.IsNullOrWhiteSpace(request.LinkOrAlias))
         {
             await SendAsync(context, message.SequenceId, new ChannelResolveResponse(false, Message: "Invalid payload"));
@@ -213,7 +212,7 @@ public class ChannelResolveHandler : IMessageHandler
             context.ConnectionId,
             (ushort)MessageType.ChannelResolveResponse,
             sequenceId,
-            JsonSerializer.SerializeToUtf8Bytes(response));
+            PayloadSerializer.Serialize(response));
     }
 }
 
@@ -244,7 +243,7 @@ public class ChannelJoinByLinkHandler : IMessageHandler
             return;
         }
 
-        var request = JsonSerializer.Deserialize<ChannelResolveRequest>(message.Payload);
+        var request = PayloadSerializer.Deserialize<ChannelResolveRequest>(message.Payload);
         if (request == null || string.IsNullOrWhiteSpace(request.LinkOrAlias))
         {
             await SendAsync(context, message.SequenceId, new ChannelJoinResponse(false, Message: "Invalid payload"));
@@ -281,6 +280,6 @@ public class ChannelJoinByLinkHandler : IMessageHandler
             context.ConnectionId,
             (ushort)MessageType.ChannelJoinByLinkResponse,
             sequenceId,
-            JsonSerializer.SerializeToUtf8Bytes(response));
+            PayloadSerializer.Serialize(response));
     }
 }

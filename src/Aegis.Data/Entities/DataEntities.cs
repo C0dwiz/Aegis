@@ -120,6 +120,34 @@ public class Session
 }
 
 /// <summary>
+/// Message delivery status tracking entity
+/// </summary>
+public class MessageDelivery
+{
+    public ulong Id { get; set; }
+    public ulong MessageId { get; set; }
+    public ulong UserId { get; set; }
+    public DeliveryStatus Status { get; set; } = DeliveryStatus.Sent;
+    public DateTime StatusUpdatedAt { get; set; } = DateTime.UtcNow;
+    public string? DeviceId { get; set; }
+    
+    // Navigation properties
+    public Message Message { get; set; } = null!;
+    public User User { get; set; } = null!;
+}
+
+/// <summary>
+/// Delivery status enumeration
+/// </summary>
+public enum DeliveryStatus
+{
+    Sent = 0,        // Message sent to server
+    Delivered = 1,   // Message delivered to user device
+    Read = 2,         // Message read by user
+    Failed = 3        // Delivery failed
+}
+
+/// <summary>
 /// Message entity for message storage
 /// </summary>
 public class Message
@@ -130,19 +158,33 @@ public class Message
     public string Content { get; set; } = string.Empty;
     public MessageContentType ContentType { get; set; } = MessageContentType.Text;
     public ulong SequenceNumber { get; set; }
+    
+    // Delivery and read status
     public bool IsDelivered { get; set; }
+    public DateTime? DeliveredAt { get; set; }
     public bool IsRead { get; set; }
+    public DateTime? ReadAt { get; set; }
+    
+    // Message editing/deletion
     public bool IsEdited { get; set; }
     public DateTime? EditedAt { get; set; }
     public bool IsDeleted { get; set; }
     public DateTime? DeletedAt { get; set; }
+    
+    // Timestamps
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    public DateTime? DeliveredAt { get; set; }
-    public DateTime? ReadAt { get; set; }
+    
+    // Additional metadata
+    public string? MediaId { get; set; }
+    public ulong? ReplyToMessageId { get; set; }
+    public bool IsPinned { get; set; }
+    public string? EditHistory { get; set; } // JSON array of previous content
     
     // Navigation properties
     public User? FromUser { get; set; }
     public User? ToUser { get; set; }
+    public Message? ReplyToMessage { get; set; }
+    public ICollection<MessageDelivery> DeliveryStatus { get; set; } = new List<MessageDelivery>();
 }
 
 /// <summary>
@@ -223,11 +265,18 @@ public class GroupMessage
     public ulong? ReplyToMessageId { get; set; }
     public bool IsPinned { get; set; }
     
+    // Delivery tracking fields
+    public bool IsDelivered { get; set; } = false;
+    public DateTime? DeliveredAt { get; set; }
+    public bool IsRead { get; set; } = false;
+    public DateTime? ReadAt { get; set; }
+    
     // Navigation properties
     public Group? Group { get; set; }
     public User? FromUser { get; set; }
     public GroupMessage? ReplyToMessage { get; set; }
     public ICollection<GroupMessage> Replies { get; set; } = new List<GroupMessage>();
+    public ICollection<MessageDelivery> DeliveryStatus { get; set; } = new List<MessageDelivery>();
 }
 
 /// <summary>
@@ -344,11 +393,18 @@ public class ChannelMessage
     public ulong? ReplyToMessageId { get; set; }
     public bool IsPinned { get; set; } = false;
     
+    // Delivery tracking fields
+    public bool IsDelivered { get; set; } = false;
+    public DateTime? DeliveredAt { get; set; }
+    public bool IsRead { get; set; } = false;
+    public DateTime? ReadAt { get; set; }
+    
     // Navigation properties
     public Channel? Channel { get; set; }
     public User? FromUser { get; set; }
     public ChannelMessage? ReplyToMessage { get; set; }
     public ICollection<ChannelMessage> Replies { get; set; } = new List<ChannelMessage>();
+    public ICollection<MessageDelivery> DeliveryStatus { get; set; } = new List<MessageDelivery>();
 }
 
 /// <summary>

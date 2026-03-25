@@ -5,14 +5,19 @@ namespace Aegis.Crypto;
 
 public interface ICryptoProvider
 {
-    void DeriveKeys(ReadOnlySpan<byte> masterKey, Span<byte> encryptionKey, Span<byte> macKey);
-    int Encrypt(ReadOnlySpan<byte> plaintext, ReadOnlySpan<byte> key, ReadOnlySpan<byte> nonce, Span<byte> ciphertext);
-    int Decrypt(ReadOnlySpan<byte> ciphertext, ReadOnlySpan<byte> key, ReadOnlySpan<byte> nonce, Span<byte> plaintext);
-    void ComputeMac(ReadOnlySpan<byte> data, ReadOnlySpan<byte> key, Span<byte> mac);
-    bool VerifyMac(ReadOnlySpan<byte> data, ReadOnlySpan<byte> key, ReadOnlySpan<byte> mac);
-    
-    // Additional methods for message encryption and session management
+    // Derives only the session encryption key via HKDF.
+    void DeriveKeys(ReadOnlySpan<byte> masterKey, Span<byte> encryptionKey);
+
+    // AES-GCM encrypt. Pass header bytes as aad to bind them to the ciphertext.
+    int Encrypt(ReadOnlySpan<byte> plaintext, ReadOnlySpan<byte> key,
+        ReadOnlySpan<byte> nonce, Span<byte> ciphertext,
+        ReadOnlySpan<byte> aad = default);
+
+    // AES-GCM decrypt. aad must match what was used during encryption.
+    int Decrypt(ReadOnlySpan<byte> ciphertext, ReadOnlySpan<byte> key,
+        ReadOnlySpan<byte> nonce, Span<byte> plaintext,
+        ReadOnlySpan<byte> aad = default);
+
     Memory<byte> GenerateSessionKey();
-    Memory<byte> GenerateMacKey();
     Task<byte[]> EncryptMessageAsync(Message message, byte[] sessionKey);
 }

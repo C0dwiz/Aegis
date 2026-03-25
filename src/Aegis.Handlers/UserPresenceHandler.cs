@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Aegis.Common;
 using Aegis.Data.Repositories;
 using Aegis.Protocol;
@@ -41,7 +40,7 @@ public class UserPresenceHandler : IMessageHandler
         UserPresenceUpdateRequest? request = null;
         try
         {
-            request = JsonSerializer.Deserialize<UserPresenceUpdateRequest>(message.Payload);
+            request = PayloadSerializer.Deserialize<UserPresenceUpdateRequest>(message.Payload);
         }
         catch (JsonException ex)
         {

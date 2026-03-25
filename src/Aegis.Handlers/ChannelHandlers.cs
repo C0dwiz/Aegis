@@ -165,7 +165,7 @@ public class ChannelMessageHandler : IMessageHandler
                 return;
             }
 
-            var payload = JsonSerializer.Deserialize<ChannelMessageRequest>(message.Payload);
+            var payload = PayloadSerializer.Deserialize<ChannelMessageRequest>(message.Payload);
             if (payload == null)
             {
                 await SendResponseAsync(context, message.SequenceId, new ChannelMessageResponse(false, MessageText: "Invalid payload"));
@@ -195,13 +195,15 @@ public class ChannelMessageHandler : IMessageHandler
             var channel = await _channelRepository.GetByIdAsync(payload.ChannelId);
             var channelMembers = await _channelRepository.GetChannelMembersAsync(payload.ChannelId);
 
-            var eventPayload = JsonSerializer.SerializeToUtf8Bytes(new ChannelMessageEventPayload(
+            var eventPayload = PayloadSerializer.Serialize(new ChannelMessageEventPayload(
                 Id: channelMsg.Id,
                 ChannelId: payload.ChannelId,
                 FromUserId: session.UserId,
                 Content: channelMsg.Content,
                 ContentType: channelMsg.ContentType,
                 CreatedAt: channelMsg.CreatedAt,
+                DeliveredTo: channelMsg.IsDelivered ? [session.UserId] : [],
+                ReadBy: channelMsg.IsRead ? [session.UserId] : [],
                 FromUsername: session.Username,
                 ChannelName: channel?.Name));
 
@@ -290,7 +292,7 @@ public class ChannelCreateHandler : IMessageHandler
                 return;
             }
 
-            var payload = JsonSerializer.Deserialize<ChannelCreateRequest>(message.Payload);
+            var payload = PayloadSerializer.Deserialize<ChannelCreateRequest>(message.Payload);
             if (payload == null)
             {
                 await SendResponseAsync(context, message.SequenceId, new ChannelCreateResponse(false, Message: "Invalid payload"));
@@ -370,7 +372,7 @@ public class PrivateChatMessageHandler : IMessageHandler
                 return;
             }
 
-            var payload = JsonSerializer.Deserialize<PrivateChatMessageRequest>(message.Payload);
+            var payload = PayloadSerializer.Deserialize<PrivateChatMessageRequest>(message.Payload);
             if (payload == null)
             {
                 await SendResponseAsync(context, message.SequenceId, new PrivateChatMessageResponse(false, MessageText: "Invalid payload"));
@@ -400,13 +402,15 @@ public class PrivateChatMessageHandler : IMessageHandler
                 var replies = await _botManagementService.ProcessBotFatherMessageAsync(session.UserId, botText);
                 foreach (var reply in replies)
                 {
-                    var eventPayload = JsonSerializer.SerializeToUtf8Bytes(new PrivateChatMessageEventPayload(
+                    var eventPayload = PayloadSerializer.Serialize(new PrivateChatMessageEventPayload(
                         Id: 0,
                         FromUserId: payload.ToUserId,
                         ToUserId: session.UserId,
                         Content: reply,
                         ContentType: MessageContentType.Text,
                         CreatedAt: DateTime.UtcNow,
+                        DeliveredTo: [],
+                        ReadBy: [],
                         FromUsername: "BotFather",
                         Username: "BotFather"));
 
@@ -436,13 +440,15 @@ public class PrivateChatMessageHandler : IMessageHandler
             // Push the message to the recipient if they are online
             if (_sessionManager.TryGetConnectionIdByUserId(payload.ToUserId, out var recipientConnId))
             {
-                var pushPayload = JsonSerializer.SerializeToUtf8Bytes(new PrivateChatMessageEventPayload(
+                var pushPayload = PayloadSerializer.Serialize(new PrivateChatMessageEventPayload(
                     Id: privateMsg.Id,
                     FromUserId: session.UserId,
                     ToUserId: payload.ToUserId,
                     Content: privateMsg.Content,
                     ContentType: privateMsg.ContentType,
                     CreatedAt: privateMsg.CreatedAt,
+                    DeliveredTo: privateMsg.IsDelivered ? [payload.ToUserId] : [],
+                    ReadBy: privateMsg.IsRead ? [payload.ToUserId] : [],
                     FromUsername: session.Username,
                     Username: session.Username));
 
@@ -759,7 +765,7 @@ public class ChannelJoinHandler : IMessageHandler
                 return;
             }
 
-            var payload = JsonSerializer.Deserialize<ChannelJoinRequest>(message.Payload);
+            var payload = PayloadSerializer.Deserialize<ChannelJoinRequest>(message.Payload);
             if (payload == null || payload.ChannelId == 0)
             {
                 await SendResponseAsync(context, message.SequenceId,

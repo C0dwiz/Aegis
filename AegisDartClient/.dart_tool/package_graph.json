@@ -6,7 +6,10 @@
     {
       "name": "aegis_client",
       "version": "0.1.0",
-      "dependencies": [],
+      "dependencies": [
+        "es_compression",
+        "msgpack_dart"
+      ],
       "devDependencies": [
         "test"
       ]
@@ -41,6 +44,21 @@
         "webkit_inspection_protocol",
         "yaml"
       ]
+    },
+    {
+      "name": "es_compression",
+      "version": "2.0.15",
+      "dependencies": [
+        "args",
+        "ffi",
+        "stack_trace",
+        "stream_channel"
+      ]
+    },
+    {
+      "name": "msgpack_dart",
+      "version": "1.0.1",
+      "dependencies": []
     },
     {
       "name": "yaml",
@@ -291,6 +309,16 @@
       ]
     },
     {
+      "name": "ffi",
+      "version": "2.2.0",
+      "dependencies": []
+    },
+    {
+      "name": "args",
+      "version": "2.7.0",
+      "dependencies": []
+    },
+    {
       "name": "string_scanner",
       "version": "1.4.1",
       "dependencies": [
@@ -365,11 +393,6 @@
         "async",
         "path"
       ]
-    },
-    {
-      "name": "args",
-      "version": "2.7.0",
-      "dependencies": []
     },
     {
       "name": "term_glyph",

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Aegis.Common;
 using Aegis.Data.Services;
 using Aegis.Protocol;
@@ -70,7 +69,7 @@ public class MessageEditHandler : IMessageHandler
                 return;
             }
 
-            var request = JsonSerializer.Deserialize<MessageEditRequest>(message.Payload);
+            var request = PayloadSerializer.Deserialize<MessageEditRequest>(message.Payload);
             if (request == null)
             {
                 await SendResponseAsync(context, message.SequenceId, new MessageEditResponse(false, "Invalid payload"));
@@ -125,7 +124,7 @@ public class MessageEditHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, MessageEditResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
+        var payload = PayloadSerializer.Serialize(response);
         var msg = new Message
         {
             Magic = ProtocolConstants.Magic,
@@ -177,7 +176,7 @@ public class MessageDeleteHandler : IMessageHandler
                 return;
             }
 
-            var request = JsonSerializer.Deserialize<MessageDeleteRequest>(message.Payload);
+            var request = PayloadSerializer.Deserialize<MessageDeleteRequest>(message.Payload);
             if (request == null)
             {
                 await SendResponseAsync(context, message.SequenceId, new MessageDeleteResponse(false, "Invalid payload"));
@@ -229,7 +228,7 @@ public class MessageDeleteHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, MessageDeleteResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
+        var payload = PayloadSerializer.Serialize(response);
         var msg = new Message
         {
             Magic = ProtocolConstants.Magic,

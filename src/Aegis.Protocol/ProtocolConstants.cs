@@ -6,7 +6,10 @@ public static class ProtocolConstants
     public const byte VersionMajor = 1;
     public const byte VersionMinor = 0;
     public const int HeaderSize = sizeof(uint) + sizeof(byte) * 3 + sizeof(ushort) + sizeof(ulong) + sizeof(uint);
-    public const int MacSize = 32; // SHA256 HMAC
+    // AES-GCM tag (16 bytes) is embedded in the ciphertext — no separate frame-level HMAC.
+    public const int MacSize = 0;
     public const int MaxMessageSize = 1024 * 1024; // 1MB
-    public const int MaxPayloadSize = MaxMessageSize - HeaderSize - MacSize;
+    public const int MaxPayloadSize = MaxMessageSize - HeaderSize;
+    // Compress payload with Brotli when raw bytes exceed this threshold.
+    public const int CompressionThreshold = 512;
 }

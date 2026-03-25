@@ -16,6 +16,8 @@ class AegisEventDispatcher {
       StreamController<PrivateChatMessageEvent>.broadcast();
   final StreamController<ChannelMessageEvent> _channelEventController =
       StreamController<ChannelMessageEvent>.broadcast();
+    final StreamController<MessageStatusEvent> _messageStatusController =
+      StreamController<MessageStatusEvent>.broadcast();
   final StreamController<ChatListResponse> _chatListController =
       StreamController<ChatListResponse>.broadcast();
   final StreamController<PrivateChatHistoryResponse> _privateHistoryController =
@@ -33,6 +35,8 @@ class AegisEventDispatcher {
       _privateEventController.stream;
   Stream<ChannelMessageEvent> get channelMessageEvents =>
       _channelEventController.stream;
+    Stream<MessageStatusEvent> get messageStatusEvents =>
+      _messageStatusController.stream;
   Stream<ChatListResponse> get chatListResponses => _chatListController.stream;
   Stream<PrivateChatHistoryResponse> get privateHistoryResponses =>
       _privateHistoryController.stream;
@@ -59,6 +63,12 @@ class AegisEventDispatcher {
     return channelMessageEvents.listen(handler);
   }
 
+  StreamSubscription<MessageStatusEvent> onMessageStatusEvent(
+    void Function(MessageStatusEvent event) handler,
+  ) {
+    return messageStatusEvents.listen(handler);
+  }
+
   StreamSubscription<PrivateChatHistoryResponse> onPrivateHistoryResponse(
     void Function(PrivateChatHistoryResponse response) handler,
   ) {
@@ -83,6 +93,7 @@ class AegisEventDispatcher {
     await _errorController.close();
     await _privateEventController.close();
     await _channelEventController.close();
+    await _messageStatusController.close();
     await _chatListController.close();
     await _privateHistoryController.close();
     await _channelHistoryController.close();
@@ -106,6 +117,12 @@ class AegisEventDispatcher {
         _tryEmit(
           () => ChannelMessageEvent.fromBytes(message.payload),
           _channelEventController,
+        );
+        break;
+      case MessageType.messageStatusEvent:
+        _tryEmit(
+          () => MessageStatusEvent.fromBytes(message.payload),
+          _messageStatusController,
         );
         break;
       case MessageType.chatListResponse:

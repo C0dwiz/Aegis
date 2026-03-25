@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:typed_data';
+import 'package:msgpack_dart/msgpack_dart.dart' as msgpack;
 
 /// Message content types
 enum MessageContentType {
@@ -268,7 +270,7 @@ class RegistrationRequest {
     publicKey: json['PublicKey'] as String,
   );
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 /// Registration response payload
@@ -298,8 +300,8 @@ class RegistrationResponse {
   );
 
   factory RegistrationResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    return RegistrationResponse.fromJson(json);
+    final decoded = msgpack.deserialize(bytes is Uint8List ? bytes : Uint8List.fromList(bytes));
+    return RegistrationResponse.fromJson(Map<String, dynamic>.from(decoded));
   }
 }
 
@@ -345,7 +347,7 @@ class UserSearchRequest {
     limit: json['Limit'] as int? ?? 20,
   );
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 /// User search response payload
@@ -375,8 +377,8 @@ class UserSearchResponse {
   );
 
   factory UserSearchResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    return UserSearchResponse.fromJson(json);
+    final decoded = msgpack.deserialize(bytes is Uint8List ? bytes : Uint8List.fromList(bytes));
+    return UserSearchResponse.fromJson(Map<String, dynamic>.from(decoded));
   }
 }
 
@@ -424,7 +426,7 @@ class UserPresenceUpdateRequest {
     if (clientTimestamp != null) 'ClientTimestamp': clientTimestamp!.toUtc().toIso8601String(),
   };
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 /// User entity
@@ -521,7 +523,7 @@ class ChannelMessageRequest {
     parseMode: json['ParseMode'] as String?,
   );
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 /// Channel message response payload
@@ -549,8 +551,8 @@ class ChannelMessageResponse {
   );
 
   factory ChannelMessageResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    return ChannelMessageResponse.fromJson(json);
+    final decoded = msgpack.deserialize(bytes is Uint8List ? bytes : Uint8List.fromList(bytes));
+    return ChannelMessageResponse.fromJson(Map<String, dynamic>.from(decoded));
   }
 }
 
@@ -631,7 +633,7 @@ class ChannelCreateRequest {
     type: ChannelType.fromValue(json['Type'] as int? ?? 0),
   );
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 /// Channel create response payload
@@ -659,8 +661,8 @@ class ChannelCreateResponse {
   );
 
   factory ChannelCreateResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    return ChannelCreateResponse.fromJson(json);
+    final decoded = msgpack.deserialize(bytes is Uint8List ? bytes : Uint8List.fromList(bytes));
+    return ChannelCreateResponse.fromJson(Map<String, dynamic>.from(decoded));
   }
 }
 
@@ -982,6 +984,8 @@ class PrivateChatHistoryItem {
   final String content;
   final MessageContentType contentType;
   final DateTime createdAt;
+  final List<int> deliveredTo;
+  final List<int> readBy;
   final String? parseMode;
   final String? fromUsername;
   final String? username;
@@ -993,6 +997,8 @@ class PrivateChatHistoryItem {
     required this.content,
     required this.contentType,
     required this.createdAt,
+    this.deliveredTo = const <int>[],
+    this.readBy = const <int>[],
     this.parseMode,
     this.fromUsername,
     this.username,
@@ -1007,6 +1013,12 @@ class PrivateChatHistoryItem {
       content: parsed.text,
       contentType: MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
       createdAt: DateTime.parse(json['CreatedAt'] as String),
+        deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
+          .map((item) => (item as num).toInt())
+          .toList(),
+        readBy: (json['ReadBy'] as List<dynamic>? ?? const <dynamic>[])
+          .map((item) => (item as num).toInt())
+          .toList(),
       parseMode: parsed.parseMode,
       fromUsername: json['FromUsername'] as String?,
       username: json['Username'] as String?,
@@ -1079,6 +1091,8 @@ class ChannelHistoryItem {
   final String content;
   final MessageContentType contentType;
   final DateTime createdAt;
+  final List<int> deliveredTo;
+  final List<int> readBy;
   final String? parseMode;
   final String? fromUsername;
   final String? channelName;
@@ -1090,6 +1104,8 @@ class ChannelHistoryItem {
     required this.content,
     required this.contentType,
     required this.createdAt,
+    this.deliveredTo = const <int>[],
+    this.readBy = const <int>[],
     this.parseMode,
     this.fromUsername,
     this.channelName,
@@ -1104,6 +1120,12 @@ class ChannelHistoryItem {
       content: parsed.text,
       contentType: MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
       createdAt: DateTime.parse(json['CreatedAt'] as String),
+        deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
+          .map((item) => (item as num).toInt())
+          .toList(),
+        readBy: (json['ReadBy'] as List<dynamic>? ?? const <dynamic>[])
+          .map((item) => (item as num).toInt())
+          .toList(),
       parseMode: parsed.parseMode,
       fromUsername: json['FromUsername'] as String?,
       channelName: json['ChannelName'] as String?,
@@ -1150,6 +1172,44 @@ class ChannelHistoryResponse {
   }
 }
 
+/// Async message status event payload (server -> clients)
+class MessageStatusEvent {
+  final bool success;
+  final List<int> messageIds;
+  final int? deliveredTo;
+  final int? readBy;
+  final DateTime? processedAt;
+
+  MessageStatusEvent({
+    required this.success,
+    required this.messageIds,
+    this.deliveredTo,
+    this.readBy,
+    this.processedAt,
+  });
+
+  factory MessageStatusEvent.fromJson(Map<String, dynamic> json) {
+    final processedAtRaw = json['ProcessedAt'];
+    return MessageStatusEvent(
+      success: json['Success'] as bool? ?? false,
+      messageIds: (json['MessageIds'] as List<dynamic>? ?? const <dynamic>[])
+          .map((item) => (item as num).toInt())
+          .toList(),
+      deliveredTo: (json['DeliveredTo'] as num?)?.toInt(),
+      readBy: (json['ReadBy'] as num?)?.toInt(),
+      processedAt: processedAtRaw is String ? DateTime.tryParse(processedAtRaw) : null,
+    );
+  }
+
+  factory MessageStatusEvent.fromBytes(List<int> bytes) {
+    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    return MessageStatusEvent.fromJson(json);
+  }
+
+  bool get isDeliveredUpdate => deliveredTo != null;
+  bool get isReadUpdate => readBy != null;
+}
+
 /// Incoming private message event payload
 class PrivateChatMessageEvent {
   final int id;
@@ -1158,6 +1218,8 @@ class PrivateChatMessageEvent {
   final String content;
   final MessageContentType contentType;
   final DateTime createdAt;
+  final List<int> deliveredTo;
+  final List<int> readBy;
   final String? parseMode;
   final String? fromUsername;
   final String? username;
@@ -1169,6 +1231,8 @@ class PrivateChatMessageEvent {
     required this.content,
     required this.contentType,
     required this.createdAt,
+    this.deliveredTo = const <int>[],
+    this.readBy = const <int>[],
     this.parseMode,
     this.fromUsername,
     this.username,
@@ -1183,6 +1247,12 @@ class PrivateChatMessageEvent {
       content: parsed.text,
       contentType: MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
       createdAt: DateTime.parse(json['CreatedAt'] as String),
+        deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
+          .map((item) => (item as num).toInt())
+          .toList(),
+        readBy: (json['ReadBy'] as List<dynamic>? ?? const <dynamic>[])
+          .map((item) => (item as num).toInt())
+          .toList(),
       parseMode: parsed.parseMode,
       fromUsername: json['FromUsername'] as String?,
       username: json['Username'] as String?,
@@ -1209,6 +1279,8 @@ class ChannelMessageEvent {
   final String content;
   final MessageContentType contentType;
   final DateTime createdAt;
+  final List<int> deliveredTo;
+  final List<int> readBy;
   final String? parseMode;
   final String? fromUsername;
   final String? channelName;
@@ -1220,6 +1292,8 @@ class ChannelMessageEvent {
     required this.content,
     required this.contentType,
     required this.createdAt,
+    this.deliveredTo = const <int>[],
+    this.readBy = const <int>[],
     this.parseMode,
     this.fromUsername,
     this.channelName,
@@ -1234,6 +1308,12 @@ class ChannelMessageEvent {
       content: parsed.text,
       contentType: MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
       createdAt: DateTime.parse(json['CreatedAt'] as String),
+        deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
+          .map((item) => (item as num).toInt())
+          .toList(),
+        readBy: (json['ReadBy'] as List<dynamic>? ?? const <dynamic>[])
+          .map((item) => (item as num).toInt())
+          .toList(),
       parseMode: parsed.parseMode,
       fromUsername: json['FromUsername'] as String?,
       channelName: json['ChannelName'] as String?,

@@ -17,18 +17,14 @@ public class CryptoTests
         var masterKey = new byte[32];
         RandomNumberGenerator.Fill(masterKey);
         var encryptionKey = new byte[32];
-        var macKey = new byte[32];
         
         // Act
-        _crypto.DeriveKeys(masterKey, encryptionKey, macKey);
+        _crypto.DeriveKeys(masterKey, encryptionKey);
         
         // Assert
         Assert.NotEmpty(encryptionKey);
-        Assert.NotEmpty(macKey);
         Assert.Equal(32, encryptionKey.Length);
-        Assert.Equal(32, macKey.Length);
         Assert.NotEqual(masterKey, encryptionKey);
-        Assert.NotEqual(masterKey, macKey);
     }
     
     [Fact]
@@ -37,11 +33,9 @@ public class CryptoTests
         // Arrange
         var masterKey = new byte[32];
         var smallKey = new byte[16];
-        var macKey = new byte[32];
         
         // Act & Assert
-        Assert.Throws<CryptoError>(() => _crypto.DeriveKeys(masterKey, smallKey, macKey));
-        Assert.Throws<CryptoError>(() => _crypto.DeriveKeys(masterKey, macKey, smallKey));
+        Assert.Throws<CryptoError>(() => _crypto.DeriveKeys(masterKey, smallKey));
     }
     
     [Fact]
@@ -101,57 +95,26 @@ public class CryptoTests
     }
     
     [Fact]
-    public void ComputeMac_VerifyMac_ShouldMatch()
+    public void EncryptDecrypt_WithAad_ShouldVerifyAad()
     {
-        // Arrange
-        var data = "Test data for MAC"u8.ToArray();
+        // Arrange: AES-GCM with AAD should fail if AAD is tampered.
+        var plaintext = "Hello, AAD!"u8.ToArray();
         var key = new byte[32];
+        var nonce = new byte[12];
+        var aad = "header-bytes"u8.ToArray();
         RandomNumberGenerator.Fill(key);
-        var mac1 = new byte[32];
-        var mac2 = new byte[32];
-        
-        // Act
-        _crypto.ComputeMac(data, key, mac1);
-        var isValid = _crypto.VerifyMac(data, key, mac2);
-        
-        // Assert
-        Assert.False(isValid); // Different MACs should not match
-        
-        _crypto.ComputeMac(data, key, mac2);
-        isValid = _crypto.VerifyMac(data, key, mac2);
-        Assert.True(isValid); // Same MAC should match
-    }
-    
-    [Fact]
-    public void ComputeMac_InvalidBuffer_ShouldThrowError()
-    {
-        // Arrange
-        var data = new byte[10];
-        var key = new byte[32];
-        var smallMac = new byte[16];
-        
-        // Act & Assert
-        Assert.Throws<CryptoError>(() => _crypto.ComputeMac(data, key, smallMac));
-    }
-    
-    [Fact]
-    public void VerifyMac_TamperedData_ShouldFail()
-    {
-        // Arrange
-        var data = "Original data"u8.ToArray();
-        var key = new byte[32];
-        RandomNumberGenerator.Fill(key);
-        var mac = new byte[32];
-        _crypto.ComputeMac(data, key, mac);
-        
-        // Tamper with data
-        var tamperedData = (byte[])data.Clone();
-        tamperedData[0] ^= 0xFF;
-        
-        // Act
-        var isValid = _crypto.VerifyMac(tamperedData, key, mac);
-        
-        // Assert
-        Assert.False(isValid);
+        RandomNumberGenerator.Fill(nonce);
+        var ciphertext = new byte[plaintext.Length + 16];
+
+        _crypto.Encrypt(plaintext, key, nonce, ciphertext, aad);
+
+        // Correct AAD should decrypt successfully.
+        var decrypted = new byte[plaintext.Length];
+        _crypto.Decrypt(ciphertext, key, nonce, decrypted, aad);
+        Assert.Equal(plaintext, decrypted);
+
+        // Wrong AAD must throw.
+        var wrongAad = "tampered-header"u8.ToArray();
+        Assert.Throws<CryptoError>(() => _crypto.Decrypt(ciphertext, key, nonce, decrypted, wrongAad));
     }
 }

@@ -5,7 +5,6 @@ using Aegis.Common;
 using Aegis.Data.Services;
 using System.Buffers.Binary;
 using System.Text;
-using System.Text.Json;
 
 namespace Aegis.Handlers;
 
@@ -89,7 +88,7 @@ public class MessageHandler : IMessageHandler
 
             if (_sessionManager.TryGetConnectionIdByUserId(request.RecipientId, out var recipientConnectionId))
             {
-                var pushPayload = JsonSerializer.SerializeToUtf8Bytes(new IncomingDirectMessage(
+                var pushPayload = PayloadSerializer.Serialize(new IncomingDirectMessage(
                     saved.Id,
                     senderSession.UserId,
                     senderSession.Username,
@@ -127,10 +126,7 @@ public class MessageHandler : IMessageHandler
 
         try
         {
-            var parsed = JsonSerializer.Deserialize<DirectMessageRequest>(payload, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+            var parsed = PayloadSerializer.Deserialize<DirectMessageRequest>(payload);
 
             if (parsed != null)
             {

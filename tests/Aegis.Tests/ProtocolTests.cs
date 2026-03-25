@@ -20,11 +20,10 @@ public class ProtocolTests
             Type = MessageType.Message,
             SequenceId = 12345,
             PayloadLength = 5,
-            Payload = new byte[] { 1, 2, 3, 4, 5 },
-            Mac = new byte[ProtocolConstants.MacSize]
+            Payload = new byte[] { 1, 2, 3, 4, 5 }
         };
         
-        var buffer = new byte[ProtocolConstants.HeaderSize + original.PayloadLength + ProtocolConstants.MacSize];
+        var buffer = new byte[ProtocolConstants.HeaderSize + original.PayloadLength];
         MessageEncoder.Encode(original, buffer);
         var decoded = MessageEncoder.Decode(buffer);
         
@@ -46,8 +45,7 @@ public class ProtocolTests
             Type = MessageType.Ping,
             SequenceId = 77,
             Payload = new byte[] { 1, 2, 3 },
-            PayloadLength = 3,
-            Mac = new byte[ProtocolConstants.MacSize]
+            PayloadLength = 3
         };
 
         var exact = new byte[Message.TotalSize(original)];

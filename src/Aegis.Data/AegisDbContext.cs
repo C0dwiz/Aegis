@@ -24,6 +24,7 @@ public class AegisDbContext : DbContext
     public DbSet<UserAvatar> UserAvatars { get; set; }
     public DbSet<Session> Sessions { get; set; }
     public DbSet<Message> Messages { get; set; }
+    public DbSet<MessageDelivery> MessageDeliveries { get; set; }
     public DbSet<Group> Groups { get; set; }
     public DbSet<GroupMember> GroupMembers { get; set; }
     public DbSet<GroupMessage> GroupMessages { get; set; }
@@ -98,6 +99,20 @@ public class AegisDbContext : DbContext
             entity.HasOne(e => e.ToUser).WithMany(u => u.ReceivedMessages).HasForeignKey(e => e.ToUserId)
                 .OnDelete(DeleteBehavior.Restrict);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
+        });
+
+        // MessageDelivery configuration
+        modelBuilder.Entity<MessageDelivery>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.MessageId, e.UserId }).IsUnique();
+            entity.HasIndex(e => new { e.UserId, e.Status, e.StatusUpdatedAt });
+            entity.HasIndex(e => new { e.Status, e.StatusUpdatedAt });
+            entity.HasOne(e => e.Message).WithMany(m => m.DeliveryStatus).HasForeignKey(e => e.MessageId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.User).WithMany().HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.Property(e => e.StatusUpdatedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
 
         // Group configuration

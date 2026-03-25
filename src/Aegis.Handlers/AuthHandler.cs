@@ -3,7 +3,6 @@ using Aegis.Transport;
 using Aegis.Common;
 using Aegis.Data.Repositories;
 using Aegis.Data.Services;
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
 namespace Aegis.Handlers;
@@ -99,7 +98,7 @@ public class AuthHandler : IMessageHandler
                 return;
             }
 
-            var authRequest = JsonSerializer.Deserialize<AuthRequest>(message.Payload);
+            var authRequest = PayloadSerializer.Deserialize<AuthRequest>(message.Payload);
             if (authRequest == null)
             {
                 await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
@@ -181,15 +180,6 @@ public class AuthHandler : IMessageHandler
 
             await DeliverUndeliveredMessagesAsync(context.ConnectionId, user.Id);
         }
-        catch (JsonException ex)
-        {
-            _logger.LogHandlerError(ex, "auth_invalid_json", context, message, _sessionManager);
-            await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
-            {
-                Success = false,
-                Error = "Invalid JSON format"
-            });
-        }
         catch (Exception ex)
         {
             _logger.LogHandlerError(ex, "auth_process", context, message, _sessionManager);
@@ -219,13 +209,15 @@ public class AuthHandler : IMessageHandler
                     ? resolvedUsername
                     : null;
 
-                var payload = JsonSerializer.SerializeToUtf8Bytes(new PrivateChatMessageEventPayload(
+                var payload = PayloadSerializer.Serialize(new PrivateChatMessageEventPayload(
                     Id: message.Id,
                     FromUserId: message.FromUserId,
                     ToUserId: message.ToUserId,
                     Content: message.Content,
                     ContentType: message.ContentType,
                     CreatedAt: message.CreatedAt,
+                    DeliveredTo: message.IsDelivered ? new List<ulong> { message.ToUserId } : new List<ulong>(),
+                    ReadBy: message.IsRead ? new List<ulong> { message.ToUserId } : new List<ulong>(),
                     FromUsername: fromUsername,
                     Username: fromUsername));
 
@@ -249,19 +241,7 @@ public class AuthHandler : IMessageHandler
     {
         try
         {
-            var responseJson = JsonSerializer.SerializeToUtf8Bytes(response);
-            
-            var responseMessage = new Aegis.Protocol.Message
-            {
-                Magic = ProtocolConstants.Magic,
-                VersionMajor = ProtocolConstants.VersionMajor,
-                VersionMinor = ProtocolConstants.VersionMinor,
-                Type = MessageType.Ack,
-                SequenceId = sequenceId,
-                PayloadLength = (uint)responseJson.Length,
-                Payload = responseJson
-            };
-
+            var responseJson = PayloadSerializer.Serialize(response);
             await _messageSender.SendProtocolMessageAsync(
                 context.ConnectionId,
                 (ushort)MessageType.Ack,

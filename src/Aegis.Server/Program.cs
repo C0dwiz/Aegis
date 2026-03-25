@@ -117,6 +117,25 @@ public static class Program
                     context.Configuration.GetSection(LoggingOptions.SectionName));
                 services.Configure<AvatarStorageOptions>(
                     context.Configuration.GetSection(AvatarStorageOptions.SectionName));
+                services.Configure<MinioStorageOptions>(
+                    context.Configuration.GetSection(MinioStorageOptions.SectionName));
+                services.Configure<ElasticsearchOptions>(
+                    context.Configuration.GetSection(ElasticsearchOptions.SectionName));
+
+                services.AddHttpClient<ElasticsearchUserSearchIndexService>();
+                services.AddScoped<IUserSearchIndexService>(serviceProvider =>
+                {
+                    var searchOptions = serviceProvider
+                        .GetRequiredService<IOptions<ElasticsearchOptions>>()
+                        .Value;
+
+                    if (!searchOptions.Enabled)
+                    {
+                        return new NoOpUserSearchIndexService();
+                    }
+
+                    return serviceProvider.GetRequiredService<ElasticsearchUserSearchIndexService>();
+                });
 
                 var redisConnectionString = context.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
                 services.AddStackExchangeRedisCache(options =>
@@ -142,7 +161,8 @@ public static class Program
                 services.AddScoped<IUserRepository, UserRepository>();
                 services.AddScoped<IUserAvatarRepository, UserAvatarRepository>();
                 services.AddScoped<ISessionRepository, SessionRepository>();
-                services.AddScoped<IMessageRepository, MessageRepository>();
+                services.AddScoped<IMessageRepository>(_ => new ZoneTreeMessageRepository("zonetree-messages-db"));
+                services.AddScoped<IMessageDeliveryRepository, MessageDeliveryRepository>();
                 services.AddScoped<IChannelRepository, ChannelRepository>();
                 services.AddScoped<IPrivateChatRepository, PrivateChatRepository>();
                 services.AddScoped<IGroupRepository, GroupRepository>();
@@ -155,13 +175,33 @@ public static class Program
                 services.AddScoped<IUserAuthenticationService, UserAuthenticationService>();
                 services.AddScoped<IUserSearchService, UserSearchService>();
                 services.AddScoped<IUserProfileService, UserProfileService>();
-                services.AddSingleton<IAvatarStorageService, LocalAvatarStorageService>();
+                services.AddSingleton<IAvatarStorageService>(serviceProvider =>
+                {
+                    var avatarOptions = serviceProvider
+                        .GetRequiredService<IOptions<AvatarStorageOptions>>()
+                        .Value;
+                    var minioOptions = serviceProvider
+                        .GetRequiredService<IOptions<MinioStorageOptions>>()
+                        .Value;
+
+                    var useMinio = string.Equals(avatarOptions.Provider, "MinIO", StringComparison.OrdinalIgnoreCase)
+                        || minioOptions.Enabled;
+
+                    if (useMinio)
+                    {
+                        return ActivatorUtilities.CreateInstance<MinioAvatarStorageService>(serviceProvider);
+                    }
+
+                    return ActivatorUtilities.CreateInstance<LocalAvatarStorageService>(serviceProvider);
+                });
                 services.AddScoped<IChannelService, ChannelService>();
                 services.AddScoped<IGroupService, GroupService>();
                 services.AddScoped<IMessageService, MessageService>();
+                services.AddScoped<IMessageDeliveryService, MessageDeliveryService>();
                 services.AddScoped<IBotManagementService, BotManagementService>();
                 services.AddSingleton<IMessageDomainRules, MessageDomainRules>();
                 services.AddSingleton<DomainRulesAdapter>();
+                services.AddSingleton<IIdGenerator, IdGenerator>();
 
                 // Register core services (singletons - no DB dependencies)
                 services.AddSingleton<Aegis.Common.Logging.ILogger>(_ =>
@@ -205,6 +245,7 @@ public static class Program
                 });
 
                 // Register handlers as scoped concrete types to resolve only the needed one per message
+                                services.AddScoped<MessageReadReceiptHandler>();
                 services.AddScoped<HandshakeHandler>();
                 services.AddScoped<AuthHandler>();
                 services.AddScoped<PingHandler>();
@@ -240,6 +281,8 @@ public static class Program
                 services.AddScoped<GroupMessageSendHandler>();
                 services.AddScoped<MemberRoleUpdateHandler>();
                 services.AddScoped<MemberPermissionUpdateHandler>();
+                services.AddScoped<MessageReadReceiptHandler>();
+                services.AddScoped<MessageDeliveryReceiptHandler>();
                 services.AddScoped<MessageRouter>();
 
                 // Register hosted service
@@ -446,16 +489,6 @@ public class AegisMessengerService : BackgroundService
             }
 
             // Verify MAC
-            var messageData = data.Slice(0, data.Length - ProtocolConstants.MacSize);
-            var receivedMac = data.Slice(data.Length - ProtocolConstants.MacSize, ProtocolConstants.MacSize);
-
-            if (!isHandshake && !session.MacKey.IsEmpty && !_crypto.VerifyMac(messageData.Span, session.MacKey.Span, receivedMac.Span))
-            {
-                _logger.LogWarning("Invalid MAC for message {SequenceId} from connection {ConnectionId}",
-                    message.SequenceId, context.ConnectionId);
-                return;
-            }
-
             var encryptedPayload = (message.Flags & (byte)MessageFlags.Encrypted) != 0;
             if (!isHandshake && session.HandshakeEstablished && _protocolSecurityOptions.RequireEncryptedPayloadAfterHandshake && !encryptedPayload)
             {
@@ -474,7 +507,10 @@ public class AegisMessengerService : BackgroundService
                     return;
                 }
 
-                if (!TryDecryptPayload(message.Payload, session.SessionKey.Span, out var decryptedPayload))
+                // Reconstruct the header bytes to use as AAD for AES-GCM.
+                var headerBytes = data.Slice(0, ProtocolConstants.HeaderSize);
+
+                if (!TryDecryptPayload(message.Payload, session.SessionKey.Span, headerBytes.Span, out var decryptedPayload))
                 {
                     _logger.LogWarning("Failed to decrypt payload for message {SequenceId} from connection {ConnectionId}", message.SequenceId, context.ConnectionId);
                     return;
@@ -483,6 +519,19 @@ public class AegisMessengerService : BackgroundService
                 message.Payload = decryptedPayload;
                 message.PayloadLength = (uint)decryptedPayload.Length;
                 message.Flags = (byte)(message.Flags & ~(byte)MessageFlags.Encrypted);
+            }
+
+            var compressedPayload = (message.Flags & (byte)MessageFlags.Compressed) != 0;
+            if (compressedPayload)
+            {
+                if (!TryDecompressBrotli(message.Payload, out var decompressed))
+                {
+                    _logger.LogWarning("Failed to decompress payload for message {SequenceId} from connection {ConnectionId}", message.SequenceId, context.ConnectionId);
+                    return;
+                }
+                message.Payload = decompressed;
+                message.PayloadLength = (uint)decompressed.Length;
+                message.Flags = (byte)(message.Flags & ~(byte)MessageFlags.Compressed);
             }
 
             if (!isHandshake && !_messageDeduplicator.TryAcceptSequence(context.ConnectionId, message.SequenceId, out var replayReason))
@@ -510,7 +559,7 @@ public class AegisMessengerService : BackgroundService
         }
     }
 
-    private bool TryDecryptPayload(byte[] payload, ReadOnlySpan<byte> key, out byte[] plaintext)
+    private bool TryDecryptPayload(byte[] payload, ReadOnlySpan<byte> key, ReadOnlySpan<byte> aad, out byte[] plaintext)
     {
         plaintext = Array.Empty<byte>();
 
@@ -527,13 +576,31 @@ public class AegisMessengerService : BackgroundService
 
         try
         {
-            _crypto.Decrypt(ciphertext, key, nonce, plaintextBuffer);
+            _crypto.Decrypt(ciphertext, key, nonce, plaintextBuffer, aad);
             plaintext = plaintextBuffer;
             return true;
         }
         catch (CryptographicException)
         {
             return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryDecompressBrotli(byte[] data, out byte[] decompressed)
+    {
+        decompressed = Array.Empty<byte>();
+        try
+        {
+            using var input = new System.IO.MemoryStream(data);
+            using var brotli = new System.IO.Compression.BrotliStream(input, System.IO.Compression.CompressionMode.Decompress);
+            using var output = new System.IO.MemoryStream();
+            brotli.CopyTo(output);
+            decompressed = output.ToArray();
+            return true;
         }
         catch
         {

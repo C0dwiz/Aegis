@@ -29,11 +29,6 @@ public class CommonCryptoProviderAdapter : Aegis.Common.ICryptoProvider
         return _cryptoProvider.HashAsync(data);
     }
 
-    public Task<bool> VerifyMacAsync(byte[] data, byte[] key, byte[] mac)
-    {
-        return _cryptoProvider.VerifyMacAsync(data, key, mac);
-    }
-
     public Task<byte[]> GenerateSessionKeyAsync()
     {
         return _cryptoProvider.GenerateSessionKeyAsync();

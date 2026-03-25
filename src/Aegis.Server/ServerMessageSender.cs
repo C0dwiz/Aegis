@@ -71,54 +71,73 @@ public class ServerMessageSender : IMessageSender
             return;
         }
 
+        var session = _sessionManager.GetSession(connectionId);
+        var shouldEncrypt =
+            _protocolSecurityOptions.EncryptServerPayloadsAfterHandshake &&
+            session != null &&
+            session.HandshakeEstablished &&
+            !session.SessionKey.IsEmpty &&
+            (MessageType)messageType != MessageType.Handshake;
+
+        // Compress raw payload before encryption if it exceeds the threshold.
+        byte flags = (byte)MessageFlags.None;
+        if (payload.Length > ProtocolConstants.CompressionThreshold)
+        {
+            var compressed = CompressBrotli(payload);
+            if (compressed.Length < payload.Length)
+            {
+                payload = compressed;
+                flags = (byte)(flags | (byte)MessageFlags.Compressed);
+            }
+        }
+
+        if (shouldEncrypt)
+        {
+            // Build temporary header bytes as AAD so header tampering is
+            // detected by AES-GCM authentication.
+            var tempMessage = new Message
+            {
+                Magic = ProtocolConstants.Magic,
+                VersionMajor = ProtocolConstants.VersionMajor,
+                VersionMinor = ProtocolConstants.VersionMinor,
+                Flags = (byte)(flags | (byte)MessageFlags.Encrypted),
+                Type = (MessageType)messageType,
+                SequenceId = sequenceId,
+                Payload = Array.Empty<byte>(),
+                PayloadLength = (uint)payload.Length
+            };
+            var headerBuf = new byte[ProtocolConstants.HeaderSize];
+            MessageEncoder.Encode(tempMessage, headerBuf);
+
+            var nonce = new byte[12];
+            RandomNumberGenerator.Fill(nonce);
+
+            var ciphertextWithTag = new byte[payload.Length + 16];
+            _cryptoProvider.Encrypt(payload, session!.SessionKey.Span, nonce, ciphertextWithTag,
+                headerBuf.AsSpan(0, ProtocolConstants.HeaderSize));
+
+            var encryptedPayload = new byte[nonce.Length + ciphertextWithTag.Length];
+            Buffer.BlockCopy(nonce, 0, encryptedPayload, 0, nonce.Length);
+            Buffer.BlockCopy(ciphertextWithTag, 0, encryptedPayload, nonce.Length, ciphertextWithTag.Length);
+
+            CryptographicOperations.ZeroMemory(ciphertextWithTag);
+
+            payload = encryptedPayload;
+            flags = (byte)(flags | (byte)MessageFlags.Encrypted);
+        }
+
         var message = new Message
         {
             Magic = ProtocolConstants.Magic,
             VersionMajor = ProtocolConstants.VersionMajor,
             VersionMinor = ProtocolConstants.VersionMinor,
-            Flags = (byte)MessageFlags.None,
+            Flags = flags,
             Type = (MessageType)messageType,
             SequenceId = sequenceId,
             Payload = payload,
             PayloadLength = (uint)payload.Length
         };
 
-        message.PayloadLength = (uint)message.Payload.Length;
-
-        var session = _sessionManager.GetSession(connectionId);
-        var shouldSign = session != null && session.HandshakeEstablished && !session.MacKey.IsEmpty;
-        var shouldEncrypt =
-            _protocolSecurityOptions.EncryptServerPayloadsAfterHandshake &&
-            session != null &&
-            session.HandshakeEstablished &&
-            !session.SessionKey.IsEmpty &&
-            message.Type != MessageType.Handshake;
-
-        if (shouldEncrypt)
-        {
-            var nonce = new byte[12];
-            RandomNumberGenerator.Fill(nonce);
-
-            var ciphertextWithTag = new byte[message.Payload.Length + 16];
-            _cryptoProvider.Encrypt(message.Payload, session!.SessionKey.Span, nonce, ciphertextWithTag);
-
-            var encryptedPayload = new byte[nonce.Length + ciphertextWithTag.Length];
-            Buffer.BlockCopy(nonce, 0, encryptedPayload, 0, nonce.Length);
-            Buffer.BlockCopy(ciphertextWithTag, 0, encryptedPayload, nonce.Length, ciphertextWithTag.Length);
-
-            message.Payload = encryptedPayload;
-            message.PayloadLength = (uint)encryptedPayload.Length;
-            message.Flags = (byte)(message.Flags | (byte)MessageFlags.Encrypted);
-
-            CryptographicOperations.ZeroMemory(ciphertextWithTag);
-        }
-
-        if (!shouldSign && !allowUnsigned)
-        {
-            _logger.Warning($"Sending unsigned message {message.Type} to connection {connectionId} because no handshake is established");
-        }
-
-        message.Mac = new byte[ProtocolConstants.MacSize];
         var totalSize = Message.TotalSize(message);
         var rented = ArrayPool<byte>.Shared.Rent(totalSize);
 
@@ -126,15 +145,6 @@ public class ServerMessageSender : IMessageSender
         {
             var output = rented.AsMemory(0, totalSize);
             MessageEncoder.Encode(message, output.Span);
-
-            if (shouldSign)
-            {
-                _cryptoProvider.ComputeMac(
-                    output.Span.Slice(0, totalSize - ProtocolConstants.MacSize),
-                    session!.MacKey.Span,
-                    output.Span.Slice(totalSize - ProtocolConstants.MacSize, ProtocolConstants.MacSize));
-            }
-
             await _server.SendToConnectionAsync(connectionId, output);
             _logger.Debug($"Protocol message {message.Type} sent to connection {connectionId}, size: {totalSize}");
         }
@@ -142,6 +152,16 @@ public class ServerMessageSender : IMessageSender
         {
             ArrayPool<byte>.Shared.Return(rented);
         }
+    }
+
+    private static byte[] CompressBrotli(byte[] data)
+    {
+        using var output = new System.IO.MemoryStream();
+        using (var brotli = new System.IO.Compression.BrotliStream(output, System.IO.Compression.CompressionLevel.Fastest))
+        {
+            brotli.Write(data, 0, data.Length);
+        }
+        return output.ToArray();
     }
 
     private static bool TryDecodeProtocolMessage(byte[] data, out Message message)

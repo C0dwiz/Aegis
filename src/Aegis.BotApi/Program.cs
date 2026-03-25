@@ -17,6 +17,22 @@ var builder = WebApplication.CreateBuilder(args);
 BotApiStartupValidation.Validate(builder.Configuration, builder.Environment);
 
 builder.Services.Configure<BotApiOptions>(builder.Configuration.GetSection(BotApiOptions.SectionName));
+builder.Services.Configure<ElasticsearchOptions>(builder.Configuration.GetSection(ElasticsearchOptions.SectionName));
+
+builder.Services.AddHttpClient<ElasticsearchUserSearchIndexService>();
+builder.Services.AddScoped<IUserSearchIndexService>(serviceProvider =>
+{
+    var searchOptions = serviceProvider
+        .GetRequiredService<Microsoft.Extensions.Options.IOptions<ElasticsearchOptions>>()
+        .Value;
+
+    if (!searchOptions.Enabled)
+    {
+        return new NoOpUserSearchIndexService();
+    }
+
+    return serviceProvider.GetRequiredService<ElasticsearchUserSearchIndexService>();
+});
 
 var redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
 builder.Services.AddStackExchangeRedisCache(options =>
@@ -35,7 +51,7 @@ builder.Services.AddDbContextPool<AegisDbContext>(options =>
 });
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
-builder.Services.AddScoped<IMessageRepository, MessageRepository>();
+builder.Services.AddScoped<IMessageRepository>(_ => new ZoneTreeMessageRepository("zonetree-messages-db"));
 builder.Services.AddScoped<IChannelRepository, ChannelRepository>();
 builder.Services.AddScoped<IPrivateChatRepository, PrivateChatRepository>();
 builder.Services.AddScoped<IGroupRepository, GroupRepository>();

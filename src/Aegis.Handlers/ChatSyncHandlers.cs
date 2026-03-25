@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Aegis.Common;
 using Aegis.Data.Entities;
 using Aegis.Data.Repositories;
@@ -50,6 +49,8 @@ public record PrivateChatHistoryItem(
     string Content,
     MessageContentType ContentType,
     DateTime CreatedAt,
+    IReadOnlyList<ulong> DeliveredTo,
+    IReadOnlyList<ulong> ReadBy,
     string? FromUsername = null,
     string? Username = null
 );
@@ -75,6 +76,8 @@ public record ChannelHistoryItem(
     string Content,
     MessageContentType ContentType,
     DateTime CreatedAt,
+    IReadOnlyList<ulong> DeliveredTo,
+    IReadOnlyList<ulong> ReadBy,
     string? FromUsername = null,
     string? ChannelName = null
 );
@@ -86,6 +89,8 @@ public record PrivateChatMessageEventPayload(
     string Content,
     MessageContentType ContentType,
     DateTime CreatedAt,
+    IReadOnlyList<ulong> DeliveredTo,
+    IReadOnlyList<ulong> ReadBy,
     string? FromUsername = null,
     string? Username = null
 );
@@ -97,6 +102,8 @@ public record ChannelMessageEventPayload(
     string Content,
     MessageContentType ContentType,
     DateTime CreatedAt,
+    IReadOnlyList<ulong> DeliveredTo,
+    IReadOnlyList<ulong> ReadBy,
     string? FromUsername = null,
     string? ChannelName = null
 );
@@ -195,7 +202,7 @@ public class ChatListHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, ChatListResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
+        var payload = PayloadSerializer.Serialize(response);
         await _messageSender.SendProtocolMessageAsync(
             context.ConnectionId,
             (ushort)MessageType.ChatListResponse,
@@ -240,7 +247,7 @@ public class PrivateChatHistoryHandler : IMessageHandler
                 return;
             }
 
-            var payload = JsonSerializer.Deserialize<PrivateChatHistoryRequest>(message.Payload);
+            var payload = PayloadSerializer.Deserialize<PrivateChatHistoryRequest>(message.Payload);
             if (payload == null || payload.PeerUserId == 0)
             {
                 await SendResponseAsync(context, message.SequenceId,
@@ -272,9 +279,23 @@ public class PrivateChatHistoryHandler : IMessageHandler
                     Content: m.Content,
                     ContentType: m.ContentType,
                     CreatedAt: m.CreatedAt,
+                    DeliveredTo: m.IsDelivered ? [m.ToUserId] : [],
+                    ReadBy: m.IsRead ? [m.ToUserId] : [],
                     FromUsername: m.FromUserId == session.UserId ? session.Username : peer.Username,
                     Username: m.FromUserId == session.UserId ? session.Username : peer.Username))
                 .ToList();
+
+            var readMessageIds = history
+                .Where(m => m.ToUserId == session.UserId && !m.IsRead && !m.IsDeleted)
+                .Select(m => m.Id)
+                .Distinct()
+                .ToArray();
+
+            if (readMessageIds.Length > 0)
+            {
+                await _messageRepository.MarkMessagesReadAsync(readMessageIds, session.UserId);
+                await SendReadReceiptEventToPeerAsync(payload.PeerUserId, session.UserId, readMessageIds);
+            }
 
             await SendResponseAsync(context, message.SequenceId,
                 new PrivateChatHistoryResponse(true, payload.PeerUserId, ordered));
@@ -289,14 +310,42 @@ public class PrivateChatHistoryHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, PrivateChatHistoryResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
+        var payload = PayloadSerializer.Serialize(response);
         await _messageSender.SendProtocolMessageAsync(
             context.ConnectionId,
             (ushort)MessageType.PrivateChatHistoryResponse,
             sequenceId,
             payload);
     }
+
+    private async Task SendReadReceiptEventToPeerAsync(ulong peerUserId, ulong readerUserId, IReadOnlyList<ulong> messageIds)
+    {
+        if (!_sessionManager.TryGetConnectionIdByUserId(peerUserId, out var peerConnectionId))
+        {
+            return;
+        }
+
+        var payload = PayloadSerializer.Serialize(new MessageStatusEventPayload(
+            Success: true,
+            MessageIds: messageIds.ToArray(),
+            DeliveredTo: null,
+            ReadBy: readerUserId,
+            ProcessedAt: DateTime.UtcNow));
+
+        await _messageSender.SendProtocolMessageAsync(
+            peerConnectionId,
+            (ushort)MessageType.MessageStatusEvent,
+            0,
+            payload);
+    }
 }
+
+internal sealed record MessageStatusEventPayload(
+    bool Success,
+    ulong[] MessageIds,
+    ulong? DeliveredTo,
+    ulong? ReadBy,
+    DateTime ProcessedAt);
 
 public class ChannelHistoryHandler : IMessageHandler
 {
@@ -331,7 +380,7 @@ public class ChannelHistoryHandler : IMessageHandler
                 return;
             }
 
-            var payload = JsonSerializer.Deserialize<ChannelHistoryRequest>(message.Payload);
+            var payload = PayloadSerializer.Deserialize<ChannelHistoryRequest>(message.Payload);
             if (payload == null || payload.ChannelId == 0)
             {
                 await SendResponseAsync(context, message.SequenceId,
@@ -364,6 +413,8 @@ public class ChannelHistoryHandler : IMessageHandler
                     Content: m.Content,
                     ContentType: m.ContentType,
                     CreatedAt: m.CreatedAt,
+                    DeliveredTo: m.IsDelivered ? [session.UserId] : [],
+                    ReadBy: m.IsRead ? [session.UserId] : [],
                     FromUsername: m.FromUser?.Username,
                     ChannelName: channel?.Name))
                 .ToList();
@@ -381,7 +432,7 @@ public class ChannelHistoryHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, ChannelHistoryResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
+        var payload = PayloadSerializer.Serialize(response);
         await _messageSender.SendProtocolMessageAsync(
             context.ConnectionId,
             (ushort)MessageType.ChannelHistoryResponse,

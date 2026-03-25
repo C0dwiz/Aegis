@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
+import 'package:msgpack_dart/msgpack_dart.dart' as msgpack;
 import 'message.dart';
 import 'message_type.dart';
 import 'message_payloads.dart';
@@ -69,6 +70,10 @@ class AegisClient {
   /// Typed stream of incoming channel message events.
   Stream<ChannelMessageEvent> get channelMessageEvents =>
       events.channelMessageEvents;
+
+    /// Typed stream of incoming async delivery/read status events.
+    Stream<MessageStatusEvent> get messageStatusEvents =>
+      events.messageStatusEvents;
 
   /// Stream of disconnect events
   Stream<void> get disconnects => _transport.disconnects;
@@ -167,46 +172,50 @@ class AegisClient {
   Future<void> login(String username, String password,
       {String clientInfo = 'aegis-dart-client'}) async {
     _requireConnected();
-    final payloadJson = jsonEncode({
+    final payload = msgpack.serialize({
       'Username': username,
       'Password': password,
       'ClientInfo': clientInfo,
     });
-    await _doAuthenticate(payloadJson);
+    await _doAuthenticate(payload);
   }
 
   /// Re-authenticate with a previously issued session token.
   Future<void> loginWithToken(String token) async {
     _requireConnected();
-    final payloadJson = jsonEncode({
+    final payload = msgpack.serialize({
       'Token': token,
       'ClientInfo': 'aegis-dart-client',
     });
-    await _doAuthenticate(payloadJson);
+    await _doAuthenticate(payload);
   }
 
   /// Low-level authenticate: accepts either a raw JSON string or a token.
   ///
   /// Prefer [login] / [loginWithToken] for clarity.
-  Future<void> authenticate(String authPayloadOrToken) async {
+  Future<void> authenticate(dynamic authPayloadOrToken) async {
     _requireConnected();
-    final payloadText = authPayloadOrToken.trim().startsWith('{')
-        ? authPayloadOrToken
-        : jsonEncode({
-            'Token': authPayloadOrToken,
-            'ClientInfo': 'aegis-dart-client',
-          });
-    await _doAuthenticate(payloadText);
+    List<int> payload;
+    if (authPayloadOrToken is List<int>) {
+      payload = authPayloadOrToken;
+    } else if (authPayloadOrToken is String && authPayloadOrToken.trim().startsWith('{')) {
+      payload = msgpack.serialize(jsonDecode(authPayloadOrToken));
+    } else {
+      payload = msgpack.serialize({
+        'Token': authPayloadOrToken,
+        'ClientInfo': 'aegis-dart-client',
+      });
+    }
+    await _doAuthenticate(payload);
   }
 
-  Future<void> _doAuthenticate(String jsonPayload) async {
-    final msg = Message.withType(MessageType.auth, utf8.encode(jsonPayload));
+  Future<void> _doAuthenticate(List<int> payload) async {
+    final msg = Message.withType(MessageType.auth, payload);
     final response = await _sendAndWaitResponse(msg);
 
-    final decoded = _tryDecodeJson(response.payload);
+    final decoded = msgpack.deserialize(response.payload);
     if (decoded == null || decoded['Success'] != true) {
-      final err = _extractErrorMessage(response.payload) ?? 'Authentication failed';
-      throw Exception(err);
+      throw Exception('Authentication failed');
     }
 
     _isAuthenticated = true;
@@ -454,6 +463,12 @@ class AegisClient {
     void Function(ChannelMessageEvent event) handler,
   ) {
     return channelMessageEvents.listen(handler);
+  }
+
+  StreamSubscription<MessageStatusEvent> onMessageStatusEvent(
+    void Function(MessageStatusEvent event) handler,
+  ) {
+    return messageStatusEvents.listen(handler);
   }
 
   // ─── Channels ───────────────────────────────────────────────────────────────

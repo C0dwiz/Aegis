@@ -1,4 +1,8 @@
-/// Message types for the Aegis Protocol
+/// Message types for the Aegis Protocol.
+///
+/// Each value corresponds to the `MessageType` enum in the C# server
+/// (`src/Aegis.Protocol/MessageType.cs`). The 2-byte type field in the
+/// frame header is encoded big-endian at offset 7.
 enum MessageType {
   unknown(0),
   auth(1),
@@ -80,7 +84,16 @@ enum MessageType {
   channelResolve(61),
   channelResolveResponse(62),
   channelJoinByLink(63),
-  channelJoinByLinkResponse(64);
+  channelJoinByLinkResponse(64),
+
+  // Message delivery/read receipts
+  messageReadReceipt(65),
+  messageReadReceiptResponse(66),
+  messageDeliveryReceipt(67),
+  messageDeliveryReceiptResponse(68),
+
+  // Async status event (server -> clients)
+  messageStatusEvent(69);
 
   const MessageType(this.value);
   final int value;
@@ -93,19 +106,32 @@ enum MessageType {
   }
 }
 
-/// Message flags for protocol features
+/// Bitmask flags for the single-byte `Flags` header field (offset 6).
+///
+/// See: `MessageFlags` in `src/Aegis.Protocol/MessageType.cs`.
 enum MessageFlag {
+  /// Sender expects an ACK response for this frame.
   requiresAck(0x01),
+
+  /// This frame is a retransmission of a previously-sent frame.
   isRetransmit(0x02),
+
+  /// Payload is Brotli-compressed.
   compressed(0x04),
+
+  /// Payload is encrypted (AES-GCM after key exchange).
   encrypted(0x08),
+
+  /// High-priority frame — may skip normal queue ordering.
   priority(0x10);
 
   const MessageFlag(this.value);
   final int value;
 }
 
-/// Acknowledgment status codes
+/// Server ACK status codes carried in ACK/NACK payloads.
+///
+/// See: `AckStatus` in `src/Aegis.Protocol/MessageType.cs`.
 enum AckStatus {
   ok(0),
   error(1),

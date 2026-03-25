@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Aegis.Common;
 using Aegis.Data.Services;
 using Aegis.Protocol;
@@ -124,7 +123,7 @@ public class ChannelEditHandler : IMessageHandler
                 return;
             }
 
-            var request = JsonSerializer.Deserialize<ChannelEditRequest>(message.Payload);
+            var request = PayloadSerializer.Deserialize<ChannelEditRequest>(message.Payload);
             if (request == null)
             {
                 await SendResponseAsync(context, message.SequenceId, new ChannelEditResponse(false, "Invalid payload"));
@@ -198,7 +197,7 @@ public class GroupCreateHandler : IMessageHandler
                 return;
             }
 
-            var request = JsonSerializer.Deserialize<GroupCreateRequest>(message.Payload);
+            var request = PayloadSerializer.Deserialize<GroupCreateRequest>(message.Payload);
             if (request == null)
             {
                 await SendResponseAsync(context, message.SequenceId, new GroupCreateResponse(false, Message: "Invalid payload"));
@@ -267,7 +266,7 @@ public class GroupEditHandler : IMessageHandler
                 return;
             }
 
-            var request = JsonSerializer.Deserialize<GroupEditRequest>(message.Payload);
+            var request = PayloadSerializer.Deserialize<GroupEditRequest>(message.Payload);
             if (request == null)
             {
                 await SendResponseAsync(context, message.SequenceId, new GroupEditResponse(false, "Invalid payload"));
@@ -344,7 +343,7 @@ public class GroupMessageSendHandler : IMessageHandler
                 return;
             }
 
-            var request = JsonSerializer.Deserialize<GroupMessageSendRequest>(message.Payload);
+            var request = PayloadSerializer.Deserialize<GroupMessageSendRequest>(message.Payload);
             if (request == null)
             {
                 await SendResponseAsync(context, message.SequenceId, new GroupMessageSendResponse(false, Message: "Invalid payload"));
@@ -442,7 +441,7 @@ public class MemberRoleUpdateHandler : IMessageHandler
                 return;
             }
 
-            var request = JsonSerializer.Deserialize<MemberRoleUpdateRequest>(message.Payload);
+            var request = PayloadSerializer.Deserialize<MemberRoleUpdateRequest>(message.Payload);
             if (request == null)
             {
                 await SendResponseAsync(context, message.SequenceId, new MemberRoleUpdateResponse(false, "Invalid payload"));
@@ -546,7 +545,7 @@ public class MemberPermissionUpdateHandler : IMessageHandler
                 return;
             }
 
-            var request = JsonSerializer.Deserialize<MemberPermissionUpdateRequest>(message.Payload);
+            var request = PayloadSerializer.Deserialize<MemberPermissionUpdateRequest>(message.Payload);
             if (request == null)
             {
                 await SendResponseAsync(context, message.SequenceId, new MemberPermissionUpdateResponse(false, "Invalid payload"));

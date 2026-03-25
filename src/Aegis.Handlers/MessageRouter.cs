@@ -13,6 +13,7 @@ public class MessageRouter
     private static readonly IReadOnlyDictionary<Aegis.Protocol.MessageType, Func<IServiceProvider, IMessageHandler>> HandlerResolvers
         = new Dictionary<Aegis.Protocol.MessageType, Func<IServiceProvider, IMessageHandler>>
     {
+            [Aegis.Protocol.MessageType.MessageReadReceipt] = sp => sp.GetRequiredService<MessageReadReceiptHandler>(),
         [Aegis.Protocol.MessageType.Handshake] = sp => sp.GetRequiredService<HandshakeHandler>(),
         [Aegis.Protocol.MessageType.Auth] = sp => sp.GetRequiredService<AuthHandler>(),
         [Aegis.Protocol.MessageType.Ping] = sp => sp.GetRequiredService<PingHandler>(),
@@ -47,7 +48,9 @@ public class MessageRouter
         [Aegis.Protocol.MessageType.GroupEdit] = sp => sp.GetRequiredService<GroupEditHandler>(),
         [Aegis.Protocol.MessageType.GroupMessageSend] = sp => sp.GetRequiredService<GroupMessageSendHandler>(),
         [Aegis.Protocol.MessageType.MemberRoleUpdate] = sp => sp.GetRequiredService<MemberRoleUpdateHandler>(),
-        [Aegis.Protocol.MessageType.MemberPermissionUpdate] = sp => sp.GetRequiredService<MemberPermissionUpdateHandler>()
+        [Aegis.Protocol.MessageType.MemberPermissionUpdate] = sp => sp.GetRequiredService<MemberPermissionUpdateHandler>(),
+        [Aegis.Protocol.MessageType.MessageReadReceipt] = sp => sp.GetRequiredService<MessageReadReceiptHandler>(),
+        [Aegis.Protocol.MessageType.MessageDeliveryReceipt] = sp => sp.GetRequiredService<MessageDeliveryReceiptHandler>()
     };
 
     private readonly IServiceProvider? _serviceProvider;

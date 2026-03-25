@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Aegis.Common;
 using Aegis.Transport;
 
@@ -13,7 +12,7 @@ internal static class HandlerResponseSender
         ulong sequenceId,
         TResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
+        var payload = PayloadSerializer.Serialize(response);
         return messageSender.SendProtocolMessageAsync(
             context.ConnectionId,
             (ushort)responseType,

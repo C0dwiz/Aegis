@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Aegis.Common;
 using Aegis.Data.Services;
 using Aegis.Protocol;
@@ -114,7 +113,7 @@ public class ProfileUpdateHandler : IMessageHandler
                 return;
             }
 
-            var request = JsonSerializer.Deserialize<ProfileUpdateRequest>(message.Payload);
+            var request = PayloadSerializer.Deserialize<ProfileUpdateRequest>(message.Payload);
             if (request == null)
             {
                 await SendResponseAsync(context, message.SequenceId, new ProfileUpdateResponse(false, Message: "Invalid payload"));
@@ -211,7 +210,7 @@ public class ProfileGetHandler : IMessageHandler
                 return;
             }
 
-            var request = JsonSerializer.Deserialize<ProfileGetRequest>(message.Payload);
+            var request = PayloadSerializer.Deserialize<ProfileGetRequest>(message.Payload);
 
             // If no ID/username specified, return own profile
             ulong targetUserId = session.UserId;
@@ -297,7 +296,7 @@ public class ProfileAvatarAddHandler : IMessageHandler
             return;
         }
 
-        var request = JsonSerializer.Deserialize<ProfileAvatarAddRequest>(message.Payload);
+        var request = PayloadSerializer.Deserialize<ProfileAvatarAddRequest>(message.Payload);
         if (request == null || string.IsNullOrWhiteSpace(request.AvatarUrl))
         {
             await SendAsync(context, message.SequenceId, new ProfileAvatarMutationResponse(false, "Invalid payload"));
@@ -324,7 +323,7 @@ public class ProfileAvatarAddHandler : IMessageHandler
             context.ConnectionId,
             (ushort)MessageType.ProfileAvatarAddResponse,
             sequenceId,
-            JsonSerializer.SerializeToUtf8Bytes(response));
+            PayloadSerializer.Serialize(response));
     }
 }
 
@@ -367,7 +366,7 @@ public class ProfileAvatarListHandler : IMessageHandler
             context.ConnectionId,
             (ushort)MessageType.ProfileAvatarListResponse,
             sequenceId,
-            JsonSerializer.SerializeToUtf8Bytes(response));
+            PayloadSerializer.Serialize(response));
     }
 }
 
@@ -398,7 +397,7 @@ public class ProfileAvatarDeleteHandler : IMessageHandler
             return;
         }
 
-        var request = JsonSerializer.Deserialize<ProfileAvatarDeleteRequest>(message.Payload);
+        var request = PayloadSerializer.Deserialize<ProfileAvatarDeleteRequest>(message.Payload);
         if (request == null || request.AvatarId == 0)
         {
             await SendAsync(context, message.SequenceId, false, "Invalid payload");
@@ -415,7 +414,7 @@ public class ProfileAvatarDeleteHandler : IMessageHandler
             context.ConnectionId,
             (ushort)MessageType.ProfileAvatarDeleteResponse,
             sequenceId,
-            JsonSerializer.SerializeToUtf8Bytes(new ProfileAvatarMutationResponse(success, message)));
+            PayloadSerializer.Serialize(new ProfileAvatarMutationResponse(success, message)));
     }
 }
 
@@ -446,7 +445,7 @@ public class ProfileAvatarSetPrimaryHandler : IMessageHandler
             return;
         }
 
-        var request = JsonSerializer.Deserialize<ProfileAvatarSetPrimaryRequest>(message.Payload);
+        var request = PayloadSerializer.Deserialize<ProfileAvatarSetPrimaryRequest>(message.Payload);
         if (request == null || request.AvatarId == 0)
         {
             await SendAsync(context, message.SequenceId, false, "Invalid payload");
@@ -463,6 +462,6 @@ public class ProfileAvatarSetPrimaryHandler : IMessageHandler
             context.ConnectionId,
             (ushort)MessageType.ProfileAvatarSetPrimaryResponse,
             sequenceId,
-            JsonSerializer.SerializeToUtf8Bytes(new ProfileAvatarMutationResponse(success, message)));
+            PayloadSerializer.Serialize(new ProfileAvatarMutationResponse(success, message)));
     }
 }

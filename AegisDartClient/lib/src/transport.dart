@@ -2,65 +2,110 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
-import 'message.dart';
-import 'message_encoder.dart';
+
 import 'exceptions.dart';
 import 'logger.dart';
+import 'message.dart';
+import 'message_encoder.dart';
+import 'message_type.dart';
 import 'protocol_constants.dart';
+import 'ring_buffer.dart';
+import 'security_utils.dart';
 
-/// TCP transport layer for Aegis client communication
+/// TCP transport layer for Aegis client communication.
+///
+/// Handles socket lifecycle, frame extraction from the TCP byte stream,
+/// optional XOR transport masking, backpressure, and periodic health checks.
+///
+/// See: `src/Aegis.Transport/TcpServer.cs` (server counterpart).
 class AegisTransport {
   late Socket _socket;
   bool _isConnected = false;
   int _nextSequenceId = 1;
-  Uint8List _pendingBytes = Uint8List(0);
+
+  /// Ring buffer for accumulating TCP chunks and extracting complete frames.
+  /// Replaces the old `Uint8List _pendingBytes` pattern, avoiding O(n)
+  /// copies on every chunk arrival.
+  final RingBuffer _pendingBuffer = RingBuffer(initialCapacity: 8192);
+
   Uint8List _transportMaskingKey = Uint8List(0);
   int _inboundMaskOffset = 0;
   int _outboundMaskOffset = 0;
-  
-  final StreamController<Message> _messageController = StreamController<Message>.broadcast();
-  final StreamController<void> _disconnectController = StreamController<void>.broadcast();
-  
-  /// Stream of incoming messages
+
+  StreamSubscription<Uint8List>? _socketSubscription;
+  Timer? _healthCheckTimer;
+
+  /// Maximum bytes buffered before pausing the socket (backpressure).
+  final int _maxBufferSize;
+
+  /// Whether reading has been paused due to backpressure.
+  bool _isPaused = false;
+
+  final StreamController<Message> _messageController =
+      StreamController<Message>.broadcast();
+  final StreamController<void> _disconnectController =
+      StreamController<void>.broadcast();
+
+  /// Stream of incoming decoded messages.
   Stream<Message> get messages => _messageController.stream;
-  
-  /// Stream of disconnect events
+
+  /// Stream of disconnect events.
   Stream<void> get disconnects => _disconnectController.stream;
-  
-  /// Check if client is connected to server
+
+  /// Whether the transport is connected.
   bool get isConnected => _isConnected;
 
-  /// Connect to Aegis server
+  /// Create a transport with optional [maxBufferSize] for backpressure.
+  AegisTransport({int maxBufferSize = 4 * 1024 * 1024})
+      : _maxBufferSize = maxBufferSize;
+
+  // ── Connection ──────────────────────────────────────────────────────
+
+  /// Connect to the Aegis server at [host]:[port].
+  ///
+  /// * [timeout] — TCP connect timeout.
+  /// * [transportMaskingKey] — optional XOR masking key for the transport.
+  /// * [healthCheckInterval] — if provided, a periodic ping is sent
+  ///   at this interval; a failure triggers a disconnect.
   Future<void> connect(
     String host,
     int port, {
     Duration? timeout,
     String? transportMaskingKey,
+    Duration? healthCheckInterval,
   }) async {
     if (_isConnected) {
       throw ConnectionException('Already connected to server');
     }
 
     AegisLogger.info('Connecting to $host:$port');
-    
+
     try {
-      _socket = await Socket.connect(host, port, timeout: timeout ?? const Duration(seconds: 10))
-          .timeout(timeout ?? const Duration(seconds: 10));
-      
+      final connectTimeout = timeout ?? const Duration(seconds: 10);
+      _socket = await Socket.connect(host, port, timeout: connectTimeout)
+          .timeout(connectTimeout);
+
       _isConnected = true;
       _nextSequenceId = 1;
-        _pendingBytes = Uint8List(0);
-        _inboundMaskOffset = 0;
-        _outboundMaskOffset = 0;
-        _transportMaskingKey = (transportMaskingKey != null && transportMaskingKey.trim().isNotEmpty)
-          ? Uint8List.fromList(utf8.encode(transportMaskingKey))
-          : Uint8List(0);
-      
+      _pendingBuffer.clear();
+      _inboundMaskOffset = 0;
+      _outboundMaskOffset = 0;
+      _isPaused = false;
+
+      if (transportMaskingKey != null && transportMaskingKey.trim().isNotEmpty) {
+        _transportMaskingKey =
+            Uint8List.fromList(utf8.encode(transportMaskingKey));
+      } else {
+        _transportMaskingKey = Uint8List(0);
+      }
+
       AegisLogger.info('Connected to $host:$port');
-      
-      // Start listening for incoming data
+
       _listenForMessages();
-      
+
+      if (healthCheckInterval != null) {
+        _startHealthCheck(healthCheckInterval);
+      }
     } catch (e) {
       _isConnected = false;
       AegisLogger.error('Failed to connect to $host:$port', e);
@@ -68,58 +113,70 @@ class AegisTransport {
     }
   }
 
-  /// Disconnect from server
+  /// Disconnect from the server.
   Future<void> disconnect() async {
     if (!_isConnected) return;
-    
+
     _isConnected = false;
+    _healthCheckTimer?.cancel();
+    _healthCheckTimer = null;
     AegisLogger.info('Disconnecting from server');
-    
+
     try {
+      await _socketSubscription?.cancel();
+      _socketSubscription = null;
       await _socket.close();
     } catch (e) {
-      // Ignore errors during disconnect
+      // Best-effort close — ignore errors.
     }
-    
-    _disconnectController.add(null);
+
+    // Zero out masking key for security.
+    if (_transportMaskingKey.isNotEmpty) {
+      SecureBufferUtils.zeroOut(_transportMaskingKey);
+    }
+
+    if (!_disconnectController.isClosed) _disconnectController.add(null);
   }
 
-  /// Send a message to the server
+  // ── Sending ─────────────────────────────────────────────────────────
+
+  /// Send [message] to the server.
+  ///
+  /// Assigns a sequence ID automatically if `message.sequenceId == 0`.
   Future<void> sendMessage(Message message) async {
     if (!_isConnected) {
       throw NotConnectedException();
     }
 
-    AegisLogger.debug('Sending message: ${message.type} (seq: ${message.sequenceId})');
+    AegisLogger.debug(
+      'Sending message: ${message.type} (seq: ${message.sequenceId})',
+    );
 
     try {
-      // Set sequence ID if not set
       if (message.sequenceId == 0) {
         message.sequenceId = _getNextSequenceId();
       }
 
-      // Encode and send message
       final data = MessageEncoder.encode(message);
       final outgoing = _applyOutboundMask(data);
       _socket.add(outgoing);
       await _socket.flush();
-      
+
       AegisLogger.debug('Message sent successfully');
-      
     } catch (e) {
       _isConnected = false;
-      _disconnectController.add(null);
+      if (!_disconnectController.isClosed) _disconnectController.add(null);
       AegisLogger.error('Failed to send message', e);
       throw ConnectionException('Failed to send message', e);
     }
   }
 
-  /// Get next sequence ID
   int _getNextSequenceId() => _nextSequenceId++;
 
-  /// Listen for incoming messages
+  // ── Receiving ───────────────────────────────────────────────────────
+
   void _listenForMessages() {
-    _socket.listen(
+    _socketSubscription = _socket.listen(
       (Uint8List data) {
         _handleIncomingData(data);
       },
@@ -135,92 +192,146 @@ class AegisTransport {
     );
   }
 
-  /// Handle incoming data and parse messages
+  /// Accumulate [data] into the ring buffer and extract complete frames.
   void _handleIncomingData(Uint8List data) {
-    if (data.isEmpty) {
-      return;
-    }
+    if (data.isEmpty) return;
 
     final incoming = _applyInboundMask(data);
+    _pendingBuffer.write(incoming);
 
-    final merged = Uint8List(_pendingBytes.length + incoming.length);
-    merged.setRange(0, _pendingBytes.length, _pendingBytes);
-    merged.setRange(_pendingBytes.length, merged.length, incoming);
-    _pendingBytes = merged;
+    // ── Backpressure: pause socket if buffer grows too large ──────
+    if (!_isPaused && _pendingBuffer.length > _maxBufferSize) {
+      _socketSubscription?.pause();
+      _isPaused = true;
+      AegisLogger.warning(
+        'Backpressure: pausing socket read '
+        '(buffer ${_pendingBuffer.length} bytes)',
+      );
+    }
 
-    while (_pendingBytes.length >= ProtocolConstants.headerSize) {
-      final payloadLength = (_pendingBytes[17] << 24) |
-          (_pendingBytes[18] << 16) |
-          (_pendingBytes[19] << 8) |
-          _pendingBytes[20];
+    _extractFrames();
 
-      if (payloadLength < 0 || payloadLength > ProtocolConstants.maxPayloadSize) {
-        AegisLogger.error('Error parsing message', 'Invalid payload length: $payloadLength');
-        _pendingBytes = Uint8List(0);
+    // ── Resume socket once buffer drains below half-mark ─────────
+    if (_isPaused && _pendingBuffer.length < _maxBufferSize ~/ 2) {
+      _socketSubscription?.resume();
+      _isPaused = false;
+      AegisLogger.debug('Backpressure: resumed socket read');
+    }
+  }
+
+  /// Parse and dispatch all complete frames currently in the ring buffer.
+  void _extractFrames() {
+    while (_pendingBuffer.length >= ProtocolConstants.headerSize) {
+      // Read the 4-byte payload length at header offset 17 via a
+      // zero-copy view into the ring buffer.
+      final plView = _pendingBuffer.peekBytes(
+        ProtocolConstants.payloadLengthOffset,
+        4,
+      );
+      final payloadLength = ByteData.view(
+        plView.buffer,
+        plView.offsetInBytes,
+        4,
+      ).getUint32(0, Endian.big);
+
+      // Validate before allocating.
+      if (payloadLength > ProtocolConstants.maxPayloadSize) {
+        AegisLogger.error(
+          'Error parsing message',
+          'Invalid payload length: $payloadLength',
+        );
+        _pendingBuffer.clear();
         return;
       }
 
-      final frameSize = ProtocolConstants.headerSize + payloadLength + ProtocolConstants.macSize;
-      if (_pendingBytes.length < frameSize) {
-        break;
+      final frameSize = ProtocolConstants.headerSize +
+          payloadLength +
+          ProtocolConstants.macSize;
+
+      if (_pendingBuffer.length < frameSize) {
+        break; // Incomplete frame — wait for more data.
       }
 
+      // Extract a full frame (copy) and decode it.
+      final frame = _pendingBuffer.take(frameSize);
       try {
-        final frame = Uint8List.fromList(_pendingBytes.sublist(0, frameSize));
         final message = MessageEncoder.decode(frame);
-        AegisLogger.debug('Received message: ${message.type} (seq: ${message.sequenceId})');
+        AegisLogger.debug(
+          'Received message: ${message.type} (seq: ${message.sequenceId})',
+        );
         if (!_messageController.isClosed) {
           _messageController.add(message);
         }
       } catch (e) {
         AegisLogger.error('Error parsing message', e);
-        // Skip this frame and continue; do not reset the buffer
-      }
-
-      if (_pendingBytes.length == frameSize) {
-        _pendingBytes = Uint8List(0);
-      } else {
-        _pendingBytes = Uint8List.fromList(_pendingBytes.sublist(frameSize));
+        // Skip this frame and continue parsing the rest.
       }
     }
   }
 
+  // ── Health checks ───────────────────────────────────────────────────
+
+  /// Start periodic ping health checks.
+  void _startHealthCheck(Duration interval) {
+    _healthCheckTimer?.cancel();
+    _healthCheckTimer = Timer.periodic(interval, (_) {
+      if (!_isConnected) {
+        _healthCheckTimer?.cancel();
+        return;
+      }
+      _sendPing();
+    });
+  }
+
+  Future<void> _sendPing() async {
+    try {
+      final pingMsg = Message.withType(MessageType.ping);
+      await sendMessage(pingMsg);
+    } catch (_) {
+      AegisLogger.warning('Health check ping failed — disconnecting');
+      _isConnected = false;
+      if (!_disconnectController.isClosed) _disconnectController.add(null);
+    }
+  }
+
+  // ── Transport masking ───────────────────────────────────────────────
+
   Uint8List _applyInboundMask(Uint8List data) {
-    if (_transportMaskingKey.isEmpty) {
-      return data;
-    }
+    if (_transportMaskingKey.isEmpty) return data;
 
-    final masked = Uint8List.fromList(data);
-    for (var i = 0; i < masked.length; i++) {
-      final keyIndex = (_inboundMaskOffset + i) % _transportMaskingKey.length;
-      masked[i] = masked[i] ^ _transportMaskingKey[keyIndex];
+    final masked = Uint8List(data.length);
+    final keyLen = _transportMaskingKey.length;
+    for (var i = 0; i < data.length; i++) {
+      masked[i] = data[i] ^ _transportMaskingKey[(_inboundMaskOffset + i) % keyLen];
     }
-
-    _inboundMaskOffset += masked.length;
+    _inboundMaskOffset += data.length;
     return masked;
   }
 
   Uint8List _applyOutboundMask(Uint8List data) {
-    if (_transportMaskingKey.isEmpty) {
-      return data;
-    }
+    if (_transportMaskingKey.isEmpty) return data;
 
-    final masked = Uint8List.fromList(data);
-    for (var i = 0; i < masked.length; i++) {
-      final keyIndex = (_outboundMaskOffset + i) % _transportMaskingKey.length;
-      masked[i] = masked[i] ^ _transportMaskingKey[keyIndex];
+    final masked = Uint8List(data.length);
+    final keyLen = _transportMaskingKey.length;
+    for (var i = 0; i < data.length; i++) {
+      masked[i] = data[i] ^ _transportMaskingKey[(_outboundMaskOffset + i) % keyLen];
     }
-
-    _outboundMaskOffset += masked.length;
+    _outboundMaskOffset += data.length;
     return masked;
   }
 
-  /// Cleanup resources
+  // ── Cleanup ─────────────────────────────────────────────────────────
+
+  /// Release all resources held by the transport.
   void dispose() {
+    _healthCheckTimer?.cancel();
+    _healthCheckTimer = null;
     if (_isConnected) {
-      disconnect().ignore(); // best-effort close; errors are swallowed
+      disconnect().ignore();
     }
     if (!_messageController.isClosed) _messageController.close();
     if (!_disconnectController.isClosed) _disconnectController.close();
   }
 }
+
+

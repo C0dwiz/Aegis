@@ -84,7 +84,16 @@ public enum MessageType : ushort
     ChannelResolve = 61,
     ChannelResolveResponse = 62,
     ChannelJoinByLink = 63,
-    ChannelJoinByLinkResponse = 64
+    ChannelJoinByLinkResponse = 64,
+    
+    // Message delivery and read receipts
+    MessageReadReceipt = 65,
+    MessageReadReceiptResponse = 66,
+    MessageDeliveryReceipt = 67,
+    MessageDeliveryReceiptResponse = 68,
+
+    // Async status event (server -> clients)
+    MessageStatusEvent = 69
 }
 
 /// <summary>

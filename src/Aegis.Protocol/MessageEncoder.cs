@@ -8,7 +8,7 @@ public static class MessageEncoder
 {
     public static int Encode(Message message, Span<byte> buffer)
     {
-        if (buffer.Length < ProtocolConstants.HeaderSize + message.PayloadLength + ProtocolConstants.MacSize)
+        if (buffer.Length < ProtocolConstants.HeaderSize + message.PayloadLength)
             throw new ProtocolError($"Buffer too small: {buffer.Length}");
 
         int offset = 0;
@@ -36,10 +36,6 @@ public static class MessageEncoder
             message.Payload.AsSpan(0, (int)message.PayloadLength).CopyTo(buffer.Slice(offset));
             offset += (int)message.PayloadLength;
         }
-        
-        // Write MAC
-        message.Mac.CopyTo(buffer.Slice(offset));
-        offset += ProtocolConstants.MacSize;
         
         return offset;
     }
@@ -76,15 +72,15 @@ public static class MessageEncoder
             data.Length,
             message.PayloadLength,
             ProtocolConstants.HeaderSize,
-            ProtocolConstants.MacSize,
+            0,
             ProtocolConstants.MaxPayloadSize);
 
         if (frameError != null)
             throw new ProtocolError(frameError);
 
-        var expectedSize = ProtocolConstants.HeaderSize + checked((int)message.PayloadLength) + ProtocolConstants.MacSize;
+        var expectedSize = ProtocolConstants.HeaderSize + checked((int)message.PayloadLength);
 
-        if (data.Length - offset < message.PayloadLength + ProtocolConstants.MacSize)
+        if (data.Length - offset < message.PayloadLength)
             throw new ProtocolError("Incomplete message");
         
         // Read payload
@@ -94,9 +90,6 @@ public static class MessageEncoder
             data.Slice(offset, (int)message.PayloadLength).CopyTo(message.Payload);
             offset += (int)message.PayloadLength;
         }
-        
-        // Read MAC
-        data.Slice(offset, ProtocolConstants.MacSize).CopyTo(message.Mac);
         
         return message;
     }

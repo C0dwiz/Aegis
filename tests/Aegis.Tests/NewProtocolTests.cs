@@ -1,13 +1,23 @@
 using Aegis.Protocol;
 using Aegis.Handlers;
 using Aegis.Data.Entities;
-using System.Text.Json;
+using MessagePack;
+using MessagePack.Resolvers;
 using Xunit;
 
 namespace Aegis.Tests;
 
 public class NewProtocolTests
 {
+    private static readonly MessagePackSerializerOptions SerializerOptions =
+        MessagePackSerializerOptions.Standard.WithResolver(ContractlessStandardResolver.Instance);
+
+    private static T DeserializeRoundTrip<T>(T value)
+    {
+        var data = MessagePackSerializer.Serialize(value, SerializerOptions);
+        return MessagePackSerializer.Deserialize<T>(data, SerializerOptions);
+    }
+
     [Fact]
     public void MessageType_ShouldContainNewTypes()
     {
@@ -38,8 +48,7 @@ public class NewProtocolTests
         var request = new RegistrationRequest("testuser", "test@example.com", "password123", "public_key");
 
         // Act
-        var json = JsonSerializer.Serialize(request);
-        var deserialized = JsonSerializer.Deserialize<RegistrationRequest>(json);
+        var deserialized = DeserializeRoundTrip(request);
 
         // Assert
         Assert.NotNull(deserialized);
@@ -57,8 +66,7 @@ public class NewProtocolTests
         var response = new RegistrationResponse(true, "Success", user);
 
         // Act
-        var json = JsonSerializer.Serialize(response);
-        var deserialized = JsonSerializer.Deserialize<RegistrationResponse>(json);
+        var deserialized = DeserializeRoundTrip(response);
 
         // Assert
         Assert.NotNull(deserialized);
@@ -75,8 +83,7 @@ public class NewProtocolTests
         var request = new UserSearchRequest("john", 20);
 
         // Act
-        var json = JsonSerializer.Serialize(request);
-        var deserialized = JsonSerializer.Deserialize<UserSearchRequest>(json);
+        var deserialized = DeserializeRoundTrip(request);
 
         // Assert
         Assert.NotNull(deserialized);
@@ -96,8 +103,7 @@ public class NewProtocolTests
         var response = new UserSearchResponse(true, users, "Found users");
 
         // Act
-        var json = JsonSerializer.Serialize(response);
-        var deserialized = JsonSerializer.Deserialize<UserSearchResponse>(json);
+        var deserialized = DeserializeRoundTrip(response);
 
         // Assert
         Assert.NotNull(deserialized);
@@ -115,8 +121,7 @@ public class NewProtocolTests
         var request = new ChannelMessageRequest(1, "Hello, channel!", MessageContentType.Text, 5);
 
         // Act
-        var json = JsonSerializer.Serialize(request);
-        var deserialized = JsonSerializer.Deserialize<ChannelMessageRequest>(json);
+        var deserialized = DeserializeRoundTrip(request);
 
         // Assert
         Assert.NotNull(deserialized);
@@ -142,8 +147,7 @@ public class NewProtocolTests
         var response = new ChannelMessageResponse(true, 1, "Message sent");
 
         // Act
-        var json = JsonSerializer.Serialize(response);
-        var deserialized = JsonSerializer.Deserialize<ChannelMessageResponse>(json);
+        var deserialized = DeserializeRoundTrip(response);
 
         // Assert
         Assert.NotNull(deserialized);
@@ -159,8 +163,7 @@ public class NewProtocolTests
         var request = new ChannelCreateRequest("Test Channel", "Test Description", ChannelType.Private);
 
         // Act
-        var json = JsonSerializer.Serialize(request);
-        var deserialized = JsonSerializer.Deserialize<ChannelCreateRequest>(json);
+        var deserialized = DeserializeRoundTrip(request);
 
         // Assert
         Assert.NotNull(deserialized);
@@ -184,8 +187,7 @@ public class NewProtocolTests
         var response = new ChannelCreateResponse(true, 1, "Channel created");
 
         // Act
-        var json = JsonSerializer.Serialize(response);
-        var deserialized = JsonSerializer.Deserialize<ChannelCreateResponse>(json);
+        var deserialized = DeserializeRoundTrip(response);
 
         // Assert
         Assert.NotNull(deserialized);
@@ -201,8 +203,7 @@ public class NewProtocolTests
         var request = new PrivateChatMessageRequest(2, "Hello, private!", MessageContentType.Text);
 
         // Act
-        var json = JsonSerializer.Serialize(request);
-        var deserialized = JsonSerializer.Deserialize<PrivateChatMessageRequest>(json);
+        var deserialized = DeserializeRoundTrip(request);
 
         // Assert
         Assert.NotNull(deserialized);
@@ -234,8 +235,7 @@ public class NewProtocolTests
         var response = new PrivateChatMessageResponse(true, 1, "Message sent");
 
         // Act
-        var json = JsonSerializer.Serialize(response);
-        var deserialized = JsonSerializer.Deserialize<PrivateChatMessageResponse>(json);
+        var deserialized = DeserializeRoundTrip(response);
 
         // Assert
         Assert.NotNull(deserialized);

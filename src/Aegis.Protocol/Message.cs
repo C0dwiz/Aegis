@@ -12,8 +12,8 @@ public class Message
     public ulong SequenceId { get; set; }
     public uint PayloadLength { get; set; }
     public byte[] Payload { get; set; } = Array.Empty<byte>();
-    public byte[] Mac { get; set; } = new byte[ProtocolConstants.MacSize];
 
-    public static int TotalSize(Message message) => 
-        ProtocolConstants.HeaderSize + (int)message.PayloadLength + ProtocolConstants.MacSize;
+    // Frame = Header + Payload. AES-GCM tag lives inside the encrypted Payload.
+    public static int TotalSize(Message message) =>
+        ProtocolConstants.HeaderSize + (int)message.PayloadLength;
 }

@@ -5,7 +5,6 @@ public interface ICryptoProvider
     Task<string> HashPasswordAsync(string password);
     Task<bool> VerifyPasswordAsync(string password, string hash);
     Task<string> HashAsync(string data);
-    Task<bool> VerifyMacAsync(byte[] data, byte[] key, byte[] mac);
     Task<byte[]> GenerateSessionKeyAsync();
 }
 

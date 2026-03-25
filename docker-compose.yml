@@ -31,6 +31,43 @@ services:
       timeout: 3s
       retries: 20
 
+  minio:
+    image: minio/minio:latest
+    container_name: aegis-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - aegis_minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.3
+    container_name: aegis-elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - aegis_es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
   aegis-server:
     build:
       context: .
@@ -42,15 +79,30 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
     environment:
       AEGIS_Database__Provider: PostgreSQL
       AEGIS_Database__ConnectionString: ${AEGIS_DB_CONNECTION_STRING}
       AEGIS_Redis__ConnectionString: ${AEGIS_REDIS_CONNECTION_STRING:-redis:6379}
+      AEGIS_AvatarStorage__Provider: MinIO
       AEGIS_AvatarStorage__BaseDirectory: /data/media/avatars
-      AEGIS_AvatarStorage__PublicBaseUrl: ${AEGIS_AVATAR_PUBLIC_BASE_URL}
+      AEGIS_AvatarStorage__PublicBaseUrl: ${AEGIS_AVATAR_PUBLIC_BASE_URL:-http://localhost:9000/aegis-media/avatars}
       AEGIS_AvatarStorage__MaxUploadBytes: "5242880"
       AEGIS_AvatarStorage__MaxWidth: "512"
       AEGIS_AvatarStorage__MaxHeight: "512"
+      AEGIS_Minio__Enabled: "true"
+      AEGIS_Minio__Endpoint: ${AEGIS_MINIO_ENDPOINT:-minio:9000}
+      AEGIS_Minio__UseSsl: "false"
+      AEGIS_Minio__AccessKey: ${MINIO_ROOT_USER:-minioadmin}
+      AEGIS_Minio__SecretKey: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AEGIS_Minio__Bucket: ${AEGIS_MINIO_BUCKET:-aegis-media}
+      AEGIS_Minio__PublicBaseUrl: ${AEGIS_MINIO_PUBLIC_BASE_URL:-http://localhost:9000}
+      AEGIS_Elasticsearch__Enabled: "true"
+      AEGIS_Elasticsearch__Endpoint: ${AEGIS_ELASTICSEARCH_ENDPOINT:-http://elasticsearch:9200}
+      AEGIS_Elasticsearch__IndexName: ${AEGIS_ELASTICSEARCH_INDEX:-aegis-users}
       AEGIS_Logging__Console: "true"
       AEGIS_Logging__File: "false"
       AEGIS_ProtocolSecurity__RequireEncryptedPayloadAfterHandshake: ${AEGIS_REQUIRE_ENCRYPTED_PAYLOAD_AFTER_HANDSHAKE:-true}
@@ -76,6 +128,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
       aegis-server:
         condition: service_healthy
     environment:
@@ -84,6 +140,16 @@ services:
       Database__ConnectionString: ${AEGIS_DB_CONNECTION_STRING}
       Redis__ConnectionString: ${AEGIS_REDIS_CONNECTION_STRING:-redis:6379}
       AvatarStorage__BaseDirectory: /data/media/avatars
+      Elasticsearch__Enabled: "true"
+      Elasticsearch__Endpoint: ${AEGIS_ELASTICSEARCH_ENDPOINT:-http://elasticsearch:9200}
+      Elasticsearch__IndexName: ${AEGIS_ELASTICSEARCH_INDEX:-aegis-users}
+      Minio__Enabled: "true"
+      Minio__Endpoint: ${AEGIS_MINIO_ENDPOINT:-minio:9000}
+      Minio__UseSsl: "false"
+      Minio__AccessKey: ${MINIO_ROOT_USER:-minioadmin}
+      Minio__SecretKey: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      Minio__Bucket: ${AEGIS_MINIO_BUCKET:-aegis-media}
+      Minio__PublicBaseUrl: ${AEGIS_MINIO_PUBLIC_BASE_URL:-http://localhost:9000}
       ConnectionStrings__Default: ${AEGIS_DB_CONNECTION_STRING}
     ports:
       - "5000:5000"
@@ -100,3 +166,5 @@ volumes:
   aegis_pg_data:
   aegis_redis_data:
   aegis_media_data:
+  aegis_minio_data:
+  aegis_es_data:

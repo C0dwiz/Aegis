@@ -148,6 +148,42 @@ Aegis Protocol ориентирован на серверный runtime с бо�
 
 Важно: в контракте профиля не используется отдельный `parse_mode` для `Bio`.
 
+## Статусы сообщений (✓ / ✓✓)
+
+Для корректной отрисовки галочек клиент использует два источника:
+
+- поля `DeliveredTo` / `ReadBy` в `PrivateChatMessageEvent`, `ChannelMessageEvent`, а также history-ответах;
+- отдельное асинхронное событие `MessageStatusEvent` (код `69`) от сервера.
+
+Минимальный payload `MessageStatusEvent`:
+
+```json
+{
+   "Success": true,
+   "MessageIds": [12345, 12346],
+   "DeliveredTo": 1001,
+   "ReadBy": null,
+   "ProcessedAt": "2026-03-25T10:15:30.123Z"
+}
+```
+
+Или для read-обновления:
+
+```json
+{
+   "Success": true,
+   "MessageIds": [12345],
+   "DeliveredTo": null,
+   "ReadBy": 1001,
+   "ProcessedAt": "2026-03-25T10:16:01.987Z"
+}
+```
+
+Рекомендация для UI:
+
+- `✓` — сообщение доставлено (`DeliveredTo` содержит peer/user);
+- `✓✓` — сообщение прочитано (`ReadBy` содержит peer/user).
+
 ## Коротко
 
 Если упростить до одной фразы:

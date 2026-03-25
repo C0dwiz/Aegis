@@ -28,7 +28,6 @@ public class SessionManager
             CreatedAt = DateTime.UtcNow,
             LastActivity = DateTime.UtcNow,
             SessionKey = Memory<byte>.Empty,
-            MacKey = Memory<byte>.Empty,
             HandshakeEstablished = false
         };
         
@@ -137,7 +136,7 @@ public class SessionManager
         }
     }
 
-    public bool EstablishHandshake(ulong connectionId, ReadOnlySpan<byte> sessionKey, ReadOnlySpan<byte> macKey)
+    public bool EstablishHandshake(ulong connectionId, ReadOnlySpan<byte> sessionKey)
     {
         if (!_sessions.TryGetValue(connectionId, out var session))
         {
@@ -147,31 +146,11 @@ public class SessionManager
         ZeroSessionSecrets(session);
 
         session.SessionKey = sessionKey.ToArray();
-        session.MacKey = macKey.ToArray();
         session.HandshakeEstablished = true;
         session.LastActivity = DateTime.UtcNow;
 
         _logger.Info($"Handshake established for connection {connectionId}");
         return true;
-    }
-
-    public bool CanValidateMac(ulong connectionId)
-    {
-        return _sessions.TryGetValue(connectionId, out var session) &&
-            session.HandshakeEstablished &&
-            !session.MacKey.IsEmpty;
-    }
-    
-    public bool VerifyMac(ulong connectionId, ReadOnlySpan<byte> data, ReadOnlySpan<byte> receivedMac)
-    {
-        var session = GetSession(connectionId);
-        if (session == null || !session.HandshakeEstablished || session.MacKey.IsEmpty)
-        {
-            _logger.Warning($"No session found for connection {connectionId}");
-            return false;
-        }
-        
-        return _cryptoProvider.VerifyMac(data, session.MacKey.Span, receivedMac);
     }
 
     private static void ZeroSessionSecrets(SessionInfo session)
@@ -181,13 +160,7 @@ public class SessionManager
             session.SessionKey.Span.Clear();
         }
 
-        if (!session.MacKey.IsEmpty)
-        {
-            session.MacKey.Span.Clear();
-        }
-
         session.SessionKey = Memory<byte>.Empty;
-        session.MacKey = Memory<byte>.Empty;
         session.HandshakeEstablished = false;
     }
 }
@@ -202,5 +175,4 @@ public class SessionInfo
     public DateTime CreatedAt { get; set; }
     public DateTime LastActivity { get; set; }
     public Memory<byte> SessionKey { get; set; }
-    public Memory<byte> MacKey { get; set; }
 }

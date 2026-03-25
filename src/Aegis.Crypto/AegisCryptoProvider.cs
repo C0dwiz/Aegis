@@ -8,9 +8,8 @@ namespace Aegis.Crypto;
 public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
 {
     private const int EncryptionKeySize = 32; // AES-256
-    private const int MacKeySize = 32; // HMAC-SHA256
     private const int NonceSize = 12; // AES-GCM nonce
-    private const int TagSize = 16; // AES-GCM tag
+    private const int TagSize = 16; // AES-GCM tag (integrity built-in)
     private const int PasswordHashIterations = 210000;
 
     // ICryptoProvider implementation
@@ -57,11 +56,6 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
         return await Task.FromResult(Convert.ToBase64String(hash));
     }
 
-    public async Task<bool> VerifyMacAsync(byte[] data, byte[] key, byte[] mac)
-    {
-        return await Task.FromResult(VerifyMac(data, key, mac));
-    }
-
     public async Task<byte[]> GenerateSessionKeyAsync()
     {
         var key = new byte[EncryptionKeySize];
@@ -80,8 +74,8 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
         aes.Encrypt(nonce, data, ciphertext.AsSpan(0, data.Length), ciphertext.AsSpan(data.Length, TagSize));
         
         var result = new byte[nonce.Length + ciphertext.Length];
-        nonce.CopyTo(result);
-        ciphertext.CopyTo(result.AsSpan(nonce.Length));
+        nonce.AsSpan().CopyTo(result);
+        ciphertext.AsSpan().CopyTo(result.AsSpan(nonce.Length));
         
         return await Task.FromResult(result);
     }
@@ -110,50 +104,42 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
         }
     }
 
-    public async Task<byte[]> GenerateMacAsync(byte[] data, byte[] key)
+    public void DeriveKeys(ReadOnlySpan<byte> masterKey, Span<byte> encryptionKey)
     {
-        using var hmac = new HMACSHA256(key);
-        return await Task.FromResult(hmac.ComputeHash(data));
-    }
-
-
-    public void DeriveKeys(ReadOnlySpan<byte> masterKey, Span<byte> encryptionKey, Span<byte> macKey)
-    {
-        if (encryptionKey.Length != EncryptionKeySize || macKey.Length != MacKeySize)
-            throw new CryptoError($"Invalid key buffer sizes");
+        if (encryptionKey.Length != EncryptionKeySize)
+            throw new CryptoError($"Encryption key buffer must be {EncryptionKeySize} bytes");
 
         using var hkdf = new Rfc5869DeriveBytes(masterKey.ToArray(),
             Array.Empty<byte>(),
             "AegisKeyDerivation"u8.ToArray(),
-            EncryptionKeySize + MacKeySize);
+            EncryptionKeySize);
 
-        var derived = hkdf.GetBytes(EncryptionKeySize + MacKeySize);
+        var derived = hkdf.GetBytes(EncryptionKeySize);
         derived.AsSpan(0, EncryptionKeySize).CopyTo(encryptionKey);
-        derived.AsSpan(EncryptionKeySize, MacKeySize).CopyTo(macKey);
-
         CryptographicOperations.ZeroMemory(derived);
         hkdf.Dispose();
     }
 
 
     public int Encrypt(ReadOnlySpan<byte> plaintext, ReadOnlySpan<byte> key,
-        ReadOnlySpan<byte> nonce, Span<byte> ciphertext)
+        ReadOnlySpan<byte> nonce, Span<byte> ciphertext,
+        ReadOnlySpan<byte> aad = default)
     {
         if (ciphertext.Length < plaintext.Length + TagSize)
             throw new CryptoError($"Ciphertext buffer too small");
 
         var ciphertextBuffer = ciphertext.Slice(0, plaintext.Length);
         var tagBuffer = ciphertext.Slice(plaintext.Length, TagSize);
-        
+
         using var aes = new AesGcm(key.ToArray(), TagSize);
-        aes.Encrypt(nonce, plaintext, ciphertextBuffer, tagBuffer);
+        aes.Encrypt(nonce, plaintext, ciphertextBuffer, tagBuffer, aad);
 
         return plaintext.Length + TagSize;
     }
 
-
     public int Decrypt(ReadOnlySpan<byte> ciphertext, ReadOnlySpan<byte> key,
-        ReadOnlySpan<byte> nonce, Span<byte> plaintext)
+        ReadOnlySpan<byte> nonce, Span<byte> plaintext,
+        ReadOnlySpan<byte> aad = default)
     {
         if (ciphertext.Length < TagSize || plaintext.Length < ciphertext.Length - TagSize)
             throw new CryptoError($"Invalid buffer sizes");
@@ -164,37 +150,13 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
         using var aes = new AesGcm(key.ToArray(), TagSize);
         try
         {
-            aes.Decrypt(nonce, actualCiphertext, tag, plaintext);
+            aes.Decrypt(nonce, actualCiphertext, tag, plaintext, aad);
             return ciphertext.Length - TagSize;
         }
         catch (CryptographicException)
         {
             throw new CryptoError("Decryption failed - invalid authentication tag");
         }
-    }
-
-
-    public void ComputeMac(ReadOnlySpan<byte> data, ReadOnlySpan<byte> key, Span<byte> mac)
-    {
-        if (mac.Length != ProtocolConstants.MacSize)
-            throw new CryptoError($"MAC buffer must be {ProtocolConstants.MacSize} bytes");
-
-        using var hmac = new HMACSHA256(key.ToArray());
-        hmac.TryComputeHash(data, mac, out _);
-    }
-
-    public bool VerifyMac(byte[] data, byte[] key, byte[] mac)
-    {
-        Span<byte> computed = stackalloc byte[ProtocolConstants.MacSize];
-        ComputeMac(data, key, computed);
-        return CryptographicOperations.FixedTimeEquals(computed, mac);
-    }
-
-    public bool VerifyMac(ReadOnlySpan<byte> data, ReadOnlySpan<byte> key, ReadOnlySpan<byte> mac)
-    {
-        Span<byte> computed = stackalloc byte[ProtocolConstants.MacSize];
-        ComputeMac(data, key, computed);
-        return CryptographicOperations.FixedTimeEquals(computed, mac);
     }
     
     public Memory<byte> GenerateSessionKey()
@@ -203,42 +165,30 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
         RandomNumberGenerator.Fill(key);
         return key;
     }
-    
-    public Memory<byte> GenerateMacKey()
-    {
-        var key = new byte[MacKeySize];
-        RandomNumberGenerator.Fill(key);
-        return key;
-    }
-    
+
     public async Task<byte[]> EncryptMessageAsync(Message message, byte[] sessionKey)
     {
-        var messageSize = ProtocolConstants.HeaderSize + message.PayloadLength + ProtocolConstants.MacSize;
+        var messageSize = ProtocolConstants.HeaderSize + message.PayloadLength;
         var messageBytes = new byte[messageSize];
         MessageEncoder.Encode(message, messageBytes);
-        
+
         var nonce = new byte[NonceSize];
         RandomNumberGenerator.Fill(nonce);
-        
-        var payloadSize = messageSize - ProtocolConstants.MacSize;
-        var ciphertext = new byte[payloadSize + TagSize];
-        var encryptedLength = Encrypt(new ReadOnlySpan<byte>(messageBytes, 0, (int)payloadSize), sessionKey, nonce, ciphertext);
-        
+
+        // Use header bytes as AAD so tampering with the header is detectable.
+        var headerAad = messageBytes.AsSpan(0, ProtocolConstants.HeaderSize);
+        var plainPayload = messageBytes.AsSpan(ProtocolConstants.HeaderSize, (int)message.PayloadLength);
+        var ciphertext = new byte[plainPayload.Length + TagSize];
+        var encryptedLength = Encrypt(plainPayload, sessionKey, nonce, ciphertext, headerAad);
+
         var result = new byte[nonce.Length + encryptedLength];
         Buffer.BlockCopy(nonce, 0, result, 0, nonce.Length);
         Buffer.BlockCopy(ciphertext, 0, result, nonce.Length, encryptedLength);
-        
-        var mac = new byte[ProtocolConstants.MacSize];
-        ComputeMac(result, sessionKey, mac);
-        
-        var finalResult = new byte[result.Length + mac.Length];
-        Buffer.BlockCopy(result, 0, finalResult, 0, result.Length);
-        Buffer.BlockCopy(mac, 0, finalResult, result.Length, mac.Length);
-        
+
         CryptographicOperations.ZeroMemory(ciphertext);
         CryptographicOperations.ZeroMemory(nonce);
-        
-        return await Task.FromResult(finalResult);
+
+        return await Task.FromResult(result);
     }
 }
 

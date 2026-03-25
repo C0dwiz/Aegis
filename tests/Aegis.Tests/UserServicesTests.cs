@@ -13,6 +13,7 @@ using System.Text.Json;
 using Xunit;
 using Microsoft.EntityFrameworkCore.InMemory;
 using Microsoft.Extensions.Logging.Abstractions;
+using Aegis.Data.Utils;
 
 namespace Aegis.Tests;
 
@@ -46,14 +47,17 @@ public class UserServicesTests : IDisposable
         _mockCryptoProvider.Setup(x => x.HashAsync(It.IsAny<string>()))
             .ReturnsAsync("hashed_session_key");
 
+        var idGenerator = new FastIdGenerator(1);
+
         _registrationService = new UserRegistrationService(
-            _userRepository,
-            _mockCryptoProvider.Object,
-            NullLogger<UserRegistrationService>.Instance);
+        _userRepository,
+        _mockCryptoProvider.Object,
+        NullLogger<UserRegistrationService>.Instance,
+        idGenerator);
+
         _authService = new UserAuthenticationService(_userRepository, _sessionRepository, _mockCryptoProvider.Object);
         _searchService = new UserSearchService(_userRepository, null, NullLogger<UserSearchService>.Instance);
     }
-
     [Fact]
     public async Task UserRegistrationService_RegisterUserAsync_ShouldCreateUser()
     {

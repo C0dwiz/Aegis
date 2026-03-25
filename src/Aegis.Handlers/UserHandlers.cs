@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Aegis.Common;
 using Aegis.Data.Entities;
 using Aegis.Data.Repositories;
@@ -6,7 +5,6 @@ using Aegis.Data.Services;
 using Aegis.Protocol;
 using Aegis.Transport;
 using Microsoft.Extensions.Logging;
-using System.Text.Json.Serialization;
 
 namespace Aegis.Handlers;
 
@@ -27,24 +25,18 @@ public sealed class RegistrationRequest
         PublicKey = publicKey;
     }
 
-    [JsonPropertyName("username")]
     public string? Username { get; init; }
 
-    [JsonPropertyName("email")]
     public string? Email { get; init; }
 
     // Legacy clients may send this field.
-    [JsonPropertyName("mail")]
     public string? Mail { get; init; }
 
-    [JsonPropertyName("password")]
     public string? Password { get; init; }
 
-    [JsonPropertyName("publicKey")]
     public string? PublicKey { get; init; }
 
     // Legacy clients may send this snake_case field.
-    [JsonPropertyName("public_key")]
     public string? PublicKeyLegacy { get; init; }
 }
 
@@ -122,7 +114,7 @@ public class RegistrationHandler : IMessageHandler
                 return;
             }
 
-            var payload = JsonSerializer.Deserialize<RegistrationRequest>(message.Payload);
+            var payload = PayloadSerializer.Deserialize<RegistrationRequest>(message.Payload);
             if (payload == null)
             {
                 await SendErrorResponse(context, message.SequenceId, "Invalid payload");
@@ -194,7 +186,7 @@ public class RegistrationHandler : IMessageHandler
     {
         try
         {
-            var request = JsonSerializer.Deserialize<RegistrationRequest>(payload);
+            var request = PayloadSerializer.Deserialize<RegistrationRequest>(payload);
             return request?.Username ?? string.Empty;
         }
         catch
@@ -205,7 +197,7 @@ public class RegistrationHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, RegistrationResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
+        var payload = PayloadSerializer.Serialize(response);
         var responseMessage = new Aegis.Protocol.Message
         {
             Magic = ProtocolConstants.Magic,
@@ -288,7 +280,7 @@ public class UserSearchHandler : IMessageHandler
                 return;
             }
 
-            var payload = JsonSerializer.Deserialize<UserSearchRequest>(message.Payload);
+            var payload = PayloadSerializer.Deserialize<UserSearchRequest>(message.Payload);
             if (payload == null)
             {
                 await SendErrorResponse(context, message.SequenceId, "Invalid payload");
@@ -324,7 +316,7 @@ public class UserSearchHandler : IMessageHandler
 
     private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, UserSearchResponse response)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(response);
+        var payload = PayloadSerializer.Serialize(response);
         var responseMessage = new Aegis.Protocol.Message
         {
             Magic = ProtocolConstants.Magic,

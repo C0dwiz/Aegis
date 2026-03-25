@@ -62,6 +62,18 @@
       "languageVersion": "3.4"
     },
     {
+      "name": "es_compression",
+      "rootUri": "file:///home/codwiz/.pub-cache/hosted/pub.dev/es_compression-2.0.15",
+      "packageUri": "lib/",
+      "languageVersion": "3.2"
+    },
+    {
+      "name": "ffi",
+      "rootUri": "file:///home/codwiz/.pub-cache/hosted/pub.dev/ffi-2.2.0",
+      "packageUri": "lib/",
+      "languageVersion": "3.7"
+    },
+    {
       "name": "file",
       "rootUri": "file:///home/codwiz/.pub-cache/hosted/pub.dev/file-7.0.1",
       "packageUri": "lib/",
@@ -120,6 +132,12 @@
       "rootUri": "file:///home/codwiz/.pub-cache/hosted/pub.dev/mime-2.0.0",
       "packageUri": "lib/",
       "languageVersion": "3.2"
+    },
+    {
+      "name": "msgpack_dart",
+      "rootUri": "file:///home/codwiz/.pub-cache/hosted/pub.dev/msgpack_dart-1.0.1",
+      "packageUri": "lib/",
+      "languageVersion": "2.12"
     },
     {
       "name": "node_preamble",
@@ -292,7 +310,7 @@
   ],
   "generator": "pub",
   "generatorVersion": "3.11.1",
-  "flutterRoot": "file:///home/codwiz/snap/flutter/common/flutter",
+  "flutterRoot": "file:///home/codwiz/flutter",
   "flutterVersion": "3.41.4",
   "pubCache": "file:///home/codwiz/.pub-cache"
 }
