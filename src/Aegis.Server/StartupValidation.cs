@@ -172,15 +172,28 @@ internal static class StartupValidation
             throw new InvalidOperationException("Dependency endpoint is missing.");
         }
 
-        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var absolute))
+        if (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
         {
-            return absolute;
+            if (Uri.TryCreate(trimmed, UriKind.Absolute, out var explicitHttpUri))
+            {
+                return explicitHttpUri;
+            }
+
+            throw new InvalidOperationException($"Invalid dependency endpoint format: {endpoint}");
+        }
+
+        // Values like "minio:9000" or "elasticsearch:9200" must be treated as host:port,
+        // not as a custom URI scheme.
+        if (trimmed.Contains("://", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"Unsupported dependency endpoint scheme: {endpoint}");
         }
 
         var scheme = useSslByDefault ? "https" : "http";
-        if (Uri.TryCreate($"{scheme}://{trimmed}", UriKind.Absolute, out absolute))
+        if (Uri.TryCreate($"{scheme}://{trimmed}", UriKind.Absolute, out var inferredUri))
         {
-            return absolute;
+            return inferredUri;
         }
 
         throw new InvalidOperationException($"Invalid dependency endpoint format: {endpoint}");
