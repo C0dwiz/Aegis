@@ -2,6 +2,7 @@ using Aegis.Common;
 using Aegis.Data.Repositories;
 using Aegis.Protocol;
 using Aegis.Transport;
+using MessagePack;
 using Microsoft.Extensions.Logging;
 
 namespace Aegis.Handlers;
@@ -42,7 +43,7 @@ public class UserPresenceHandler : IMessageHandler
         {
             request = PayloadSerializer.Deserialize<UserPresenceUpdateRequest>(message.Payload);
         }
-        catch (JsonException ex)
+        catch (MessagePackSerializationException ex)
         {
             _logger.LogHandlerError(ex, "presence_invalid_json", context, message, _sessionManager);
             return;

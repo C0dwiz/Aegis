@@ -408,7 +408,7 @@ class AegisClient {
   /// Get private chat history with a peer.
   Future<PrivateChatHistoryResponse> getPrivateHistory(
     int peerUserId, {
-    int limit = 50,
+    int limit = 100,
     int? beforeMessageId,
   }) async {
     _requireAuthenticated();
@@ -431,7 +431,7 @@ class AegisClient {
   /// Get channel history.
   Future<ChannelHistoryResponse> getChannelHistory(
     int channelId, {
-    int limit = 50,
+    int limit = 100,
     int? beforeMessageId,
   }) async {
     _requireAuthenticated();

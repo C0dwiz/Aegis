@@ -93,6 +93,20 @@ ParsedRichText parseRichTextContent(String content) {
   return ParsedRichText(text: content, parseMode: null);
 }
 
+/// Recursively converts a MessagePack-deserialized structure into
+/// the `Map<String, dynamic>` / `List<dynamic>` shape expected by all `fromJson` factories.
+dynamic _normalizeMsgPack(dynamic value) {
+  if (value is Map) {
+    return value.map<String, dynamic>(
+      (k, v) => MapEntry(k.toString(), _normalizeMsgPack(v)),
+    );
+  }
+  if (value is List) {
+    return value.map(_normalizeMsgPack).toList();
+  }
+  return value;
+}
+
 /// Normalized response for unified media sending API.
 class MediaSendResponse {
   final bool success;
@@ -963,7 +977,7 @@ class PrivateChatHistoryRequest {
 
   PrivateChatHistoryRequest({
     required this.peerUserId,
-    this.limit = 50,
+    this.limit = 100,
     this.beforeMessageId,
   });
 
@@ -973,7 +987,7 @@ class PrivateChatHistoryRequest {
     if (beforeMessageId != null) 'BeforeMessageId': beforeMessageId,
   };
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 /// Private history message item
@@ -1057,8 +1071,9 @@ class PrivateChatHistoryResponse {
       );
 
   factory PrivateChatHistoryResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    return PrivateChatHistoryResponse.fromJson(json);
+    final raw = msgpack.deserialize(Uint8List.fromList(bytes));
+    return PrivateChatHistoryResponse.fromJson(
+      _normalizeMsgPack(raw) as Map<String, dynamic>);
   }
 }
 
@@ -1070,7 +1085,7 @@ class ChannelHistoryRequest {
 
   ChannelHistoryRequest({
     required this.channelId,
-    this.limit = 50,
+    this.limit = 100,
     this.beforeMessageId,
   });
 
@@ -1080,7 +1095,7 @@ class ChannelHistoryRequest {
     if (beforeMessageId != null) 'BeforeMessageId': beforeMessageId,
   };
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 /// Channel history message item
@@ -1167,8 +1182,9 @@ class ChannelHistoryResponse {
       );
 
   factory ChannelHistoryResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    return ChannelHistoryResponse.fromJson(json);
+    final raw = msgpack.deserialize(Uint8List.fromList(bytes));
+    return ChannelHistoryResponse.fromJson(
+      _normalizeMsgPack(raw) as Map<String, dynamic>);
   }
 }
 

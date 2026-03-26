@@ -31,7 +31,7 @@ public record ChatListItem(
 
 public record PrivateChatHistoryRequest(
     ulong PeerUserId,
-    int Limit = 50,
+    int Limit = 100,
     ulong? BeforeMessageId = null
 );
 
@@ -57,7 +57,7 @@ public record PrivateChatHistoryItem(
 
 public record ChannelHistoryRequest(
     ulong ChannelId,
-    int Limit = 50,
+    int Limit = 100,
     ulong? BeforeMessageId = null
 );
 
@@ -263,7 +263,7 @@ public class PrivateChatHistoryHandler : IMessageHandler
                 return;
             }
 
-            var limit = Math.Clamp(payload.Limit, 1, 200);
+            var limit = Math.Clamp(payload.Limit, 1, 500);
             var history = await _messageRepository.GetConversationBeforeAsync(
                 session.UserId,
                 payload.PeerUserId,
@@ -397,7 +397,7 @@ public class ChannelHistoryHandler : IMessageHandler
             }
 
             var channel = await _channelRepository.GetByIdAsync(payload.ChannelId);
-            var limit = Math.Clamp(payload.Limit, 1, 200);
+            var limit = Math.Clamp(payload.Limit, 1, 500);
 
             var history = await _channelRepository.GetChannelMessagesBeforeAsync(
                 payload.ChannelId,

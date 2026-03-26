@@ -52,6 +52,7 @@ public class DatabaseOptions
     
     public string Provider { get; set; } = "PostgreSQL";
     public string ConnectionString { get; set; } = string.Empty;
+    public string ZoneTreePath { get; set; } = "zonetree-messages-db";
 }
 
 public class LoggingOptions

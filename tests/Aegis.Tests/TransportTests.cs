@@ -132,7 +132,6 @@ public class TransportTests
                 SequenceId = 42,
                 Payload = new byte[] { 1, 2, 3, 4 },
                 PayloadLength = 4,
-                Mac = new byte[ProtocolConstants.MacSize]
             };
 
             var originalFrame = new byte[Message.TotalSize(originalMessage)];
@@ -193,7 +192,6 @@ public class TransportTests
                 SequenceId = 99,
                 Payload = new byte[] { 9, 8, 7, 6, 5 },
                 PayloadLength = 5,
-                Mac = new byte[ProtocolConstants.MacSize]
             };
 
             var originalFrame = new byte[Message.TotalSize(originalMessage)];
@@ -271,7 +269,6 @@ public class TransportTests
                     SequenceId = (ulong)(1000 + i),
                     Payload = new byte[] { (byte)(i % 256), 1, 2, 3 },
                     PayloadLength = 4,
-                    Mac = new byte[ProtocolConstants.MacSize]
                 };
 
                 var frame = new byte[Message.TotalSize(message)];
@@ -409,7 +406,6 @@ public class TransportTests
             SequenceId = 1,
             Payload = new byte[] { 1, 2, 3 },
             PayloadLength = 3,
-            Mac = new byte[ProtocolConstants.MacSize]
         };
 
         var msg2 = new Message
@@ -421,7 +417,6 @@ public class TransportTests
             SequenceId = 2,
             Payload = new byte[] { 4, 5, 6, 7 },
             PayloadLength = 4,
-            Mac = new byte[ProtocolConstants.MacSize]
         };
 
         var frame1 = new byte[Message.TotalSize(msg1)];

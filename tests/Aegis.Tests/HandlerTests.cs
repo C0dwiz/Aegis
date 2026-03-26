@@ -40,7 +40,6 @@ public class TestMessageSender : IMessageSender
             SequenceId = sequenceId,
             Payload = payload,
             PayloadLength = (uint)payload.Length,
-            Mac = new byte[ProtocolConstants.MacSize]
         };
 
         var buffer = new byte[Aegis.Protocol.Message.TotalSize(message)];
@@ -90,7 +89,6 @@ public class HandlerTests
             SequenceId = 1,
             PayloadLength = 5,
             Payload = new byte[] { 1, 2, 3, 4, 5 },
-            Mac = new byte[ProtocolConstants.MacSize]
         };
         
         // Act
@@ -118,7 +116,6 @@ public class HandlerTests
             SequenceId = 1,
             PayloadLength = 0,
             Payload = Array.Empty<byte>(),
-            Mac = new byte[ProtocolConstants.MacSize]
         };
         
         // Act
@@ -152,7 +149,6 @@ public class HandlerTests
             SequenceId = 1,
             PayloadLength = 10,
             Payload = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 },
-            Mac = new byte[ProtocolConstants.MacSize]
         };
         
         // Act
@@ -180,7 +176,6 @@ public class HandlerTests
             SequenceId = 1,
             PayloadLength = 8,
             Payload = BitConverter.GetBytes(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
-            Mac = new byte[ProtocolConstants.MacSize]
         };
         
         // Act
@@ -199,10 +194,10 @@ public class HandlerTests
         var context = new TestConnectionContext(12345ul);
         var recipientContext = new TestConnectionContext(54321ul);
         _sessionManager.CreateSession(context.ConnectionId);
-        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32], new byte[32]);
+        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32]);
         _sessionManager.AuthenticateSession(context.ConnectionId, 42, "tester");
         _sessionManager.CreateSession(recipientContext.ConnectionId);
-        _sessionManager.EstablishHandshake(recipientContext.ConnectionId, new byte[32], new byte[32]);
+        _sessionManager.EstablishHandshake(recipientContext.ConnectionId, new byte[32]);
         _sessionManager.AuthenticateSession(recipientContext.ConnectionId, 24, "recipient");
 
         var payload = Encoding.UTF8.GetBytes("{\"recipientId\":24,\"content\":\"Hello World!\"}");
@@ -216,7 +211,6 @@ public class HandlerTests
             SequenceId = 1,
             PayloadLength = (uint)payload.Length,
             Payload = payload,
-            Mac = new byte[ProtocolConstants.MacSize]
         };
         
         _antiSpam.AllowNextMessage = true;
@@ -237,7 +231,7 @@ public class HandlerTests
         var handler = new MessageHandler(_antiSpam, _messageServiceMock.Object, _messageSender, _sessionManager, _logger);
         var context = new TestConnectionContext(12345ul);
         _sessionManager.CreateSession(context.ConnectionId);
-        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32], new byte[32]);
+        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32]);
         _sessionManager.AuthenticateSession(context.ConnectionId, 42, "tester");
 
         var payload = Encoding.UTF8.GetBytes("{\"recipientId\":24,\"content\":\"Spam message\"}");
@@ -251,7 +245,6 @@ public class HandlerTests
             SequenceId = 1,
             PayloadLength = (uint)payload.Length,
             Payload = payload,
-            Mac = new byte[ProtocolConstants.MacSize]
         };
         
         _antiSpam.AllowNextMessage = false;
@@ -356,7 +349,7 @@ public class HandlerTests
         var router = MessageRouter.ForHandlers(new IMessageHandler[] { registrationHandler, searchHandler, channelHandler }, _messageSender, _logger);
         var context = new TestConnectionContext(12345ul);
         _sessionManager.CreateSession(context.ConnectionId);
-        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32], new byte[32]);
+        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32]);
         _sessionManager.AuthenticateSession(context.ConnectionId, 1, "router-user");
 
         // Test Registration message routing

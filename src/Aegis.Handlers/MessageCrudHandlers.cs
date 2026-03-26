@@ -133,10 +133,9 @@ public class MessageEditHandler : IMessageHandler
             Type = MessageType.MessageEditResponse,
             SequenceId = sequenceId,
             PayloadLength = (uint)payload.Length,
-            Payload = payload,
-            Mac = new byte[ProtocolConstants.MacSize]
+            Payload = payload
         };
-        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length + ProtocolConstants.MacSize];
+        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length];
         MessageEncoder.Encode(msg, buffer);
         await _messageSender.SendMessageAsync(context.ConnectionId, buffer);
     }
@@ -237,10 +236,9 @@ public class MessageDeleteHandler : IMessageHandler
             Type = MessageType.MessageDeleteResponse,
             SequenceId = sequenceId,
             PayloadLength = (uint)payload.Length,
-            Payload = payload,
-            Mac = new byte[ProtocolConstants.MacSize]
+            Payload = payload
         };
-        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length + ProtocolConstants.MacSize];
+        var buffer = new byte[ProtocolConstants.HeaderSize + payload.Length];
         MessageEncoder.Encode(msg, buffer);
         await _messageSender.SendMessageAsync(context.ConnectionId, buffer);
     }

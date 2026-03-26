@@ -86,6 +86,7 @@ services:
     environment:
       AEGIS_Database__Provider: PostgreSQL
       AEGIS_Database__ConnectionString: ${AEGIS_DB_CONNECTION_STRING}
+      AEGIS_Database__ZoneTreePath: ${AEGIS_ZONETREE_PATH:-/data/zonetree/messages-db}
       AEGIS_Redis__ConnectionString: ${AEGIS_REDIS_CONNECTION_STRING:-redis:6379}
       AEGIS_AvatarStorage__Provider: MinIO
       AEGIS_AvatarStorage__BaseDirectory: /data/media/avatars
@@ -110,6 +111,7 @@ services:
       - "8888:8888"
     volumes:
       - aegis_media_data:/data/media
+      - aegis_zonetree_data:/data/zonetree
     healthcheck:
       test: ["CMD-SHELL", "bash -lc ': > /dev/tcp/127.0.0.1/8888'"]
       interval: 10s
@@ -166,5 +168,6 @@ volumes:
   aegis_pg_data:
   aegis_redis_data:
   aegis_media_data:
+  aegis_zonetree_data:
   aegis_minio_data:
   aegis_es_data:

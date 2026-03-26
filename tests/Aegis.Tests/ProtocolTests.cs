@@ -109,8 +109,7 @@ public class ProtocolTests
             Type = MessageType.Message,
             SequenceId = 321,
             Payload = new byte[] { 1, 2, 3, 4 },
-            PayloadLength = 4,
-            Mac = new byte[ProtocolConstants.MacSize]
+            PayloadLength = 4
         };
 
         var frame = new byte[Message.TotalSize(message)];

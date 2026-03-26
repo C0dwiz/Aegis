@@ -55,8 +55,6 @@ public class IntegrationTests : IDisposable
             .ReturnsAsync(new byte[] { 1, 2, 3, 4 });
         mockCryptoProvider.Setup(x => x.HashAsync(Moq.It.IsAny<string>()))
             .ReturnsAsync("hashed_session_key");
-        mockCryptoProvider.Setup(x => x.VerifyMacAsync(Moq.It.IsAny<byte[]>(), Moq.It.IsAny<byte[]>(), Moq.It.IsAny<byte[]>()))
-            .ReturnsAsync(true);
 
         services.AddSingleton(mockCryptoProvider.Object);
 
@@ -236,7 +234,7 @@ public class IntegrationTests : IDisposable
 
         // Test User Search Handler
         sessionManager.CreateSession(context.ConnectionId);
-        sessionManager.EstablishHandshake(context.ConnectionId, new byte[32], new byte[32]);
+        sessionManager.EstablishHandshake(context.ConnectionId, new byte[32]);
         sessionManager.AuthenticateSession(context.ConnectionId, user.Id, user.Username);
 
         var searchHandler = new UserSearchHandler(

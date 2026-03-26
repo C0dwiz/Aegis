@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
-using System.Text.Json;
+using MessagePack;
+using MessagePack.Resolvers;
 using Aegis.Data.Entities;
 using Aegis.Data.Repositories;
 using Aegis.Common;
@@ -235,6 +236,10 @@ public class UserSearchService : IUserSearchService
 {
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
 
+    private static readonly MessagePackSerializerOptions MsgPackOptions =
+        MessagePackSerializerOptions.Standard
+            .WithResolver(ContractlessStandardResolver.Instance);
+
     private readonly IUserRepository _userRepository;
     private readonly IDistributedCache? _cache;
     private readonly IUserSearchIndexService _searchIndex;
@@ -387,7 +392,7 @@ public class UserSearchService : IUserSearchService
                 return null;
             }
 
-            return JsonSerializer.Deserialize<User>(bytes);
+            return MessagePackSerializer.Deserialize<User>(bytes, MsgPackOptions);
         }
         catch (Exception ex)
         {
@@ -405,7 +410,7 @@ public class UserSearchService : IUserSearchService
 
         try
         {
-            var bytes = JsonSerializer.SerializeToUtf8Bytes(ToCacheSafeUser(user));
+            var bytes = MessagePackSerializer.Serialize(ToCacheSafeUser(user), MsgPackOptions);
             await _cache.SetAsync(cacheKey, bytes, new DistributedCacheEntryOptions
             {
                 AbsoluteExpirationRelativeToNow = CacheTtl
@@ -455,6 +460,10 @@ public interface IUserProfileService
 public class UserProfileService : IUserProfileService
 {
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
+
+    private static readonly MessagePackSerializerOptions MsgPackOptions =
+        MessagePackSerializerOptions.Standard
+            .WithResolver(ContractlessStandardResolver.Instance);
 
     private readonly IUserRepository _userRepository;
     private readonly IUserAvatarRepository _avatarRepository;
@@ -518,7 +527,7 @@ public class UserProfileService : IUserProfileService
                 var bytes = await _cache.GetAsync(cacheKey);
                 if (bytes != null)
                 {
-                    var cached = JsonSerializer.Deserialize<User>(bytes);
+                    var cached = MessagePackSerializer.Deserialize<User>(bytes, MsgPackOptions);
                     if (cached != null)
                     {
                         return cached;
@@ -539,7 +548,7 @@ public class UserProfileService : IUserProfileService
             {
                 await _cache.SetAsync(
                     cacheKey,
-                    JsonSerializer.SerializeToUtf8Bytes(user),
+                    MessagePackSerializer.Serialize(user, MsgPackOptions),
                     new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CacheTtl });
             }
             catch (Exception ex)

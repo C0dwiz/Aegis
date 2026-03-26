@@ -161,7 +161,16 @@ public static class Program
                 services.AddScoped<IUserRepository, UserRepository>();
                 services.AddScoped<IUserAvatarRepository, UserAvatarRepository>();
                 services.AddScoped<ISessionRepository, SessionRepository>();
-                services.AddScoped<IMessageRepository>(_ => new ZoneTreeMessageRepository("zonetree-messages-db"));
+                services.AddScoped<IMessageRepository>(serviceProvider =>
+                {
+                    var databaseOptions = serviceProvider
+                        .GetRequiredService<IOptions<DatabaseOptions>>()
+                        .Value;
+                    var zoneTreePath = string.IsNullOrWhiteSpace(databaseOptions.ZoneTreePath)
+                        ? "zonetree-messages-db"
+                        : databaseOptions.ZoneTreePath;
+                    return new ZoneTreeMessageRepository(zoneTreePath);
+                });
                 services.AddScoped<IMessageDeliveryRepository, MessageDeliveryRepository>();
                 services.AddScoped<IChannelRepository, ChannelRepository>();
                 services.AddScoped<IPrivateChatRepository, PrivateChatRepository>();

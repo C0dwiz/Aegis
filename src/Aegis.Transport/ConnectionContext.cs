@@ -8,7 +8,7 @@ namespace Aegis.Transport;
 public class ConnectionContext : IDisposable
 {
     private const int ProtocolHeaderSize = sizeof(uint) + sizeof(byte) * 3 + sizeof(ushort) + sizeof(ulong) + sizeof(uint);
-    private const int ProtocolMacSize = 32;
+    private const int ProtocolMacSize = 0;
     private const int ProtocolMaxMessageSize = 1024 * 1024;
     private const int ProtocolMaxPayloadSize = ProtocolMaxMessageSize - ProtocolHeaderSize - ProtocolMacSize;
 

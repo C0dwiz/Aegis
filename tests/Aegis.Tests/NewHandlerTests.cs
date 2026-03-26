@@ -10,7 +10,8 @@ using Aegis.Common;
 using Aegis.Common.Configuration;
 using Aegis.Data;
 using Aegis.Data.Repositories;
-using System.Text.Json;
+using MessagePack;
+using MessagePack.Resolvers;
 using Xunit;
 using Microsoft.EntityFrameworkCore.InMemory;
 using System.Net.Sockets;
@@ -20,6 +21,10 @@ namespace Aegis.Tests;
 
 public class NewHandlerTests : IDisposable
 {
+    private static readonly MessagePackSerializerOptions MsgPackOptions =
+        MessagePackSerializerOptions.Standard
+            .WithResolver(ContractlessStandardResolver.Instance);
+
     private readonly AegisDbContext _context;
     private readonly Mock<IUserRegistrationService> _mockRegistrationService;
     private readonly Mock<IUserSearchService> _mockSearchService;
@@ -41,6 +46,9 @@ public class NewHandlerTests : IDisposable
     private readonly ChannelMessageHandler _channelMessageHandler;
     private readonly ChannelCreateHandler _channelCreateHandler;
     private readonly PrivateChatMessageHandler _privateChatMessageHandler;
+
+    private static byte[] SerializePayload<T>(T payload) =>
+        MessagePackSerializer.Serialize(payload, MsgPackOptions);
 
     public NewHandlerTests()
     {
@@ -97,7 +105,7 @@ public class NewHandlerTests : IDisposable
         using var mockSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         var context = new ConnectionContext(mockSocket, 12345ul);
         var registrationRequest = new RegistrationRequest("testuser", "test@example.com", "password123", "public_key");
-        var payload = JsonSerializer.SerializeToUtf8Bytes(registrationRequest);
+        var payload = SerializePayload(registrationRequest);
         
         var message = new Aegis.Protocol.Message
         {
@@ -150,7 +158,7 @@ public class NewHandlerTests : IDisposable
         using var mockSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         var context = new ConnectionContext(mockSocket, 12346ul);
         var searchRequest = new UserSearchRequest("john", 20);
-        var payload = JsonSerializer.SerializeToUtf8Bytes(searchRequest);
+        var payload = SerializePayload(searchRequest);
         
         var message = new Aegis.Protocol.Message
         {
@@ -179,7 +187,7 @@ public class NewHandlerTests : IDisposable
             }));
 
         _sessionManager.CreateSession(context.ConnectionId);
-        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32], new byte[32]);
+        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32]);
         _sessionManager.AuthenticateSession(context.ConnectionId, 1, "john_doe");
 
         // Act
@@ -203,7 +211,7 @@ public class NewHandlerTests : IDisposable
         using var mockSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         var context = new ConnectionContext(mockSocket, 12347ul);
         var channelMessageRequest = new ChannelMessageRequest(1, "Hello, channel!", MessageContentType.Text);
-        var payload = JsonSerializer.SerializeToUtf8Bytes(channelMessageRequest);
+        var payload = SerializePayload(channelMessageRequest);
         
         var message = new Aegis.Protocol.Message
         {
@@ -226,7 +234,7 @@ public class NewHandlerTests : IDisposable
         var context = new ConnectionContext(mockSocket, 22347ul);
 
         _sessionManager.CreateSession(context.ConnectionId);
-        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32], new byte[32]);
+        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32]);
         _sessionManager.AuthenticateSession(context.ConnectionId, 1001, "sender");
 
         var attachments = new List<MediaAttachmentPayload>
@@ -245,7 +253,7 @@ public class NewHandlerTests : IDisposable
             Attachments: attachments,
             ParseMode: null);
 
-        var payload = JsonSerializer.SerializeToUtf8Bytes(request);
+        var payload = SerializePayload(request);
         var message = new Aegis.Protocol.Message
         {
             Type = MessageType.ChannelMessage,
@@ -296,7 +304,7 @@ public class NewHandlerTests : IDisposable
         var context = new ConnectionContext(mockSocket, 32349ul);
 
         _sessionManager.CreateSession(context.ConnectionId);
-        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32], new byte[32]);
+        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32]);
         _sessionManager.AuthenticateSession(context.ConnectionId, 42, "sender");
 
         var attachments = Enumerable.Range(1, 11)
@@ -315,7 +323,7 @@ public class NewHandlerTests : IDisposable
             Attachments: attachments,
             ParseMode: null);
 
-        var payload = JsonSerializer.SerializeToUtf8Bytes(request);
+        var payload = SerializePayload(request);
         var message = new Aegis.Protocol.Message
         {
             Type = MessageType.PrivateChatMessage,
@@ -348,7 +356,7 @@ public class NewHandlerTests : IDisposable
         using var mockSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         var context = new ConnectionContext(mockSocket, 12348ul);
         var channelCreateRequest = new ChannelCreateRequest("Test Channel", "Test Description", ChannelType.Public);
-        var payload = JsonSerializer.SerializeToUtf8Bytes(channelCreateRequest);
+        var payload = SerializePayload(channelCreateRequest);
         
         var message = new Aegis.Protocol.Message
         {
@@ -378,7 +386,7 @@ public class NewHandlerTests : IDisposable
         using var mockSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         var context = new ConnectionContext(mockSocket, 12349ul);
         var privateChatRequest = new PrivateChatMessageRequest(2, "Hello, private!", MessageContentType.Text);
-        var payload = JsonSerializer.SerializeToUtf8Bytes(privateChatRequest);
+        var payload = SerializePayload(privateChatRequest);
         
         var message = new Aegis.Protocol.Message
         {
@@ -402,7 +410,7 @@ public class NewHandlerTests : IDisposable
         using var mockSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         var context = new ConnectionContext(mockSocket, 12350ul);
         var privateChatRequest = new PrivateChatMessageRequest(999, "Hello, private!", MessageContentType.Text);
-        var payload = JsonSerializer.SerializeToUtf8Bytes(privateChatRequest);
+        var payload = SerializePayload(privateChatRequest);
         
         var message = new Aegis.Protocol.Message
         {
