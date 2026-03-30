@@ -10,7 +10,7 @@ public class SessionManager
     private readonly ConcurrentDictionary<ulong, bool> _userPresenceState;
     private readonly ISessionCryptoProvider _cryptoProvider;
     private readonly ILogger _logger;
-    
+
     public SessionManager(ISessionCryptoProvider cryptoProvider, ILogger logger)
     {
         _sessions = new ConcurrentDictionary<ulong, SessionInfo>();
@@ -19,7 +19,7 @@ public class SessionManager
         _cryptoProvider = cryptoProvider;
         _logger = logger;
     }
-    
+
     public SessionInfo CreateSession(ulong connectionId)
     {
         var session = new SessionInfo
@@ -30,19 +30,19 @@ public class SessionManager
             SessionKey = Memory<byte>.Empty,
             HandshakeEstablished = false
         };
-        
+
         _sessions.TryAdd(connectionId, session);
         _logger.Info($"Session created for connection {connectionId}");
-        
+
         return session;
     }
-    
+
     public SessionInfo? GetSession(ulong connectionId)
     {
         _sessions.TryGetValue(connectionId, out var session);
         return session;
     }
-    
+
     public void UpdateActivity(ulong connectionId)
     {
         if (_sessions.TryGetValue(connectionId, out var session))
@@ -50,7 +50,7 @@ public class SessionManager
             session.LastActivity = DateTime.UtcNow;
         }
     }
-    
+
     public bool AuthenticateSession(ulong connectionId, ulong userId, string username)
     {
         if (_sessions.TryGetValue(connectionId, out var session))
@@ -107,7 +107,7 @@ public class SessionManager
         _userPresenceState.AddOrUpdate(session.UserId, isOnline, (_, _) => isOnline);
         return true;
     }
-    
+
     public SessionInfo? GetAuthenticatedSession(ulong connectionId)
     {
         if (_sessions.TryGetValue(connectionId, out var session) && session.IsAuthenticated)
@@ -116,7 +116,7 @@ public class SessionManager
         }
         return null;
     }
-    
+
     public void RemoveSession(ulong connectionId)
     {
         if (_sessions.TryRemove(connectionId, out var session))

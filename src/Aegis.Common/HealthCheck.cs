@@ -108,7 +108,7 @@ public class GracefulShutdownManager
         _logger.Info("Initiating graceful shutdown...");
 
         var cts = new CancellationTokenSource(TimeSpan.FromSeconds(_timeoutSeconds));
-        
+
         try
         {
             // Execute all registered shutdown handlers
@@ -153,8 +153,8 @@ public class RequestMetrics
     public ulong SequenceId { get; set; }
     public DateTime StartTime { get; set; } = DateTime.UtcNow;
     public DateTime? EndTime { get; set; }
-    public long ProcessingTimeMs => EndTime.HasValue 
-        ? (long)(EndTime.Value - StartTime).TotalMilliseconds 
+    public long ProcessingTimeMs => EndTime.HasValue
+        ? (long)(EndTime.Value - StartTime).TotalMilliseconds
         : 0;
     public bool IsCompleted => EndTime.HasValue;
 

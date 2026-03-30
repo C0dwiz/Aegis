@@ -80,25 +80,25 @@ import 'package:aegis_client/aegis_client.dart';
 
 void main() async {
   final client = AegisClient();
-  
+
   try {
     // Подключение к серверу
     await client.connect('localhost', 8888);
     print('Connected to Aegis server!');
-    
+
     // Аутентификация
     await client.authenticate('your_auth_token');
     print('Authenticated!');
-    
+
     // Отправка сообщения
     await client.sendMessage('Hello from Docker client!');
     print('Message sent!');
-    
+
     // Прослушивание входящих сообщений
     client.messages.listen((message) {
       print('Received: ${message.type}');
     });
-    
+
   } catch (e) {
     print('Error: $e');
   }

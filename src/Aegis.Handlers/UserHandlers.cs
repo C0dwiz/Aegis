@@ -86,7 +86,7 @@ public record UserSearchResult(
 public class RegistrationHandler : IMessageHandler
 {
     public MessageType Type => MessageType.Register;
-    
+
     private readonly IUserRegistrationService _registrationService;
     private readonly IMessageSender _messageSender;
     private readonly IRateLimiter _rateLimiter;
@@ -229,7 +229,7 @@ public class RegistrationHandler : IMessageHandler
 public class UserSearchHandler : IMessageHandler
 {
     public MessageType Type => MessageType.UserSearch;
-    
+
     private readonly IUserSearchService _searchService;
     private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;

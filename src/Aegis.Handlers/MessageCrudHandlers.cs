@@ -80,31 +80,31 @@ public class MessageEditHandler : IMessageHandler
             {
                 case "private":
                     var edited = await _messageService.EditMessageAsync(request.MessageId, session.UserId, request.NewContent);
-                    await SendResponseAsync(context, message.SequenceId, 
+                    await SendResponseAsync(context, message.SequenceId,
                         new MessageEditResponse(true, "Message edited", edited.Id));
                     break;
 
                 case "channel" when request.ChannelId.HasValue:
                     var chEdited = await _messageService.EditChannelMessageAsync(
                         request.MessageId, session.UserId, request.ChannelId.Value, request.NewContent);
-                    await SendResponseAsync(context, message.SequenceId, 
+                    await SendResponseAsync(context, message.SequenceId,
                         new MessageEditResponse(true, "Channel message edited", chEdited.Id));
                     break;
 
                 case "group" when request.GroupId.HasValue:
                     var grEdited = await _messageService.EditGroupMessageAsync(
                         request.MessageId, session.UserId, request.GroupId.Value, request.NewContent);
-                    await SendResponseAsync(context, message.SequenceId, 
+                    await SendResponseAsync(context, message.SequenceId,
                         new MessageEditResponse(true, "Group message edited", grEdited.Id));
                     break;
 
                 default:
-                    await SendResponseAsync(context, message.SequenceId, 
+                    await SendResponseAsync(context, message.SequenceId,
                         new MessageEditResponse(false, "Invalid scope or missing ID"));
                     break;
             }
 
-            _logger.LogInformation("Message {MessageId} edited by user {UserId} in scope {Scope}", 
+            _logger.LogInformation("Message {MessageId} edited by user {UserId} in scope {Scope}",
                 request.MessageId, session.UserId, request.Scope);
         }
         catch (UnauthorizedAccessException ex)
@@ -200,21 +200,21 @@ public class MessageDeleteHandler : IMessageHandler
                     break;
 
                 default:
-                    await SendResponseAsync(context, message.SequenceId, 
+                    await SendResponseAsync(context, message.SequenceId,
                         new MessageDeleteResponse(false, "Invalid scope or missing ID"));
                     return;
             }
 
             if (deleted)
             {
-                await SendResponseAsync(context, message.SequenceId, 
+                await SendResponseAsync(context, message.SequenceId,
                     new MessageDeleteResponse(true, "Message deleted", request.MessageId));
-                _logger.LogInformation("Message {MessageId} deleted by user {UserId} in scope {Scope}", 
+                _logger.LogInformation("Message {MessageId} deleted by user {UserId} in scope {Scope}",
                     request.MessageId, session.UserId, request.Scope);
             }
             else
             {
-                await SendResponseAsync(context, message.SequenceId, 
+                await SendResponseAsync(context, message.SequenceId,
                     new MessageDeleteResponse(false, "Message not found or no permission to delete"));
             }
         }

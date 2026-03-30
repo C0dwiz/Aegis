@@ -20,11 +20,11 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
         rng.GetBytes(salt);
 
         var hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, PasswordHashIterations, HashAlgorithmName.SHA256, 32);
-        
+
         var result = new byte[salt.Length + hash.Length];
         salt.CopyTo(result, 0);
         hash.CopyTo(result, salt.Length);
-        
+
         return await Task.FromResult(Convert.ToBase64String(result));
     }
 
@@ -35,12 +35,12 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
             var hashBytes = Convert.FromBase64String(hash);
             if (hashBytes.Length < 16)
                 return false;
-            
+
             var salt = hashBytes.AsSpan(0, 16);
             var expectedHash = hashBytes.AsSpan(16);
 
             var computedHash = Rfc2898DeriveBytes.Pbkdf2(password, salt, PasswordHashIterations, HashAlgorithmName.SHA256, 32);
-            
+
             return await Task.FromResult(CryptographicOperations.FixedTimeEquals(expectedHash, computedHash));
         }
         catch
@@ -68,15 +68,15 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
     {
         var nonce = new byte[NonceSize];
         RandomNumberGenerator.Fill(nonce);
-        
+
         var ciphertext = new byte[data.Length + TagSize];
         using var aes = new AesGcm(key, TagSize);
         aes.Encrypt(nonce, data, ciphertext.AsSpan(0, data.Length), ciphertext.AsSpan(data.Length, TagSize));
-        
+
         var result = new byte[nonce.Length + ciphertext.Length];
         nonce.AsSpan().CopyTo(result);
         ciphertext.AsSpan().CopyTo(result.AsSpan(nonce.Length));
-        
+
         return await Task.FromResult(result);
     }
 
@@ -92,7 +92,7 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
 
         var plaintext = new byte[actualCiphertext.Length];
         using var aes = new AesGcm(key, TagSize);
-        
+
         try
         {
             aes.Decrypt(nonce, actualCiphertext, tag, plaintext);
@@ -158,7 +158,7 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
             throw new CryptoError("Decryption failed - invalid authentication tag");
         }
     }
-    
+
     public Memory<byte> GenerateSessionKey()
     {
         var key = new byte[EncryptionKeySize];
@@ -199,23 +199,23 @@ internal class Rfc5869DeriveBytes : IDisposable
     private int _offset;
     private byte[] _t;
     private bool _disposed;
-    
+
     public Rfc5869DeriveBytes(byte[] key, byte[] salt, byte[] info, int outputLength)
     {
         // Extract phase - HKDF-Extract
         using var hmac = new HMACSHA256(salt.Length == 0 ? new byte[32] : salt);
         _prk = hmac.ComputeHash(key);
-        
+
         _info = info;
         _offset = 0;
         _t = new byte[32]; // HMAC-SHA256 output size
     }
-    
+
     public byte[] GetBytes(int count)
     {
         var result = new byte[count];
         var resultOffset = 0;
-        
+
         // Expand phase - HKDF-Expand with multiple rounds
         while (resultOffset < count)
         {
@@ -238,14 +238,14 @@ internal class Rfc5869DeriveBytes : IDisposable
                 input[_t.Length + _info.Length] = (byte)(_offset + 1);
                 _t = hmac.ComputeHash(input);
             }
-            
+
             // Copy bytes to result
             var bytesToCopy = Math.Min(_t.Length, count - resultOffset);
             Buffer.BlockCopy(_t, 0, result, resultOffset, bytesToCopy);
             resultOffset += bytesToCopy;
             _offset++;
         }
-        
+
         return result;
     }
 

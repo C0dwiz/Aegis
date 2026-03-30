@@ -21,14 +21,15 @@ public class ConnectionContext : IDisposable
     private int _incompleteFrameDropCount;
     private long _inboundMaskOffset;
     private long _outboundMaskOffset;
-    
+    private Stream? _ioStream;
+
     public Socket Socket { get; }
     public ulong ConnectionId { get; }
     public ulong NextSequenceId { get; private set; }
     public DateTime LastActivity { get; private set; }
     public bool HasPendingIncomingData => _incomingLength > 0;
     public int IncompleteFrameDropCount => _incompleteFrameDropCount;
-    
+
     public ConnectionContext(Socket socket, ulong connectionId, int bufferSize = 8192)
     {
         Socket = socket ?? throw new ArgumentNullException(nameof(socket));
@@ -41,9 +42,18 @@ public class ConnectionContext : IDisposable
         _incompleteFrameDropCount = 0;
         LastActivity = DateTime.UtcNow;
     }
-    
+
     public ulong GetNextSequenceId() => ++NextSequenceId;
-    
+
+    /// <summary>
+    /// Set the I/O stream used for this connection (NetworkStream or SslStream).
+    /// Must be called before the receive/send loop is started.
+    /// </summary>
+    public void SetIoStream(Stream stream) => _ioStream = stream;
+
+    /// <summary>The active I/O stream. Throws if SetIoStream was never called.</summary>
+    public Stream IoStream => _ioStream ?? throw new InvalidOperationException("IoStream has not been set for this connection.");
+
     public Memory<byte> GetReceiveBuffer() => _receiveBuffer;
     public Memory<byte> GetSendBuffer() => _sendBuffer;
 
@@ -190,7 +200,7 @@ public class ConnectionContext : IDisposable
             ArrayPool<byte>.Shared.Return(pooledFrame);
         }
     }
-    
+
     public virtual void UpdateActivity() => LastActivity = DateTime.UtcNow;
 
     private void EnsureIncomingCapacity(int additionalBytes)
@@ -217,18 +227,19 @@ public class ConnectionContext : IDisposable
         ArrayPool<byte>.Shared.Return(_incomingBuffer);
         _incomingBuffer = expanded;
     }
-    
+
     public void Dispose()
     {
         if (_disposed) return;
-        
+
+        try { _ioStream?.Dispose(); } catch { }
         try { Socket?.Dispose(); } catch { }
-        
+
         ArrayPool<byte>.Shared.Return(_receiveBuffer);
         ArrayPool<byte>.Shared.Return(_sendBuffer);
         Array.Clear(_incomingBuffer, 0, _incomingLength);
         ArrayPool<byte>.Shared.Return(_incomingBuffer);
-        
+
         _disposed = true;
         GC.SuppressFinalize(this);
     }

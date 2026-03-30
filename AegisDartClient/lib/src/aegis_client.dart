@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 import 'dart:typed_data';
 import 'package:msgpack_dart/msgpack_dart.dart' as msgpack;
 import 'message.dart';
@@ -10,43 +9,44 @@ import 'event_dispatcher.dart';
 import 'transport.dart';
 import 'exceptions.dart';
 import 'protocol_constants.dart';
+import 'session_crypto.dart';
 
 extension _ChannelMessageResponseCompat on ChannelMessageResponse {
   MediaSendResponse toMediaSendResponse() => MediaSendResponse(
-    success: success,
-    messageId: messageId,
-    messageText: messageText,
-  );
+        success: success,
+        messageId: messageId,
+        messageText: messageText,
+      );
 }
 
 extension _GroupMessageResponseCompat on GroupMessageSendResponse {
   MediaSendResponse toMediaSendResponse() => MediaSendResponse(
-    success: success,
-    messageId: messageId,
-    messageText: message,
-  );
+        success: success,
+        messageId: messageId,
+        messageText: message,
+      );
 }
 
 extension _PrivateMessageResponseCompat on PrivateChatMessageResponse {
   MediaSendResponse toMediaSendResponse() => MediaSendResponse(
-    success: success,
-    messageId: messageId,
-    messageText: messageText,
-  );
+        success: success,
+        messageId: messageId,
+        messageText: messageText,
+      );
 }
 
 extension _MediaSendResponseCompat on MediaSendResponse {
   PrivateChatMessageResponse toPrivateLike() => PrivateChatMessageResponse(
-    success: success,
-    messageId: messageId,
-    messageText: messageText,
-  );
+        success: success,
+        messageId: messageId,
+        messageText: messageText,
+      );
 
   ChannelMessageResponse toChannelLike() => ChannelMessageResponse(
-    success: success,
-    messageId: messageId,
-    messageText: messageText,
-  );
+        success: success,
+        messageId: messageId,
+        messageText: messageText,
+      );
 }
 
 /// Main Aegis client class
@@ -71,8 +71,8 @@ class AegisClient {
   Stream<ChannelMessageEvent> get channelMessageEvents =>
       events.channelMessageEvents;
 
-    /// Typed stream of incoming async delivery/read status events.
-    Stream<MessageStatusEvent> get messageStatusEvents =>
+  /// Typed stream of incoming async delivery/read status events.
+  Stream<MessageStatusEvent> get messageStatusEvents =>
       events.messageStatusEvents;
 
   /// Stream of disconnect events
@@ -105,8 +105,11 @@ class AegisClient {
     Duration? timeout,
     String? transportMaskingKey,
     bool enableMaskingAutoFallback = true,
+    String? trustedServerHandshakeSigningPublicKeyBase64,
+    bool requireSignedHandshake = false,
   }) async {
-    final hasMaskingKey = transportMaskingKey != null && transportMaskingKey.trim().isNotEmpty;
+    final hasMaskingKey =
+        transportMaskingKey != null && transportMaskingKey.trim().isNotEmpty;
 
     if (!hasMaskingKey || !enableMaskingAutoFallback) {
       await _transport.connect(
@@ -115,7 +118,11 @@ class AegisClient {
         timeout: timeout,
         transportMaskingKey: transportMaskingKey,
       );
-      await _sendHandshake();
+      await _performHandshake(
+        trustedServerHandshakeSigningPublicKeyBase64:
+            trustedServerHandshakeSigningPublicKeyBase64,
+        requireSignedHandshake: requireSignedHandshake,
+      );
       return;
     }
 
@@ -126,7 +133,11 @@ class AegisClient {
         timeout: timeout,
         transportMaskingKey: transportMaskingKey,
       );
-      await _sendHandshake();
+      await _performHandshake(
+        trustedServerHandshakeSigningPublicKeyBase64:
+            trustedServerHandshakeSigningPublicKeyBase64,
+        requireSignedHandshake: requireSignedHandshake,
+      );
     } catch (firstError) {
       await _transport.disconnect();
 
@@ -136,7 +147,11 @@ class AegisClient {
           port,
           timeout: timeout,
         );
-        await _sendHandshake();
+        await _performHandshake(
+          trustedServerHandshakeSigningPublicKeyBase64:
+              trustedServerHandshakeSigningPublicKeyBase64,
+          requireSignedHandshake: requireSignedHandshake,
+        );
       } catch (secondError) {
         throw Exception(
           'Failed connect with masking and fallback. maskedError: $firstError; plainError: $secondError',
@@ -198,7 +213,8 @@ class AegisClient {
     List<int> payload;
     if (authPayloadOrToken is List<int>) {
       payload = authPayloadOrToken;
-    } else if (authPayloadOrToken is String && authPayloadOrToken.trim().startsWith('{')) {
+    } else if (authPayloadOrToken is String &&
+        authPayloadOrToken.trim().startsWith('{')) {
       payload = msgpack.serialize(jsonDecode(authPayloadOrToken));
     } else {
       payload = msgpack.serialize({
@@ -313,11 +329,11 @@ class AegisClient {
 
   /// Send a private chat message to another user (type 17).
   Future<PrivateChatMessageResponse> sendPrivateMessage(
-      int toUserId, String content,
-      {
-      MessageContentType contentType = MessageContentType.text,
-      ParseMode? parseMode,
-    }) async {
+    int toUserId,
+    String content, {
+    MessageContentType contentType = MessageContentType.text,
+    ParseMode? parseMode,
+  }) async {
     _requireAuthenticated();
 
     final request = PrivateChatMessageRequest(
@@ -399,7 +415,8 @@ class AegisClient {
     _requireAuthenticated();
 
     final request = ChatListRequest();
-    final msg = Message.withType(MessageType.chatListRequest, request.toBytes());
+    final msg =
+        Message.withType(MessageType.chatListRequest, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
         expectedTypes: {MessageType.chatListResponse});
     return ChatListResponse.fromBytes(response.payload);
@@ -491,8 +508,7 @@ class AegisClient {
       parseMode: parseMode?.value,
     );
 
-    final msg =
-        Message.withType(MessageType.channelMessage, request.toBytes());
+    final msg = Message.withType(MessageType.channelMessage, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
         expectedTypes: {MessageType.channelMessage, MessageType.ack});
     return ChannelMessageResponse.fromBytes(response.payload);
@@ -643,7 +659,8 @@ class AegisClient {
       throw ArgumentError('A maximum of 10 attachments is allowed per message');
     }
 
-    final contentType = forcedContentType ?? _resolveBatchContentType(attachments);
+    final contentType =
+        forcedContentType ?? _resolveBatchContentType(attachments);
 
     switch (chatType) {
       case ChatTargetType.private:
@@ -664,7 +681,7 @@ class AegisClient {
           expectedTypes: {MessageType.privateChatMessage, MessageType.ack},
         );
         return PrivateChatMessageResponse.fromBytes(response.payload)
-          .toMediaSendResponse();
+            .toMediaSendResponse();
 
       case ChatTargetType.channel:
         final request = ChannelMessageRequest(
@@ -685,7 +702,7 @@ class AegisClient {
           expectedTypes: {MessageType.channelMessage, MessageType.ack},
         );
         return ChannelMessageResponse.fromBytes(response.payload)
-          .toMediaSendResponse();
+            .toMediaSendResponse();
 
       case ChatTargetType.group:
         final request = GroupMessageSendRequest(
@@ -706,12 +723,15 @@ class AegisClient {
           expectedTypes: {MessageType.groupMessageResponse, MessageType.ack},
         );
         return GroupMessageSendResponse.fromBytes(response.payload)
-          .toMediaSendResponse();
+            .toMediaSendResponse();
     }
   }
 
-  MessageContentType _resolveBatchContentType(List<MediaAttachmentPayload> attachments) {
-    final mimes = attachments.map((item) => item.mimeType.toLowerCase()).toList(growable: false);
+  MessageContentType _resolveBatchContentType(
+      List<MediaAttachmentPayload> attachments) {
+    final mimes = attachments
+        .map((item) => item.mimeType.toLowerCase())
+        .toList(growable: false);
 
     if (mimes.every((mime) => mime.startsWith('image/'))) {
       return MessageContentType.image;
@@ -818,8 +838,7 @@ class AegisClient {
       type: type,
     );
 
-    final msg =
-        Message.withType(MessageType.channelCreate, request.toBytes());
+    final msg = Message.withType(MessageType.channelCreate, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
         expectedTypes: {MessageType.channelCreate, MessageType.ack});
     return ChannelCreateResponse.fromBytes(response.payload);
@@ -978,7 +997,8 @@ class AegisClient {
       avatarUrl: avatarUrl,
       makePrimary: makePrimary,
     );
-    final msg = Message.withType(MessageType.profileAvatarAdd, request.toBytes());
+    final msg =
+        Message.withType(MessageType.profileAvatarAdd, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
         expectedTypes: {MessageType.profileAvatarAddResponse});
     return ProfileAvatarMutationResponse.fromBytes(response.payload);
@@ -995,19 +1015,23 @@ class AegisClient {
     return ProfileAvatarListResponse.fromBytes(response.payload);
   }
 
-  Future<ProfileAvatarMutationResponse> deleteProfileAvatar(int avatarId) async {
+  Future<ProfileAvatarMutationResponse> deleteProfileAvatar(
+      int avatarId) async {
     _requireAuthenticated();
     final request = ProfileAvatarDeleteRequest(avatarId: avatarId);
-    final msg = Message.withType(MessageType.profileAvatarDelete, request.toBytes());
+    final msg =
+        Message.withType(MessageType.profileAvatarDelete, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
         expectedTypes: {MessageType.profileAvatarDeleteResponse});
     return ProfileAvatarMutationResponse.fromBytes(response.payload);
   }
 
-  Future<ProfileAvatarMutationResponse> setPrimaryProfileAvatar(int avatarId) async {
+  Future<ProfileAvatarMutationResponse> setPrimaryProfileAvatar(
+      int avatarId) async {
     _requireAuthenticated();
     final request = ProfileAvatarSetPrimaryRequest(avatarId: avatarId);
-    final msg = Message.withType(MessageType.profileAvatarSetPrimary, request.toBytes());
+    final msg = Message.withType(
+        MessageType.profileAvatarSetPrimary, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
         expectedTypes: {MessageType.profileAvatarSetPrimaryResponse});
     return ProfileAvatarMutationResponse.fromBytes(response.payload);
@@ -1024,7 +1048,8 @@ class AegisClient {
       publicAlias: publicAlias,
       regeneratePrivateInvite: regeneratePrivateInvite,
     );
-    final msg = Message.withType(MessageType.channelLinkUpdate, request.toBytes());
+    final msg =
+        Message.withType(MessageType.channelLinkUpdate, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
         expectedTypes: {MessageType.channelLinkUpdateResponse});
     return ChannelLinkResponse.fromBytes(response.payload);
@@ -1051,7 +1076,8 @@ class AegisClient {
   Future<ChannelJoinResponse> joinChannelByLink(String linkOrAlias) async {
     _requireAuthenticated();
     final request = ChannelResolveRequest(linkOrAlias: linkOrAlias);
-    final msg = Message.withType(MessageType.channelJoinByLink, request.toBytes());
+    final msg =
+        Message.withType(MessageType.channelJoinByLink, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
         expectedTypes: {MessageType.channelJoinByLinkResponse});
     return ChannelJoinResponse.fromBytes(response.payload);
@@ -1060,8 +1086,7 @@ class AegisClient {
   // ─── User search ─────────────────────────────────────────────────────────────
 
   /// Search for users by username prefix.
-  Future<UserSearchResponse> searchUsers(String query,
-      {int limit = 20}) async {
+  Future<UserSearchResponse> searchUsers(String query, {int limit = 20}) async {
     _requireAuthenticated();
 
     final request = UserSearchRequest(query: query, limit: limit);
@@ -1106,18 +1131,15 @@ class AegisClient {
     final seqId = message.sequenceId;
 
     // Subscribe first (synchronous operation on the broadcast stream)
-    final responseFuture = messages
-        .firstWhere((msg) {
-          if (msg.sequenceId != seqId) return false;
-          if (expectedTypes != null && !expectedTypes.contains(msg.type)) {
-            return false;
-          }
-          return true;
-        })
-        .timeout(timeout, onTimeout: () {
-          throw TimeoutException(
-              'No response for seq=$seqId', timeout);
-        });
+    final responseFuture = messages.firstWhere((msg) {
+      if (msg.sequenceId != seqId) return false;
+      if (expectedTypes != null && !expectedTypes.contains(msg.type)) {
+        return false;
+      }
+      return true;
+    }).timeout(timeout, onTimeout: () {
+      throw TimeoutException('No response for seq=$seqId', timeout);
+    });
 
     // Now send
     await _transport.sendMessage(message);
@@ -1126,15 +1148,71 @@ class AegisClient {
   }
 
   /// Send the initial handshake after connect.
-  Future<void> _sendHandshake() async {
-    final payload = <int>[];
-    payload.addAll(_int32ToBytes(ProtocolConstants.versionMajor * 1000 +
-        ProtocolConstants.versionMinor)); // client version
-    payload.addAll(_generateNonce()); // 12 cryptographically random bytes
+  Future<void> _performHandshake({
+    String? trustedServerHandshakeSigningPublicKeyBase64,
+    required bool requireSignedHandshake,
+  }) async {
+    final handshake = await AegisHandshakeContext.create();
+    final payload = msgpack.serialize({
+      'PublicKey': base64Encode(handshake.publicKey),
+      'ClientVersion': ProtocolConstants.versionMajor * 1000 +
+          ProtocolConstants.versionMinor,
+    });
 
     final msg = Message.withType(MessageType.handshake, payload);
-    msg.sequenceId = _nextSeqId++;
-    await _transport.sendMessage(msg);
+    final response = await _sendAndWaitResponse(
+      msg,
+      expectedTypes: {MessageType.handshake},
+    );
+
+    final decoded = msgpack.deserialize(response.payload);
+    if (decoded is! Map) {
+      throw Exception('Invalid handshake response payload');
+    }
+
+    final success = decoded['Success'] == true;
+    if (!success) {
+      final error = decoded['Message']?.toString() ?? 'Handshake failed';
+      throw Exception(error);
+    }
+
+    final serverPublicKeyBase64 = decoded['ServerPublicKey']?.toString();
+    if (serverPublicKeyBase64 == null || serverPublicKeyBase64.isEmpty) {
+      throw Exception('Handshake response is missing server public key');
+    }
+
+    final signatureBase64 = decoded['Signature']?.toString();
+    if (requireSignedHandshake) {
+      if (trustedServerHandshakeSigningPublicKeyBase64 == null ||
+          trustedServerHandshakeSigningPublicKeyBase64.isEmpty) {
+        throw Exception('Trusted handshake signing public key is required');
+      }
+
+      if (signatureBase64 == null || signatureBase64.isEmpty) {
+        throw Exception('Handshake response signature is missing');
+      }
+
+      final signatureOk =
+          await AegisHandshakeVerifier.verifyServerHandshakeSignature(
+        trustedSigningPublicKey: Uint8List.fromList(
+          base64Decode(trustedServerHandshakeSigningPublicKeyBase64),
+        ),
+        serverEphemeralPublicKey: Uint8List.fromList(
+          base64Decode(serverPublicKeyBase64),
+        ),
+        clientEphemeralPublicKey: handshake.publicKey,
+        signature: Uint8List.fromList(base64Decode(signatureBase64)),
+      );
+
+      if (!signatureOk) {
+        throw Exception('Handshake signature verification failed');
+      }
+    }
+
+    final sessionKey = await handshake.deriveSessionKey(
+      Uint8List.fromList(base64Decode(serverPublicKeyBase64)),
+    );
+    _transport.setSessionKey(sessionKey);
   }
 
   Future<void> _publishPresence({required bool isOnline}) async {
@@ -1160,37 +1238,8 @@ class AegisClient {
     if (!_isAuthenticated) throw Exception('Not authenticated');
   }
 
-  Map<String, dynamic>? _tryDecodeJson(List<int> payload) {
-    if (payload.isEmpty) return null;
-    try {
-      final decoded = jsonDecode(utf8.decode(payload));
-      if (decoded is Map<String, dynamic>) return decoded;
-    } catch (_) {}
-    return null;
-  }
-
-  String? _extractErrorMessage(List<int> payload) {
-    final decoded = _tryDecodeJson(payload);
-    if (decoded == null) return null;
-    return (decoded['Error'] ?? decoded['Message'] ?? decoded['MessageText'])
-        as String?;
-  }
-
-  /// Generate 12 cryptographically random bytes for the handshake nonce.
-  List<int> _generateNonce() {
-    final rng = Random.secure();
-    return List<int>.generate(12, (_) => rng.nextInt(256));
-  }
-
   List<int> _int64ToBytes(int value) {
-    final bytes = ByteData(8)
-      ..setUint64(0, value, Endian.big);
-    return bytes.buffer.asUint8List().toList();
-  }
-
-  List<int> _int32ToBytes(int value) {
-    final bytes = ByteData(4)
-      ..setUint32(0, value, Endian.big);
+    final bytes = ByteData(8)..setUint64(0, value, Endian.big);
     return bytes.buffer.asUint8List().toList();
   }
 }

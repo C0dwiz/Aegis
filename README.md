@@ -393,7 +393,7 @@ docker compose up --build -d
 public class CustomHandler : IMessageHandler
 {
     public MessageType Type => MessageType.Custom;
-    
+
     public async ValueTask HandleAsync(ConnectionContext context, Message message)
     {
         // Process custom message

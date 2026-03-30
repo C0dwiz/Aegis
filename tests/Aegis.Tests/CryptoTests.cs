@@ -9,7 +9,7 @@ namespace Aegis.Tests;
 public class CryptoTests
 {
     private readonly AegisCryptoProvider _crypto = new AegisCryptoProvider();
-    
+
     [Fact]
     public void DeriveKeys_ShouldGenerateValidKeys()
     {
@@ -17,27 +17,27 @@ public class CryptoTests
         var masterKey = new byte[32];
         RandomNumberGenerator.Fill(masterKey);
         var encryptionKey = new byte[32];
-        
+
         // Act
         _crypto.DeriveKeys(masterKey, encryptionKey);
-        
+
         // Assert
         Assert.NotEmpty(encryptionKey);
         Assert.Equal(32, encryptionKey.Length);
         Assert.NotEqual(masterKey, encryptionKey);
     }
-    
+
     [Fact]
     public void DeriveKeys_InvalidKeySizes_ShouldThrowError()
     {
         // Arrange
         var masterKey = new byte[32];
         var smallKey = new byte[16];
-        
+
         // Act & Assert
         Assert.Throws<CryptoError>(() => _crypto.DeriveKeys(masterKey, smallKey));
     }
-    
+
     [Fact]
     public void EncryptDecrypt_ShouldPreserveData()
     {
@@ -48,18 +48,18 @@ public class CryptoTests
         RandomNumberGenerator.Fill(key);
         RandomNumberGenerator.Fill(nonce);
         var ciphertext = new byte[plaintext.Length + 16];
-        
+
         // Act
         var encryptedLength = _crypto.Encrypt(plaintext, key, nonce, ciphertext);
         var decrypted = new byte[plaintext.Length];
         var decryptedLength = _crypto.Decrypt(ciphertext, key, nonce, decrypted);
-        
+
         // Assert
         Assert.Equal(plaintext.Length + 16, encryptedLength);
         Assert.Equal(plaintext.Length, decryptedLength);
         Assert.Equal(plaintext, decrypted);
     }
-    
+
     [Fact]
     public void Encrypt_SmallBuffer_ShouldThrowError()
     {
@@ -68,11 +68,11 @@ public class CryptoTests
         var key = new byte[32];
         var nonce = new byte[12];
         var smallBuffer = new byte[50];
-        
+
         // Act & Assert
         Assert.Throws<CryptoError>(() => _crypto.Encrypt(plaintext, key, nonce, smallBuffer));
     }
-    
+
     [Fact]
     public void Decrypt_InvalidTag_ShouldThrowError()
     {
@@ -84,16 +84,16 @@ public class CryptoTests
         RandomNumberGenerator.Fill(nonce);
         var ciphertext = new byte[plaintext.Length + 16];
         _crypto.Encrypt(plaintext, key, nonce, ciphertext);
-        
+
         // Corrupt the authentication tag
         ciphertext[ciphertext.Length - 1] ^= 0xFF;
-        
+
         var decrypted = new byte[plaintext.Length];
-        
+
         // Act & Assert
         Assert.Throws<CryptoError>(() => _crypto.Decrypt(ciphertext, key, nonce, decrypted));
     }
-    
+
     [Fact]
     public void EncryptDecrypt_WithAad_ShouldVerifyAad()
     {

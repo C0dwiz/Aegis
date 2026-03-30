@@ -24,31 +24,31 @@ public enum MessageType : ushort
     UserSearchResult = 19,
     Register = 20,
     RegisterResponse = 21,
-    
+
     // Profile management
     ProfileUpdate = 22,
     ProfileUpdateResponse = 23,
     ProfileGet = 24,
     ProfileGetResponse = 25,
-    
+
     // Message edit/delete
     MessageEdit = 26,
     MessageEditResponse = 27,
     MessageDelete = 28,
     MessageDeleteResponse = 29,
-    
+
     // Channel/Group editing
     ChannelEdit = 30,
     ChannelEditResponse = 31,
     GroupEdit = 32,
     GroupEditResponse = 33,
-    
+
     // Admin/permissions management
     MemberRoleUpdate = 34,
     MemberRoleUpdateResponse = 35,
     MemberPermissionUpdate = 36,
     MemberPermissionUpdateResponse = 37,
-    
+
     // Group messaging
     GroupMessageSend = 38,
     GroupMessageResponse = 39,
@@ -85,7 +85,7 @@ public enum MessageType : ushort
     ChannelResolveResponse = 62,
     ChannelJoinByLink = 63,
     ChannelJoinByLinkResponse = 64,
-    
+
     // Message delivery and read receipts
     MessageReadReceipt = 65,
     MessageReadReceiptResponse = 66,
@@ -120,4 +120,3 @@ public enum AckStatus : byte
     Retry = 2,                    // Требуется повтор
     NotImplemented = 3            // Тип сообщения не поддерживается
 }
-

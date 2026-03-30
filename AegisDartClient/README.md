@@ -31,7 +31,7 @@ import 'package:aegis_client/aegis_client.dart';
 
 void main() async {
   final client = AegisClient();
-  
+
   try {
     // Подключение к серверу
     await client.connect('localhost', 8888);
@@ -40,7 +40,7 @@ void main() async {
     // await client.connect('localhost', 8888, transportMaskingKey: 'your-shared-mask-key');
     // По умолчанию включен auto-fallback: при handshake fail в masking-режиме
     // клиент автоматически переподключится без masking.
-    
+
     // Регистрация нового пользователя
     final registrationResponse = await client.register(
       'username',
@@ -48,47 +48,47 @@ void main() async {
       'password',
       'public_key',
     );
-    
+
     if (registrationResponse.success) {
       print('User registered: ${registrationResponse.user?.username}');
     }
-    
+
     // Аутентификация
     await client.authenticate('your_auth_token');
-    
+
     // Поиск пользователей
     final searchResponse = await client.searchUsers('username_pattern');
     print('Found ${searchResponse.users.length} users');
-    
+
     // Создание канала
     final channelResponse = await client.createChannel(
       'My Channel',
       description: 'A test channel',
       type: ChannelType.public,
     );
-    
+
     if (channelResponse.success) {
       // Присоединение к каналу
       await client.joinChannel(channelResponse.channel!.id);
-      
+
       // Отправка сообщения в канал
       await client.sendChannelMessage(
         channelResponse.channel!.id,
         'Hello from Dart client!',
       );
     }
-    
+
     // Отправка приватного сообщения
     await client.sendPrivateMessage(
       targetUserId,
       'Hello! This is a private message.',
     );
-    
+
     // Прослушивание входящих сообщений
     client.messages.listen((message) {
       print('Received: ${message.type}');
     });
-    
+
   } catch (e) {
     print('Error: $e');
   } finally {
@@ -182,7 +182,7 @@ final privateMessage = PrivateChatMessageRequest(
   contentType: MessageContentType.text,
 );
 
-// отправка медиа 
+// отправка медиа
 await client.sendMedia(
   chatType: ChatTargetType.private, // private | channel | group
   chatId: 789,
@@ -263,32 +263,32 @@ client.messages.listen((message) {
         print('Channel message: ${response.message?.content}');
       }
       break;
-      
+
     case MessageType.privateChatMessage:
       final response = PrivateChatMessageResponse.fromBytes(message.payload);
       if (response.success) {
         print('Private message: ${response.message?.content}');
       }
       break;
-      
+
     case MessageType.userSearchResult:
       final response = UserSearchResponse.fromBytes(message.payload);
       print('Search results: ${response.users.length} users found');
       break;
-      
+
     case MessageType.registerResponse:
       final response = RegistrationResponse.fromBytes(message.payload);
       if (response.success) {
         print('Registration successful: ${response.user?.username}');
       }
       break;
-      
+
     case MessageType.ping:
       final timestamp = _bytesToInt64(message.payload);
       final latency = DateTime.now().millisecondsSinceEpoch - timestamp;
       print('Ping: ${latency}ms');
       break;
-      
+
     case MessageType.error:
       final errorCode = _bytesToUint16(message.payload.sublist(0, 2));
       final errorText = String.fromCharCodes(message.payload.sublist(4));
@@ -312,16 +312,16 @@ client.events.onPrivateMessageEvent((event) {
 class RobustClient {
   late AegisClient _client;
   Timer? _reconnectTimer;
-  
+
   Future<void> start() async {
     await _connect();
-    
+
     // Обработка разрывов соединения
     _client.disconnects.listen((_) {
       _scheduleReconnect();
     });
   }
-  
+
   Future<void> _connect() async {
     try {
       _client = AegisClient();
@@ -331,7 +331,7 @@ class RobustClient {
       _scheduleReconnect();
     }
   }
-  
+
   void _scheduleReconnect() {
     _reconnectTimer = Timer(Duration(seconds: 5), _connect);
   }
@@ -350,24 +350,24 @@ final channelResponse = await client.createChannel(
 
 if (channelResponse.success) {
   final channel = channelResponse.channel!;
-  
+
   // Присоединение к каналу
   await client.joinChannel(channel.id);
-  
+
   // Отправка текстового сообщения
   await client.sendChannelMessage(
     channel.id,
     'Hello everyone! 👋',
     contentType: MessageContentType.text,
   );
-  
+
   // Отправка ответа на сообщение
   await client.sendChannelMessage(
     channel.id,
     'I agree with your point!',
     replyToMessageId: previousMessageId,
   );
-  
+
   // Отправка другого контента
   await client.sendChannelMessage(
     channel.id,
@@ -384,14 +384,14 @@ if (channelResponse.success) {
 final searchResponse = await client.searchUsers('friend_username');
 if (searchResponse.success && searchResponse.users.isNotEmpty) {
   final user = searchResponse.users.first;
-  
+
   // Отправка приватного сообщения
   final privateResponse = await client.sendPrivateMessage(
     user.id,
     'Hi ${user.username}! Want to chat?',
     contentType: MessageContentType.text,
   );
-  
+
   if (privateResponse.success) {
     print('Private message sent to ${user.username}');
     if (privateResponse.privateChat != null) {

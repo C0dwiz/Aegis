@@ -11,9 +11,11 @@ public class EcdhKeyExchange : IDisposable
 {
     private readonly ECDiffieHellman _privateKey;
     private readonly byte[] _publicKey;
+    private readonly byte[] _publicKeyRaw;
     private const int KeySize = 256; // P-256 curve
 
     public byte[] PublicKey => (byte[])_publicKey.Clone();
+    public byte[] PublicKeyRaw => (byte[])_publicKeyRaw.Clone();
 
     /// <summary>
     /// Generate new ECDH key pair
@@ -27,6 +29,8 @@ public class EcdhKeyExchange : IDisposable
     {
         _privateKey = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
         _publicKey = _privateKey.ExportSubjectPublicKeyInfo();
+        var parameters = _privateKey.ExportParameters(false);
+        _publicKeyRaw = ExportRawPublicKey(parameters);
     }
 
     /// <summary>
@@ -36,9 +40,7 @@ public class EcdhKeyExchange : IDisposable
     {
         try
         {
-            // Import peer's public key
-            using var peerKey = ECDiffieHellman.Create();
-            peerKey.ImportSubjectPublicKeyInfo(peerPublicKey, out _);
+            using var peerKey = ImportPeerKey(peerPublicKey);
 
             // Use the raw ECDH shared secret and let HKDF derive session keys.
             return _privateKey.DeriveRawSecretAgreement(peerKey.PublicKey);
@@ -53,6 +55,42 @@ public class EcdhKeyExchange : IDisposable
     {
         _privateKey?.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    private static ECDiffieHellman ImportPeerKey(ReadOnlySpan<byte> peerPublicKey)
+    {
+        if (peerPublicKey.Length == 65 && peerPublicKey[0] == 0x04)
+        {
+            var parameters = new ECParameters
+            {
+                Curve = ECCurve.NamedCurves.nistP256,
+                Q = new ECPoint
+                {
+                    X = peerPublicKey.Slice(1, 32).ToArray(),
+                    Y = peerPublicKey.Slice(33, 32).ToArray()
+                }
+            };
+
+            var ecdh = ECDiffieHellman.Create();
+            ecdh.ImportParameters(parameters);
+            return ecdh;
+        }
+
+        var imported = ECDiffieHellman.Create();
+        imported.ImportSubjectPublicKeyInfo(peerPublicKey, out _);
+        return imported;
+    }
+
+    private static byte[] ExportRawPublicKey(ECParameters parameters)
+    {
+        if (parameters.Q.X == null || parameters.Q.Y == null)
+            throw new CryptoError("ECDH public key coordinates are missing");
+
+        var raw = new byte[65];
+        raw[0] = 0x04;
+        Buffer.BlockCopy(parameters.Q.X, 0, raw, 1, 32);
+        Buffer.BlockCopy(parameters.Q.Y, 0, raw, 33, 32);
+        return raw;
     }
 }
 

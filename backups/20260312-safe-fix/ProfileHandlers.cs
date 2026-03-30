@@ -134,7 +134,7 @@ public class ProfileUpdateHandler : IMessageHandler
                 user.Bio, user.Email,
                 user.CreatedAt, user.LastSeenAt);
 
-            await SendResponseAsync(context, message.SequenceId, 
+            await SendResponseAsync(context, message.SequenceId,
                 new ProfileUpdateResponse(true, Message: "Profile updated", Profile: profileData));
 
             _logger.LogInformation("Profile updated for user {UserId}", session.UserId);

@@ -56,7 +56,9 @@ class MessageEncoder {
     // Brotli-compress when payload exceeds threshold (per server spec).
     Uint8List payload = message.payload;
     int flags = message.flags;
-    if (payload.length > ProtocolConstants.compressionThreshold) {
+    final isEncrypted =
+      (flags & ProtocolConstants.flagEncrypted) != 0;
+    if (!isEncrypted && payload.length > ProtocolConstants.compressionThreshold) {
       final compressed = _brotli.encode(payload);
       payload = compressed is Uint8List
           ? compressed
@@ -181,7 +183,10 @@ class MessageEncoder {
 
     // ── Payload ────────────────────────────────────────────────────
     if (payloadLength > 0) {
-      if ((message.flags & ProtocolConstants.flagCompressed) != 0) {
+        final isEncryptedPayload =
+          (message.flags & ProtocolConstants.flagEncrypted) != 0;
+        if (!isEncryptedPayload &&
+          (message.flags & ProtocolConstants.flagCompressed) != 0) {
         // Compressed — create a view for the decompressor input, then
         // decompress into a new allocation.
         final compressed = Uint8List.view(

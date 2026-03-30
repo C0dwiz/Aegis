@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
-  
+
   <ItemGroup>
     <ProjectReference Include="..\Aegis.Common\Aegis.Common.csproj" />
     <ProjectReference Include="..\Aegis.Transport\Aegis.Transport.csproj" />

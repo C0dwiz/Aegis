@@ -31,17 +31,19 @@ public class AuthHandler : IMessageHandler
     private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;
     private readonly IMessageRepository _messageRepository;
+    private readonly ISessionRepository? _sessionRepository;
     private readonly Func<IEnumerable<ulong>, Task<IDictionary<ulong, string>>> _getUsernamesByIds;
     private readonly ILogger<AuthHandler> _logger;
-    
+
     public MessageType Type => MessageType.Auth;
-    
+
     public AuthHandler(
         IUserAuthenticationService authService,
         IRateLimiter rateLimiter,
         SessionManager sessionManager,
         IMessageSender messageSender,
         IMessageRepository messageRepository,
+        ISessionRepository sessionRepository,
         IUserRepository userRepository,
         ILogger<AuthHandler> logger)
     {
@@ -50,6 +52,7 @@ public class AuthHandler : IMessageHandler
         _sessionManager = sessionManager;
         _messageSender = messageSender;
         _messageRepository = messageRepository;
+        _sessionRepository = sessionRepository;
         _getUsernamesByIds = userRepository.GetUsernamesByIdsAsync;
         _logger = logger;
     }
@@ -68,6 +71,7 @@ public class AuthHandler : IMessageHandler
         _sessionManager = sessionManager;
         _messageSender = messageSender;
         _messageRepository = messageRepository;
+        _sessionRepository = null;
         _getUsernamesByIds = async ids =>
         {
             var result = new Dictionary<ulong, string>();
@@ -83,7 +87,7 @@ public class AuthHandler : IMessageHandler
         };
         _logger = logger;
     }
-    
+
     public async ValueTask HandleAsync(ConnectionContext context, Message message)
     {
         try
@@ -108,8 +112,8 @@ public class AuthHandler : IMessageHandler
                 });
                 return;
             }
-            
-            _logger.LogInformation("Authentication attempt for user: {Username} from connection {ConnectionId}", 
+
+            _logger.LogInformation("Authentication attempt for user: {Username} from connection {ConnectionId}",
                 authRequest.Username, context.ConnectionId);
 
             // Token-based re-authentication
@@ -118,7 +122,22 @@ public class AuthHandler : IMessageHandler
                 var session = await _authService.AuthenticateUserByTokenAsync(authRequest.Token);
                 if (session?.User != null)
                 {
-                    _sessionManager.AuthenticateSession(context.ConnectionId, session.UserId, session.User.Username);
+                    if (!_sessionManager.AuthenticateSession(context.ConnectionId, session.UserId, session.User.Username))
+                    {
+                        await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
+                        {
+                            Success = false,
+                            Error = "Handshake required before authentication"
+                        });
+                        return;
+                    }
+
+                    if (_sessionRepository != null)
+                    {
+                        session.ConnectionId = context.ConnectionId.ToString();
+                        await _sessionRepository.UpdateAsync(session);
+                    }
+
                     await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
                     {
                         Success = true,
@@ -142,14 +161,14 @@ public class AuthHandler : IMessageHandler
             // Username/password authentication
             var ipAddress = context.Socket.RemoteEndPoint?.ToString();
             var result = await _authService.AuthenticateUserAsync(
-                authRequest.Username, 
-                authRequest.Password, 
-                authRequest.ClientInfo, 
+                authRequest.Username,
+                authRequest.Password,
+                authRequest.ClientInfo,
                 ipAddress);
-            
+
             if (result == null)
             {
-                _logger.LogWarning("Authentication failed for user {Username} from connection {ConnectionId}", 
+                _logger.LogWarning("Authentication failed for user {Username} from connection {ConnectionId}",
                     authRequest.Username, context.ConnectionId);
                 await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
                 {
@@ -160,16 +179,28 @@ public class AuthHandler : IMessageHandler
             }
 
             var (user, dbSession) = result.Value;
-            
+
             // Associate the TCP connection with the authenticated user
-            _sessionManager.AuthenticateSession(context.ConnectionId, user.Id, user.Username);
-            
+            if (!_sessionManager.AuthenticateSession(context.ConnectionId, user.Id, user.Username))
+            {
+                await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
+                {
+                    Success = false,
+                    Error = "Handshake required before authentication"
+                });
+                return;
+            }
+
             // Bind session to connection
             dbSession.ConnectionId = context.ConnectionId.ToString();
-            
-            _logger.LogInformation("User {Username} (ID: {UserId}) authenticated successfully from connection {ConnectionId}", 
+            if (_sessionRepository != null)
+            {
+                await _sessionRepository.UpdateAsync(dbSession);
+            }
+
+            _logger.LogInformation("User {Username} (ID: {UserId}) authenticated successfully from connection {ConnectionId}",
                 user.Username, user.Id, context.ConnectionId);
-            
+
             await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
             {
                 Success = true,
@@ -228,7 +259,7 @@ public class AuthHandler : IMessageHandler
                     payload);
             }
 
-            await _messageRepository.MarkMessagesDeliveredAsync(undelivered.Select(x => x.Id));
+            await _messageRepository.MarkMessagesDeliveredAsync(undelivered.Select(x => x.Id), userId);
             _logger.LogInformation("Delivered {Count} pending messages to user {UserId}", undelivered.Count, userId);
         }
         catch (Exception ex)
@@ -236,7 +267,7 @@ public class AuthHandler : IMessageHandler
             _logger.LogError(ex, "handler_error op={Operation} conn={ConnectionId} user={UserId}", "auth_deliver_pending", connectionId, userId);
         }
     }
-    
+
     private async Task SendAuthResponseAsync(ConnectionContext context, ulong sequenceId, AuthResponse response)
     {
         try

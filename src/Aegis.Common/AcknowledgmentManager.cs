@@ -22,9 +22,9 @@ public class AcknowledgmentManager
         _logger = logger ?? new NullLogger();
         _retransmitTimeoutMs = retransmitTimeoutMs;
         _maxRetries = maxRetries;
-        
+
         // Start cleanup timer
-        _cleanupTimer = new Timer(CleanupExpiredMessages, null, 
+        _cleanupTimer = new Timer(CleanupExpiredMessages, null,
             TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
     }
 
@@ -112,7 +112,7 @@ public class AcknowledgmentManager
         {
             message.RetryCount++;
             message.SentAt = DateTime.UtcNow;
-            
+
             if (message.RetryCount >= _maxRetries)
             {
                 _logger.Warning($"Message {sequenceId} exceeded max retries ({_maxRetries})");
@@ -192,8 +192,8 @@ public class MessageDeduplicator
     {
         _sequenceWindows = new ConcurrentDictionary<ulong, SequenceWindow>();
         _logger = logger ?? new NullLogger();
-        
-        _cleanupTimer = new Timer(CleanupOldEntries, null, 
+
+        _cleanupTimer = new Timer(CleanupOldEntries, null,
             TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
 

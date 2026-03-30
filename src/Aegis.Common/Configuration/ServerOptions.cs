@@ -3,7 +3,7 @@ namespace Aegis.Common.Configuration;
 public class ServerOptions
 {
     public const string SectionName = "Server";
-    
+
     public int Port { get; set; } = 8888;
     public int MaxConnections { get; set; } = 10000;
     public int BufferSize { get; set; } = 8192;
@@ -19,7 +19,7 @@ public class ServerOptions
 public class CryptoOptions
 {
     public const string SectionName = "Crypto";
-    
+
     public int EncryptionKeySize { get; set; } = 32;
     public int MacKeySize { get; set; } = 32;
     public int NonceSize { get; set; } = 12;
@@ -35,21 +35,45 @@ public class ProtocolSecurityOptions
 
     // When true, server encrypts protocol payloads for established sessions.
     public bool EncryptServerPayloadsAfterHandshake { get; set; } = true;
+
+    // When true, server must sign handshake responses using HandshakeSigningPrivateKeyBase64.
+    public bool RequireSignedHandshakeResponses { get; set; } = false;
+
+    // Base64-encoded PKCS#8 ECDSA P-256 private key for handshake response signatures.
+    public string HandshakeSigningPrivateKeyBase64 { get; set; } = string.Empty;
 }
 
 public class RateLimitOptions
 {
     public const string SectionName = "RateLimit";
-    
+
     public int MaxAuthAttemptsPerMinute { get; set; } = 5;
     public int MaxMessagesPerSecond { get; set; } = 100;
     public int MaxConnectionsPerIP { get; set; } = 10;
 }
 
+public class TlsOptions
+{
+    public const string SectionName = "Tls";
+
+    /// <summary>Enable TLS on the TCP transport layer.</summary>
+    public bool Enabled { get; set; } = false;
+
+    /// <summary>Path to a PFX/PKCS#12 certificate file.</summary>
+    public string CertificatePath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Password for the PFX file.  Prefer supplying this via the
+    /// AEGIS_TLS__CERTIFICATEPASSWORD environment variable so it is not
+    /// committed to config files.
+    /// </summary>
+    public string CertificatePassword { get; set; } = string.Empty;
+}
+
 public class DatabaseOptions
 {
     public const string SectionName = "Database";
-    
+
     public string Provider { get; set; } = "PostgreSQL";
     public string ConnectionString { get; set; } = string.Empty;
     public string ZoneTreePath { get; set; } = "zonetree-messages-db";
@@ -58,7 +82,7 @@ public class DatabaseOptions
 public class LoggingOptions
 {
     public const string SectionName = "Logging";
-    
+
     public string MinimumLevel { get; set; } = "Information";
     public bool Console { get; set; } = true;
     public bool File { get; set; } = true;

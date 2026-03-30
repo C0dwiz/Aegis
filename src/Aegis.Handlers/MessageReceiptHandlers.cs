@@ -108,7 +108,7 @@ public class MessageReadReceiptHandler : IMessageHandler
             // Send confirmation back to sender
             await SendReadReceiptConfirmationAsync(context, messageSender, payload.MessageIds);
 
-            _logger.LogDebug("Processed read receipt for {Count} messages from user {UserId}", 
+            _logger.LogDebug("Processed read receipt for {Count} messages from user {UserId}",
                 payload.MessageIds.Length, session.UserId);
         }
         catch (Exception ex)
@@ -118,11 +118,11 @@ public class MessageReadReceiptHandler : IMessageHandler
     }
 
     private async Task SendReadReceiptConfirmationAsync(
-        ConnectionContext context, 
-        IMessageSender messageSender, 
+        ConnectionContext context,
+        IMessageSender messageSender,
         ulong[] messageIds)
     {
-        var responsePayload = PayloadSerializer.Serialize(new { 
+        var responsePayload = PayloadSerializer.Serialize(new {
             Success = true,
             MessageIds = messageIds,
             ProcessedAt = DateTime.UtcNow
@@ -185,7 +185,7 @@ public class MessageDeliveryReceiptHandler : IMessageHandler
                 await deliveryService.MarkMessageAsDeliveredAsync(messageId, session.UserId, null);
             }
 
-            await messageRepository.MarkMessagesDeliveredAsync(payload.MessageIds);
+            await messageRepository.MarkMessagesDeliveredAsync(payload.MessageIds, session.UserId);
 
             var bySender = new Dictionary<ulong, List<ulong>>();
             foreach (var messageId in payload.MessageIds.Distinct())
@@ -231,7 +231,7 @@ public class MessageDeliveryReceiptHandler : IMessageHandler
             // Send confirmation back to sender
             await SendDeliveryReceiptConfirmationAsync(context, messageSender, payload.MessageIds);
 
-            _logger.LogDebug("Processed delivery receipt for {Count} messages from user {UserId}", 
+            _logger.LogDebug("Processed delivery receipt for {Count} messages from user {UserId}",
                 payload.MessageIds.Length, session.UserId);
         }
         catch (Exception ex)
@@ -241,11 +241,11 @@ public class MessageDeliveryReceiptHandler : IMessageHandler
     }
 
     private async Task SendDeliveryReceiptConfirmationAsync(
-        ConnectionContext context, 
-        IMessageSender messageSender, 
+        ConnectionContext context,
+        IMessageSender messageSender,
         ulong[] messageIds)
     {
-        var responsePayload = PayloadSerializer.Serialize(new { 
+        var responsePayload = PayloadSerializer.Serialize(new {
             Success = true,
             MessageIds = messageIds,
             ProcessedAt = DateTime.UtcNow

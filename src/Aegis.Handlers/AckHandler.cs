@@ -98,7 +98,7 @@ public class NackHandler : IMessageHandler
             if (_ackManager.ShouldRetransmit(context.ConnectionId, sequenceId, out var pending) && pending != null)
             {
                 _ackManager.IncrementRetryCount(context.ConnectionId, sequenceId);
-                
+
                 _logger.Debug($"Retransmitting message {sequenceId}");
                 await _messageSender.SendMessageAsync(context.ConnectionId, pending.MessageData);
             }
@@ -146,7 +146,7 @@ public class RetransmitRequestHandler : IMessageHandler
             }
 
             var firstSequenceId = BinaryPrimitives.ReadUInt64BigEndian(message.Payload.AsSpan(0, 8));
-            
+
             _logger.Debug($"Received retransmit request starting from sequence {firstSequenceId}");
 
             var pending = _ackManager.GetPendingMessages(context.ConnectionId);

@@ -72,9 +72,9 @@ public class IntegrationTests : IDisposable
 
         // Act & Assert - Registration
         var user = await registrationService.RegisterUserAsync(
-            "testuser", 
-            "test@example.com", 
-            "password123", 
+            "testuser",
+            "test@example.com",
+            "password123",
             "public_key");
 
         Assert.NotNull(user);
@@ -82,9 +82,9 @@ public class IntegrationTests : IDisposable
 
         // Act & Assert - Authentication
         var authResult = await authService.AuthenticateUserAsync(
-            "testuser", 
-            "password123", 
-            "Test Client", 
+            "testuser",
+            "password123",
+            "Test Client",
             "127.0.0.1");
 
         Assert.NotNull(authResult);

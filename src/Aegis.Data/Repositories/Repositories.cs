@@ -521,7 +521,7 @@ public interface IMessageRepository : IRepository<Message>
     Task<IEnumerable<Message>> GetUndeliveredMessagesAsync(ulong userId);
     Task<IEnumerable<Message>> GetUnreadMessagesAsync(ulong userId);
     Task<IDictionary<ulong, int>> GetUnreadCountsBySenderAsync(ulong userId);
-    Task MarkMessagesDeliveredAsync(IEnumerable<ulong> messageIds);
+    Task MarkMessagesDeliveredAsync(IEnumerable<ulong> messageIds, ulong recipientUserId);
     Task MarkMessagesReadAsync(IEnumerable<ulong> messageIds, ulong readerUserId);
     Task<Message?> GetMessageForEditAsync(ulong messageId, ulong userId);
 }
@@ -591,7 +591,7 @@ public class MessageRepository : Repository<Message>, IMessageRepository
             .ToDictionaryAsync(x => x.SenderId, x => x.Count);
     }
 
-    public async Task MarkMessagesDeliveredAsync(IEnumerable<ulong> messageIds)
+    public async Task MarkMessagesDeliveredAsync(IEnumerable<ulong> messageIds, ulong recipientUserId)
     {
         var ids = messageIds.Distinct().ToArray();
         if (ids.Length == 0)
@@ -601,7 +601,7 @@ public class MessageRepository : Repository<Message>, IMessageRepository
 
         var now = DateTime.UtcNow;
         var messages = await _context.Messages
-            .Where(m => ids.Contains(m.Id) && !m.IsDelivered)
+            .Where(m => ids.Contains(m.Id) && m.ToUserId == recipientUserId && !m.IsDelivered && !m.IsDeleted)
             .ToListAsync();
 
         foreach (var message in messages)
@@ -1022,7 +1022,7 @@ public class PrivateChatRepository : Repository<PrivateChat>, IPrivateChatReposi
             .Include(pc => pc.User1)
             .Include(pc => pc.User2)
             .Include(pc => pc.LastMessage)
-            .FirstOrDefaultAsync(pc => 
+            .FirstOrDefaultAsync(pc =>
                 (pc.User1Id == userId1 && pc.User2Id == userId2) ||
                 (pc.User1Id == userId2 && pc.User2Id == userId1));
     }

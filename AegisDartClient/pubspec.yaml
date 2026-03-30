@@ -11,3 +11,4 @@ dev_dependencies:
 dependencies:
   msgpack_dart: ^1.0.1
   es_compression: ^2.0.15
+  cryptography: ^2.7.0

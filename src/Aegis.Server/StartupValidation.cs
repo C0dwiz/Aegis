@@ -14,6 +14,8 @@ internal static class StartupValidation
         var dbConnectionString = configuration[$"{DatabaseOptions.SectionName}:ConnectionString"] ?? string.Empty;
         var redisConnectionString = configuration["Redis:ConnectionString"] ?? string.Empty;
         var requireEncryptedAfterHandshake = configuration.GetValue<bool>($"{ProtocolSecurityOptions.SectionName}:RequireEncryptedPayloadAfterHandshake");
+        var requireSignedHandshakeResponses = configuration.GetValue<bool>($"{ProtocolSecurityOptions.SectionName}:RequireSignedHandshakeResponses");
+        var handshakeSigningPrivateKey = configuration[$"{ProtocolSecurityOptions.SectionName}:HandshakeSigningPrivateKeyBase64"] ?? string.Empty;
         var enableTransportMasking = configuration.GetValue<bool>($"{ServerOptions.SectionName}:EnableTransportMasking");
         var transportMaskingKey = configuration[$"{ServerOptions.SectionName}:TransportMaskingKey"] ?? string.Empty;
 
@@ -39,10 +41,24 @@ internal static class StartupValidation
                 throw new InvalidOperationException("ProtocolSecurity:RequireEncryptedPayloadAfterHandshake must be enabled in production.");
             }
 
+            if (!requireSignedHandshakeResponses)
+            {
+                throw new InvalidOperationException("ProtocolSecurity:RequireSignedHandshakeResponses must be enabled in production.");
+            }
+
+            if (string.IsNullOrWhiteSpace(handshakeSigningPrivateKey))
+            {
+                throw new InvalidOperationException("ProtocolSecurity:HandshakeSigningPrivateKeyBase64 is required when signed handshake responses are enabled.");
+            }
+
             if (dbConnectionString.Contains("Password=aegis", StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException("Default database password is not allowed in production.");
             }
+        }
+        else if (requireSignedHandshakeResponses && string.IsNullOrWhiteSpace(handshakeSigningPrivateKey))
+        {
+            throw new InvalidOperationException("ProtocolSecurity:HandshakeSigningPrivateKeyBase64 is required when signed handshake responses are enabled.");
         }
 
         ValidateServerDependencies(configuration);

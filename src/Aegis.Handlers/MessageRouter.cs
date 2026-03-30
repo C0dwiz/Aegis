@@ -57,7 +57,7 @@ public class MessageRouter
     private readonly Dictionary<Aegis.Protocol.MessageType, IMessageHandler>? _handlers;
     private readonly ILogger _logger;
     private readonly IMessageSender _messageSender;
-    
+
     [ActivatorUtilitiesConstructor]
     public MessageRouter(IServiceProvider serviceProvider, IMessageSender messageSender, ILogger? logger = null)
     {
@@ -83,7 +83,7 @@ public class MessageRouter
             logger
         );
     }
-    
+
     public async ValueTask RouteAsync(ConnectionContext context, Message message)
     {
         var handler = ResolveHandler(message.Type);
@@ -123,7 +123,7 @@ public class MessageRouter
 
         return null;
     }
-    
+
     private async Task SendErrorAsync(ConnectionContext context, ulong sequenceId, string error)
     {
         var errorMsg = new Message

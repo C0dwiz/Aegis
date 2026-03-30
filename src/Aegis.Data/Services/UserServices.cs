@@ -61,13 +61,13 @@ public class UserRegistrationService : IUserRegistrationService
 
         if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
             throw new ArgumentException("Invalid email format", nameof(email));
-        
+
         if (string.IsNullOrWhiteSpace(password) || password.Length < 6)
             throw new ArgumentException("Password must be at least 6 characters long", nameof(password));
-        
+
         if (!await IsUsernameAvailableAsync(username))
             throw new InvalidOperationException("Username is already taken");
-        
+
         if (!await IsEmailAvailableAsync(email))
             throw new InvalidOperationException("Email is already registered");
 
@@ -182,7 +182,7 @@ public class UserAuthenticationService : IUserAuthenticationService
         var createdSession = await _sessionRepository.CreateAsync(session);
         user.LastSeenAt = DateTime.UtcNow;
         await _userRepository.UpdateAsync(user);
-        
+
         return (user, createdSession);
     }
 
@@ -1407,12 +1407,12 @@ public interface IMessageService
     Task<Message> SendPrivateMessageAsync(ulong fromUserId, ulong toUserId, string content, MessageContentType contentType = MessageContentType.Text);
     Task<Message> EditMessageAsync(ulong messageId, ulong userId, string newContent);
     Task<bool> DeleteMessageAsync(ulong messageId, ulong userId);
-    
+
     // Channel messages
     Task<ChannelMessage> SendChannelMessageAsync(ulong channelId, ulong fromUserId, string content, MessageContentType contentType = MessageContentType.Text, ulong? replyToId = null);
     Task<ChannelMessage> EditChannelMessageAsync(ulong messageId, ulong userId, ulong channelId, string newContent);
     Task<bool> DeleteChannelMessageAsync(ulong messageId, ulong userId, ulong channelId);
-    
+
     // Group messages
     Task<GroupMessage> SendGroupMessageAsync(ulong groupId, ulong fromUserId, string content, MessageContentType contentType = MessageContentType.Text, ulong? replyToId = null);
     Task<GroupMessage> EditGroupMessageAsync(ulong messageId, ulong userId, ulong groupId, string newContent);
@@ -1550,7 +1550,7 @@ public class MessageService : IMessageService
     public async Task<bool> DeleteChannelMessageAsync(ulong messageId, ulong userId, ulong channelId)
     {
         var msg = await _channelRepository.GetChannelMessageAsync(messageId);
-        if (msg == null) return false;
+        if (msg == null || msg.ChannelId != channelId) return false;
 
         // Author can delete their own messages
         if (msg.FromUserId == userId)
@@ -1563,7 +1563,7 @@ public class MessageService : IMessageService
         }
 
         // Admins/moderators with permission can delete others' messages
-        var member = await _channelRepository.GetChannelMemberAsync(channelId, userId);
+        var member = await _channelRepository.GetChannelMemberAsync(msg.ChannelId, userId);
         if (member != null && (member.Role == ChannelMemberRole.Owner || member.CanDeleteOthersMessages))
         {
             msg.IsDeleted = true;
@@ -1625,7 +1625,7 @@ public class MessageService : IMessageService
     public async Task<bool> DeleteGroupMessageAsync(ulong messageId, ulong userId, ulong groupId)
     {
         var msg = await _groupRepository.GetGroupMessageAsync(messageId);
-        if (msg == null) return false;
+        if (msg == null || msg.GroupId != groupId) return false;
 
         if (msg.FromUserId == userId)
         {
@@ -1636,7 +1636,7 @@ public class MessageService : IMessageService
             return true;
         }
 
-        var member = await _groupRepository.GetGroupMemberAsync(groupId, userId);
+        var member = await _groupRepository.GetGroupMemberAsync(msg.GroupId, userId);
         if (member != null && (member.Role == GroupMemberRole.Owner || member.CanDeleteOthersMessages))
         {
             msg.IsDeleted = true;

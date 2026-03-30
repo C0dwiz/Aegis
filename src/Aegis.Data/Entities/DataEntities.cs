@@ -11,19 +11,19 @@ public class User
     public string PasswordHash { get; set; } = string.Empty;
     public string PublicKey { get; set; } = string.Empty;
     public string? IdentityKeyFingerprint { get; set; }
-    
+
     // Profile fields
     public string? DisplayName { get; set; }
     public string? AvatarUrl { get; set; }
     public string? Bio { get; set; }
     public string? Location { get; set; }
     public DateOnly? BirthDate { get; set; }
-    
+
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastSeenAt { get; set; }
-    
+
     // Navigation properties
     public ICollection<Session> Sessions { get; set; } = new List<Session>();
     public ICollection<Message> SentMessages { get; set; } = new List<Message>();
@@ -114,7 +114,7 @@ public class Session
     public DateTime ExpiresAt { get; set; }
     public DateTime? LastActivityAt { get; set; }
     public bool IsActive { get; set; } = true;
-    
+
     // Navigation properties
     public User? User { get; set; }
 }
@@ -130,7 +130,7 @@ public class MessageDelivery
     public DeliveryStatus Status { get; set; } = DeliveryStatus.Sent;
     public DateTime StatusUpdatedAt { get; set; } = DateTime.UtcNow;
     public string? DeviceId { get; set; }
-    
+
     // Navigation properties
     public Message Message { get; set; } = null!;
     public User User { get; set; } = null!;
@@ -158,28 +158,28 @@ public class Message
     public string Content { get; set; } = string.Empty;
     public MessageContentType ContentType { get; set; } = MessageContentType.Text;
     public ulong SequenceNumber { get; set; }
-    
+
     // Delivery and read status
     public bool IsDelivered { get; set; }
     public DateTime? DeliveredAt { get; set; }
     public bool IsRead { get; set; }
     public DateTime? ReadAt { get; set; }
-    
+
     // Message editing/deletion
     public bool IsEdited { get; set; }
     public DateTime? EditedAt { get; set; }
     public bool IsDeleted { get; set; }
     public DateTime? DeletedAt { get; set; }
-    
+
     // Timestamps
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    
+
     // Additional metadata
     public string? MediaId { get; set; }
     public ulong? ReplyToMessageId { get; set; }
     public bool IsPinned { get; set; }
     public string? EditHistory { get; set; } // JSON array of previous content
-    
+
     // Navigation properties
     public User? FromUser { get; set; }
     public User? ToUser { get; set; }
@@ -214,7 +214,7 @@ public class Group
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public bool IsActive { get; set; } = true;
     public int MemberCount { get; set; } = 0;
-    
+
     // Navigation properties
     public User? CreatedByUser { get; set; }
     public ICollection<GroupMember> Members { get; set; } = new List<GroupMember>();
@@ -232,7 +232,7 @@ public class GroupMember
     public GroupMemberRole Role { get; set; } = GroupMemberRole.Member;
     public DateTime JoinedAt { get; set; } = DateTime.UtcNow;
     public bool IsActive { get; set; } = true;
-    
+
     // Granular permissions
     public bool CanSendMessages { get; set; } = true;
     public bool CanDeleteOthersMessages { get; set; }
@@ -241,7 +241,7 @@ public class GroupMember
     public bool CanRemoveUsers { get; set; }
     public bool CanPinMessages { get; set; }
     public bool CanManageRoles { get; set; }
-    
+
     // Navigation properties
     public Group? Group { get; set; }
     public User? User { get; set; }
@@ -264,13 +264,13 @@ public class GroupMessage
     public DateTime? DeletedAt { get; set; }
     public ulong? ReplyToMessageId { get; set; }
     public bool IsPinned { get; set; }
-    
+
     // Delivery tracking fields
     public bool IsDelivered { get; set; } = false;
     public DateTime? DeliveredAt { get; set; }
     public bool IsRead { get; set; } = false;
     public DateTime? ReadAt { get; set; }
-    
+
     // Navigation properties
     public Group? Group { get; set; }
     public User? FromUser { get; set; }
@@ -318,7 +318,7 @@ public class Device
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastSeenAt { get; set; }
-    
+
     // Navigation properties
     public User? User { get; set; }
 }
@@ -340,7 +340,7 @@ public class Channel
     public string? InviteCode { get; set; }
     public string? PublicAlias { get; set; }
     public int MemberCount { get; set; } = 0;
-    
+
     // Navigation properties
     public User? CreatedByUser { get; set; }
     public ICollection<ChannelMember> Members { get; set; } = new List<ChannelMember>();
@@ -360,7 +360,7 @@ public class ChannelMember
     public DateTime? LastReadAt { get; set; }
     public bool IsActive { get; set; } = true;
     public bool IsMuted { get; set; } = false;
-    
+
     // Granular permissions
     public bool CanSendMessages { get; set; } = true;
     public bool CanDeleteOthersMessages { get; set; }
@@ -369,7 +369,7 @@ public class ChannelMember
     public bool CanRemoveUsers { get; set; }
     public bool CanPinMessages { get; set; }
     public bool CanManageRoles { get; set; }
-    
+
     // Navigation properties
     public Channel? Channel { get; set; }
     public User? User { get; set; }
@@ -392,13 +392,13 @@ public class ChannelMessage
     public DateTime? DeletedAt { get; set; }
     public ulong? ReplyToMessageId { get; set; }
     public bool IsPinned { get; set; } = false;
-    
+
     // Delivery tracking fields
     public bool IsDelivered { get; set; } = false;
     public DateTime? DeliveredAt { get; set; }
     public bool IsRead { get; set; } = false;
     public DateTime? ReadAt { get; set; }
-    
+
     // Navigation properties
     public Channel? Channel { get; set; }
     public User? FromUser { get; set; }
@@ -419,7 +419,7 @@ public class PrivateChat
     public DateTime? LastActivityAt { get; set; }
     public ulong? LastMessageId { get; set; }
     public bool IsActive { get; set; } = true;
-    
+
     // Navigation properties
     public User? User1 { get; set; }
     public User? User2 { get; set; }

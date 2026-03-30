@@ -18,9 +18,9 @@ public class MessageHandler : IMessageHandler
     private bool _ackSent = false;
     private ulong _ackSequenceId = 0;
     private string _errorMessage = string.Empty;
-    
+
     public Aegis.Protocol.MessageType Type => Aegis.Protocol.MessageType.Message;
-    
+
     public MessageHandler(
         IAntiSpamClient antiSpam,
         IMessageService messageService,
@@ -34,7 +34,7 @@ public class MessageHandler : IMessageHandler
         _sessionManager = sessionManager;
         _logger = logger ?? new Aegis.Transport.NullLogger();
     }
-    
+
     public async ValueTask HandleAsync(ConnectionContext context, Message message)
     {
         var session = _sessionManager.GetAuthenticatedSession(context.ConnectionId);
@@ -45,14 +45,14 @@ public class MessageHandler : IMessageHandler
         }
 
         var allowed = await _antiSpam.CheckMessageAsync(context.ConnectionId, message.Payload);
-        
+
         if (!allowed)
         {
             // отклонение сообщения
             await SendErrorAsync(context, message.SequenceId, "Message rejected by anti-spam");
             return;
         }
-        
+
         var delivered = await RouteMessageToRecipient(context, message, session);
         if (!delivered)
         {
@@ -62,7 +62,7 @@ public class MessageHandler : IMessageHandler
 
         await SendAckAsync(context, message.SequenceId);
     }
-    
+
     private async Task<bool> RouteMessageToRecipient(ConnectionContext context, Message message, SessionInfo senderSession)
     {
         try
@@ -152,11 +152,11 @@ public class MessageHandler : IMessageHandler
             Content = content
         };
     }
-    
+
     public bool AckSent => _ackSent;
     public ulong AckSequenceId => _ackSequenceId;
     public string ErrorMessage => _errorMessage;
-    
+
     private async Task SendAckAsync(ConnectionContext context, ulong sequenceId)
     {
         try
@@ -177,10 +177,10 @@ public class MessageHandler : IMessageHandler
                 (ushort)Aegis.Protocol.MessageType.Ack,
                 sequenceId,
                 Array.Empty<byte>());
-            
+
             _ackSent = true;
             _ackSequenceId = sequenceId;
-            
+
             _logger.Debug($"ACK sent for sequence {sequenceId} to connection {context.ConnectionId}");
         }
         catch (Exception ex)
@@ -189,7 +189,7 @@ public class MessageHandler : IMessageHandler
             throw;
         }
     }
-    
+
     private async Task SendErrorAsync(ConnectionContext context, ulong sequenceId, string error)
     {
         try
@@ -210,9 +210,9 @@ public class MessageHandler : IMessageHandler
                 (ushort)Aegis.Protocol.MessageType.Error,
                 sequenceId,
                 System.Text.Encoding.UTF8.GetBytes(error));
-            
+
             _errorMessage = error;
-            
+
             _logger.Warning($"Error sent to connection {context.ConnectionId}: {error}");
         }
         catch (Exception ex)

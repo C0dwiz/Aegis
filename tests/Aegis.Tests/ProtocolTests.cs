@@ -22,11 +22,11 @@ public class ProtocolTests
             PayloadLength = 5,
             Payload = new byte[] { 1, 2, 3, 4, 5 }
         };
-        
+
         var buffer = new byte[ProtocolConstants.HeaderSize + original.PayloadLength];
         MessageEncoder.Encode(original, buffer);
         var decoded = MessageEncoder.Decode(buffer);
-        
+
         Assert.Equal(original.Magic, decoded.Magic);
         Assert.Equal(original.Type, decoded.Type);
         Assert.Equal(original.SequenceId, decoded.SequenceId);

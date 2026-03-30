@@ -130,7 +130,7 @@ public record PrivateChatMessageResponse(
 public class ChannelMessageHandler : IMessageHandler
 {
     public MessageType Type => MessageType.ChannelMessage;
-    
+
     private readonly IMessageService _messageService;
     private readonly IChannelRepository _channelRepository;
     private readonly SessionManager _sessionManager;
@@ -226,10 +226,10 @@ public class ChannelMessageHandler : IMessageHandler
                     eventPayload);
             }
 
-            await SendResponseAsync(context, message.SequenceId, 
+            await SendResponseAsync(context, message.SequenceId,
                 new ChannelMessageResponse(true, channelMsg.Id, "Message sent"));
 
-            _logger.LogInformation("Channel message sent to channel {ChannelId} by user {UserId}", 
+            _logger.LogInformation("Channel message sent to channel {ChannelId} by user {UserId}",
                 payload.ChannelId, session.UserId);
         }
         catch (UnauthorizedAccessException ex)
@@ -263,7 +263,7 @@ public class ChannelMessageHandler : IMessageHandler
 public class ChannelCreateHandler : IMessageHandler
 {
     public MessageType Type => MessageType.ChannelCreate;
-    
+
     private readonly IChannelService _channelService;
     private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;
@@ -302,7 +302,7 @@ public class ChannelCreateHandler : IMessageHandler
             var channel = await _channelService.CreateChannelAsync(
                 session.UserId, payload.Name, payload.Description, payload.Type);
 
-            await SendResponseAsync(context, message.SequenceId, 
+            await SendResponseAsync(context, message.SequenceId,
                 new ChannelCreateResponse(true, channel.Id, "Channel created"));
 
             _logger.LogInformation("Channel '{ChannelName}' created by user {UserId}", payload.Name, session.UserId);
@@ -334,7 +334,7 @@ public class ChannelCreateHandler : IMessageHandler
 public class PrivateChatMessageHandler : IMessageHandler
 {
     public MessageType Type => MessageType.PrivateChatMessage;
-    
+
     private readonly IMessageService _messageService;
     private readonly IUserSearchService _userSearchService;
     private readonly IBotManagementService _botManagementService;
@@ -459,10 +459,10 @@ public class PrivateChatMessageHandler : IMessageHandler
                     pushPayload);
             }
 
-            await SendResponseAsync(context, message.SequenceId, 
+            await SendResponseAsync(context, message.SequenceId,
                 new PrivateChatMessageResponse(true, privateMsg.Id, "Message sent"));
 
-            _logger.LogInformation("Private message sent from user {FromUserId} to user {ToUserId}", 
+            _logger.LogInformation("Private message sent from user {FromUserId} to user {ToUserId}",
                 session.UserId, payload.ToUserId);
         }
         catch (Exception ex)

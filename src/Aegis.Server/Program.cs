@@ -4,7 +4,10 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using System.Net.Security;
+using System.Security.Authentication;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using Serilog;
 using Aegis.Common;
 using Aegis.Common.Configuration;
@@ -93,7 +96,7 @@ public static class Program
                 config
                     .SetBasePath(configBasePath)
                     .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
-                    .AddJsonFile($"appsettings.{context.HostingEnvironment.EnvironmentName}.json", 
+                    .AddJsonFile($"appsettings.{context.HostingEnvironment.EnvironmentName}.json",
                         optional: true, reloadOnChange: true)
                     .AddEnvironmentVariables("AEGIS_")
                     .AddCommandLine(args);
@@ -105,6 +108,8 @@ public static class Program
                 // Configure options
                 services.Configure<ServerOptions>(
                     context.Configuration.GetSection(ServerOptions.SectionName));
+                services.Configure<TlsOptions>(
+                    context.Configuration.GetSection(TlsOptions.SectionName));
                 services.Configure<CryptoOptions>(
                     context.Configuration.GetSection(CryptoOptions.SectionName));
                 services.Configure<ProtocolSecurityOptions>(
@@ -240,6 +245,30 @@ public static class Program
                 services.AddSingleton<TcpServer>(sp =>
                 {
                     var options = sp.GetRequiredService<IOptions<ServerOptions>>().Value;
+                    var tlsCfg   = sp.GetRequiredService<IOptions<TlsOptions>>().Value;
+
+                    SslServerAuthenticationOptions? sslOptions = null;
+                    if (tlsCfg.Enabled)
+                    {
+                        if (string.IsNullOrWhiteSpace(tlsCfg.CertificatePath))
+                            throw new InvalidOperationException(
+                                "Tls:Enabled is true but Tls:CertificatePath is empty.");
+
+                        var cert = X509CertificateLoader.LoadPkcs12FromFile(
+                            tlsCfg.CertificatePath,
+                            tlsCfg.CertificatePassword,
+                            X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.PersistKeySet);
+
+                        sslOptions = new SslServerAuthenticationOptions
+                        {
+                            ServerCertificate          = cert,
+                            ClientCertificateRequired  = false,
+                            EnabledSslProtocols        = SslProtocols.Tls12 | SslProtocols.Tls13,
+                            CertificateRevocationCheckMode =
+                                X509RevocationMode.NoCheck,
+                        };
+                    }
+
                     return new TcpServer(
                         options.Port,
                         options.MaxConnections,
@@ -250,6 +279,7 @@ public static class Program
                         options.MaxIncompleteFrameDrops,
                         options.EnableTransportMasking ? options.TransportMaskingKey : null,
                         sp.GetRequiredService<IRateLimiter>(),
+                        sslOptions,
                         sp.GetRequiredService<Aegis.Common.Logging.ILogger>());
                 });
 
@@ -401,7 +431,7 @@ public class AegisMessengerService : BackgroundService
             _rateLimiter.RegisterConnection(context.ConnectionId, ipAddress);
         }
         _healthCheckService.RecordConnectionAccepted();
-        _logger.LogInformation("Client {ConnectionId} connected from {RemoteEndPoint}", 
+        _logger.LogInformation("Client {ConnectionId} connected from {RemoteEndPoint}",
             context.ConnectionId, context.Socket.RemoteEndPoint);
     }
 
@@ -484,14 +514,14 @@ public class AegisMessengerService : BackgroundService
                 _sessionManager.CreateSession(context.ConnectionId);
 
             var isHandshake = message.Type == MessageType.Handshake;
-            var isAuthFlow = message.Type == MessageType.Auth || message.Type == MessageType.Register;
-            if (!isHandshake && !session.HandshakeEstablished)
+            var isRegister = message.Type == MessageType.Register;
+            if (!isHandshake && !isRegister && !session.HandshakeEstablished)
             {
                 _logger.LogWarning("Rejected {MessageType} from connection {ConnectionId} before handshake", message.Type, context.ConnectionId);
                 return;
             }
 
-            if (!isHandshake && !isAuthFlow && !_rateLimiter.CanSendMessage(context.ConnectionId))
+            if (!isHandshake && !_rateLimiter.CanSendMessage(context.ConnectionId))
             {
                 _logger.LogWarning("Rate limit exceeded for connection {ConnectionId} on {MessageType}", context.ConnectionId, message.Type);
                 return;
@@ -510,13 +540,19 @@ public class AegisMessengerService : BackgroundService
 
             if (encryptedPayload)
             {
-                if (!session.HandshakeEstablished || session.SessionKey.IsEmpty)
+                if (!session.HandshakeEstablished || session.SessionKey.IsEmpty || session.SessionKey.Length != 32)
                 {
                     _logger.LogWarning("Rejected encrypted payload from connection {ConnectionId} without established session key", context.ConnectionId);
                     return;
                 }
 
                 // Reconstruct the header bytes to use as AAD for AES-GCM.
+                if (message.Payload.Length < 28)
+                {
+                    _logger.LogWarning("Rejected encrypted payload from connection {ConnectionId} due to invalid ciphertext size {CiphertextSize}", context.ConnectionId, message.Payload.Length);
+                    return;
+                }
+
                 var headerBytes = data.Slice(0, ProtocolConstants.HeaderSize);
 
                 if (!TryDecryptPayload(message.Payload, session.SessionKey.Span, headerBytes.Span, out var decryptedPayload))

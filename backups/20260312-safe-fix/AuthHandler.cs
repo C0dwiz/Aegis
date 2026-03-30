@@ -34,9 +34,9 @@ public class AuthHandler : IMessageHandler
     private readonly IMessageRepository _messageRepository;
     private readonly Func<IEnumerable<ulong>, Task<IDictionary<ulong, string>>> _getUsernamesByIds;
     private readonly ILogger<AuthHandler> _logger;
-    
+
     public MessageType Type => MessageType.Auth;
-    
+
     public AuthHandler(
         IUserAuthenticationService authService,
         RateLimiter rateLimiter,
@@ -79,8 +79,8 @@ public class AuthHandler : IMessageHandler
                 });
                 return;
             }
-            
-            _logger.LogInformation("Authentication attempt for user: {Username} from connection {ConnectionId}", 
+
+            _logger.LogInformation("Authentication attempt for user: {Username} from connection {ConnectionId}",
                 authRequest.Username, context.ConnectionId);
 
             // Token-based re-authentication
@@ -113,14 +113,14 @@ public class AuthHandler : IMessageHandler
             // Username/password authentication
             var ipAddress = context.Socket.RemoteEndPoint?.ToString();
             var result = await _authService.AuthenticateUserAsync(
-                authRequest.Username, 
-                authRequest.Password, 
-                authRequest.ClientInfo, 
+                authRequest.Username,
+                authRequest.Password,
+                authRequest.ClientInfo,
                 ipAddress);
-            
+
             if (result == null)
             {
-                _logger.LogWarning("Authentication failed for user {Username} from connection {ConnectionId}", 
+                _logger.LogWarning("Authentication failed for user {Username} from connection {ConnectionId}",
                     authRequest.Username, context.ConnectionId);
                 await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
                 {
@@ -131,16 +131,16 @@ public class AuthHandler : IMessageHandler
             }
 
             var (user, dbSession) = result.Value;
-            
+
             // Associate the TCP connection with the authenticated user
             _sessionManager.AuthenticateSession(context.ConnectionId, user.Id, user.Username);
-            
+
             // Bind session to connection
             dbSession.ConnectionId = context.ConnectionId.ToString();
-            
-            _logger.LogInformation("User {Username} (ID: {UserId}) authenticated successfully from connection {ConnectionId}", 
+
+            _logger.LogInformation("User {Username} (ID: {UserId}) authenticated successfully from connection {ConnectionId}",
                 user.Username, user.Id, context.ConnectionId);
-            
+
             await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
             {
                 Success = true,
@@ -214,13 +214,13 @@ public class AuthHandler : IMessageHandler
             _logger.LogError(ex, "handler_error op={Operation} conn={ConnectionId} user={UserId}", "auth_deliver_pending", connectionId, userId);
         }
     }
-    
+
     private async Task SendAuthResponseAsync(ConnectionContext context, ulong sequenceId, AuthResponse response)
     {
         try
         {
             var responseJson = JsonSerializer.SerializeToUtf8Bytes(response);
-            
+
             var responseMessage = new Aegis.Protocol.Message
             {
                 Magic = ProtocolConstants.Magic,

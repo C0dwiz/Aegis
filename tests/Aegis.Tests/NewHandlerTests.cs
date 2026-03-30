@@ -106,7 +106,7 @@ public class NewHandlerTests : IDisposable
         var context = new ConnectionContext(mockSocket, 12345ul);
         var registrationRequest = new RegistrationRequest("testuser", "test@example.com", "password123", "public_key");
         var payload = SerializePayload(registrationRequest);
-        
+
         var message = new Aegis.Protocol.Message
         {
             Type = MessageType.Register,
@@ -159,7 +159,7 @@ public class NewHandlerTests : IDisposable
         var context = new ConnectionContext(mockSocket, 12346ul);
         var searchRequest = new UserSearchRequest("john", 20);
         var payload = SerializePayload(searchRequest);
-        
+
         var message = new Aegis.Protocol.Message
         {
             Type = MessageType.UserSearch,
@@ -173,15 +173,15 @@ public class NewHandlerTests : IDisposable
         };
 
         _mockSearchService.Setup(x => x.SearchUsersByUsernameAsync("john", 20))
-            .ReturnsAsync(expectedUsers.Select(u => 
+            .ReturnsAsync(expectedUsers.Select(u =>
             {
-                var user = new User 
-                { 
-                    Id = u.Id, 
-                    Username = u.Username, 
+                var user = new User
+                {
+                    Id = u.Id,
+                    Username = u.Username,
                     Email = string.Empty,
-                    PublicKey = "", 
-                    PasswordHash = "" 
+                    PublicKey = "",
+                    PasswordHash = ""
                 };
                 return user;
             }));
@@ -212,7 +212,7 @@ public class NewHandlerTests : IDisposable
         var context = new ConnectionContext(mockSocket, 12347ul);
         var channelMessageRequest = new ChannelMessageRequest(1, "Hello, channel!", MessageContentType.Text);
         var payload = SerializePayload(channelMessageRequest);
-        
+
         var message = new Aegis.Protocol.Message
         {
             Type = MessageType.ChannelMessage,
@@ -357,7 +357,7 @@ public class NewHandlerTests : IDisposable
         var context = new ConnectionContext(mockSocket, 12348ul);
         var channelCreateRequest = new ChannelCreateRequest("Test Channel", "Test Description", ChannelType.Public);
         var payload = SerializePayload(channelCreateRequest);
-        
+
         var message = new Aegis.Protocol.Message
         {
             Type = MessageType.ChannelCreate,
@@ -387,7 +387,7 @@ public class NewHandlerTests : IDisposable
         var context = new ConnectionContext(mockSocket, 12349ul);
         var privateChatRequest = new PrivateChatMessageRequest(2, "Hello, private!", MessageContentType.Text);
         var payload = SerializePayload(privateChatRequest);
-        
+
         var message = new Aegis.Protocol.Message
         {
             Type = MessageType.PrivateChatMessage,
@@ -411,7 +411,7 @@ public class NewHandlerTests : IDisposable
         var context = new ConnectionContext(mockSocket, 12350ul);
         var privateChatRequest = new PrivateChatMessageRequest(999, "Hello, private!", MessageContentType.Text);
         var payload = SerializePayload(privateChatRequest);
-        
+
         var message = new Aegis.Protocol.Message
         {
             Type = MessageType.PrivateChatMessage,

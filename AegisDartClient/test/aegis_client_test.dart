@@ -14,7 +14,7 @@ void main() {
 
       // Encode
       final encoded = MessageEncoder.encode(originalMessage);
-      
+
       // Decode
       final decodedMessage = MessageEncoder.decode(encoded);
 
@@ -30,7 +30,7 @@ void main() {
 
     test('should throw ProtocolError for invalid magic', () {
       final data = Uint8List.fromList([0x00, 0x00, 0x00, 0x00]); // Invalid magic
-      
+
       expect(
         () => MessageEncoder.decode(data),
         throwsA(isA<ProtocolError>()),
@@ -39,7 +39,7 @@ void main() {
 
     test('should throw ProtocolError for too short message', () {
       final data = Uint8List(10); // Too short
-      
+
       expect(
         () => MessageEncoder.decode(data),
         throwsA(isA<ProtocolError>()),
@@ -68,7 +68,7 @@ void main() {
   group('Message', () {
     test('should create valid message', () {
       final message = Message.withType(MessageType.ping);
-      
+
       expect(message.isValid, isTrue);
       expect(message.type, equals(MessageType.ping));
       expect(message.magic, equals(ProtocolConstants.magic));
@@ -77,11 +77,11 @@ void main() {
     test('should calculate total size correctly', () {
       final payload = Uint8List.fromList('test'.codeUnits);
       final message = Message.withType(MessageType.message, payload);
-      
-      final expectedSize = ProtocolConstants.headerSize + 
-                          payload.length + 
+
+      final expectedSize = ProtocolConstants.headerSize +
+                          payload.length +
                           ProtocolConstants.macSize;
-      
+
       expect(message.totalSize, equals(expectedSize));
     });
   });
@@ -109,7 +109,7 @@ void main() {
     test('should allow enabling/disabling', () {
       AegisLogger.enabled = true;
       expect(() => AegisLogger.info('test'), returnsNormally);
-      
+
       AegisLogger.enabled = false;
       expect(() => AegisLogger.info('test'), returnsNormally);
     });
@@ -117,7 +117,7 @@ void main() {
     test('should allow setting log level', () {
       AegisLogger.level = LogLevel.debug;
       expect(AegisLogger.level, equals(LogLevel.debug));
-      
+
       AegisLogger.level = LogLevel.error;
       expect(AegisLogger.level, equals(LogLevel.error));
     });

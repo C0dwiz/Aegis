@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:es_compression/brotli.dart';
+
 import 'exceptions.dart';
 import 'logger.dart';
 import 'message.dart';
@@ -11,6 +13,7 @@ import 'message_type.dart';
 import 'protocol_constants.dart';
 import 'ring_buffer.dart';
 import 'security_utils.dart';
+import 'session_crypto.dart';
 
 /// TCP transport layer for Aegis client communication.
 ///
@@ -19,9 +22,12 @@ import 'security_utils.dart';
 ///
 /// See: `src/Aegis.Transport/TcpServer.cs` (server counterpart).
 class AegisTransport {
+  static final BrotliCodec _brotli = BrotliCodec();
+
   late Socket _socket;
   bool _isConnected = false;
   int _nextSequenceId = 1;
+  Future<void> _receivePipeline = Future<void>.value();
 
   /// Ring buffer for accumulating TCP chunks and extracting complete frames.
   /// Replaces the old `Uint8List _pendingBytes` pattern, avoiding O(n)
@@ -34,6 +40,7 @@ class AegisTransport {
 
   StreamSubscription<Uint8List>? _socketSubscription;
   Timer? _healthCheckTimer;
+  AegisSessionCrypto? _sessionCrypto;
 
   /// Maximum bytes buffered before pausing the socket (backpressure).
   final int _maxBufferSize;
@@ -91,6 +98,8 @@ class AegisTransport {
       _inboundMaskOffset = 0;
       _outboundMaskOffset = 0;
       _isPaused = false;
+      _sessionCrypto?.dispose();
+      _sessionCrypto = null;
 
       if (transportMaskingKey != null && transportMaskingKey.trim().isNotEmpty) {
         _transportMaskingKey =
@@ -135,7 +144,15 @@ class AegisTransport {
       SecureBufferUtils.zeroOut(_transportMaskingKey);
     }
 
+    _sessionCrypto?.dispose();
+    _sessionCrypto = null;
+
     if (!_disconnectController.isClosed) _disconnectController.add(null);
+  }
+
+  void setSessionKey(Uint8List sessionKey) {
+    _sessionCrypto?.dispose();
+    _sessionCrypto = AegisSessionCrypto(sessionKey);
   }
 
   // ── Sending ─────────────────────────────────────────────────────────
@@ -157,7 +174,8 @@ class AegisTransport {
         message.sequenceId = _getNextSequenceId();
       }
 
-      final data = MessageEncoder.encode(message);
+      final wireMessage = await _prepareOutboundMessage(message);
+      final data = MessageEncoder.encode(wireMessage);
       final outgoing = _applyOutboundMask(data);
       _socket.add(outgoing);
       await _socket.flush();
@@ -178,7 +196,7 @@ class AegisTransport {
   void _listenForMessages() {
     _socketSubscription = _socket.listen(
       (Uint8List data) {
-        _handleIncomingData(data);
+        _receivePipeline = _receivePipeline.then((_) => _handleIncomingData(data));
       },
       onError: (error) {
         AegisLogger.error('Socket error', error);
@@ -193,7 +211,7 @@ class AegisTransport {
   }
 
   /// Accumulate [data] into the ring buffer and extract complete frames.
-  void _handleIncomingData(Uint8List data) {
+  Future<void> _handleIncomingData(Uint8List data) async {
     if (data.isEmpty) return;
 
     final incoming = _applyInboundMask(data);
@@ -209,7 +227,7 @@ class AegisTransport {
       );
     }
 
-    _extractFrames();
+    await _extractFrames();
 
     // ── Resume socket once buffer drains below half-mark ─────────
     if (_isPaused && _pendingBuffer.length < _maxBufferSize ~/ 2) {
@@ -220,7 +238,7 @@ class AegisTransport {
   }
 
   /// Parse and dispatch all complete frames currently in the ring buffer.
-  void _extractFrames() {
+  Future<void> _extractFrames() async {
     while (_pendingBuffer.length >= ProtocolConstants.headerSize) {
       // Read the 4-byte payload length at header offset 17 via a
       // zero-copy view into the ring buffer.
@@ -256,6 +274,7 @@ class AegisTransport {
       final frame = _pendingBuffer.take(frameSize);
       try {
         final message = MessageEncoder.decode(frame);
+        await _unwrapInboundMessage(frame, message);
         AegisLogger.debug(
           'Received message: ${message.type} (seq: ${message.sequenceId})',
         );
@@ -332,6 +351,34 @@ class AegisTransport {
     if (!_messageController.isClosed) _messageController.close();
     if (!_disconnectController.isClosed) _disconnectController.close();
   }
+
+  Future<Message> _prepareOutboundMessage(Message message) async {
+    final sessionCrypto = _sessionCrypto;
+    if (sessionCrypto == null || message.type == MessageType.handshake) {
+      return message;
+    }
+
+    return sessionCrypto.encryptMessage(message);
+  }
+
+  Future<void> _unwrapInboundMessage(Uint8List frame, Message message) async {
+    final sessionCrypto = _sessionCrypto;
+    if ((message.flags & ProtocolConstants.flagEncrypted) != 0) {
+      if (sessionCrypto == null) {
+        throw StateError('Encrypted message received before session key setup');
+      }
+
+      final headerBytes = Uint8List.sublistView(frame, 0, ProtocolConstants.headerSize);
+      await sessionCrypto.decryptMessage(message, headerBytes);
+    }
+
+    if ((message.flags & ProtocolConstants.flagCompressed) != 0) {
+      final decompressed = _brotli.decode(message.payload);
+      message.payload = decompressed is Uint8List
+          ? decompressed
+          : Uint8List.fromList(decompressed);
+      message.payloadLength = message.payload.length;
+      message.flags &= ~ProtocolConstants.flagCompressed;
+    }
+  }
 }
-
-

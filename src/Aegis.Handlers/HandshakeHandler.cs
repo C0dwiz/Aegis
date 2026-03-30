@@ -3,19 +3,29 @@ using Aegis.Common;
 using Aegis.Crypto;
 using Aegis.Protocol;
 using Aegis.Transport;
+using Aegis.Common.Configuration;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging;
+using System.Security.Cryptography;
+using System.Buffers.Binary;
 
 namespace Aegis.Handlers;
 
 public record HandshakeRequestPayload(string PublicKey, int? ClientVersion = null);
 
-public record HandshakeResponsePayload(bool Success, string? ServerPublicKey = null, string? Message = null);
+public record HandshakeResponsePayload(
+    bool Success,
+    string? ServerPublicKey = null,
+    string? Message = null,
+    string? Signature = null,
+    string? SignatureAlgorithm = null);
 
 public class HandshakeHandler : IMessageHandler
 {
     private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;
     private readonly Aegis.Crypto.ICryptoProvider _cryptoProvider;
+    private readonly ProtocolSecurityOptions _protocolSecurityOptions;
     private readonly ILogger<HandshakeHandler> _logger;
 
     public MessageType Type => MessageType.Handshake;
@@ -24,11 +34,13 @@ public class HandshakeHandler : IMessageHandler
         SessionManager sessionManager,
         IMessageSender messageSender,
         Aegis.Crypto.ICryptoProvider cryptoProvider,
+        IOptions<ProtocolSecurityOptions> protocolSecurityOptions,
         ILogger<HandshakeHandler> logger)
     {
         _sessionManager = sessionManager;
         _messageSender = messageSender;
         _cryptoProvider = cryptoProvider;
+        _protocolSecurityOptions = protocolSecurityOptions.Value;
         _logger = logger;
     }
 
@@ -54,13 +66,22 @@ public class HandshakeHandler : IMessageHandler
                 return;
             }
 
+            var serverPublicKey = keyExchange.PublicKeyRaw;
+            var signature = SignHandshake(serverPublicKey, clientPublicKey);
+            if (_protocolSecurityOptions.RequireSignedHandshakeResponses && signature == null)
+            {
+                await SendHandshakeResponseAsync(context, message.SequenceId, false, null, "Handshake signature unavailable", allowUnsigned: true);
+                return;
+            }
+
             await SendHandshakeResponseAsync(
                 context,
                 message.SequenceId,
                 true,
-                Convert.ToBase64String(keyExchange.PublicKey),
+                Convert.ToBase64String(serverPublicKey),
                 "Handshake established",
-                allowUnsigned: false);
+                allowUnsigned: false,
+                signature: signature);
 
             _logger.LogInformation("Handshake completed for connection {ConnectionId}", context.ConnectionId);
         }
@@ -110,9 +131,15 @@ public class HandshakeHandler : IMessageHandler
         bool success,
         string? serverPublicKey,
         string message,
-        bool allowUnsigned)
+        bool allowUnsigned,
+        string? signature = null)
     {
-        var payload = PayloadSerializer.Serialize(new HandshakeResponsePayload(success, serverPublicKey, message));
+        var payload = PayloadSerializer.Serialize(new HandshakeResponsePayload(
+            success,
+            serverPublicKey,
+            message,
+            signature,
+            signature == null ? null : "ECDSA_P256_SHA256"));
         await _messageSender.SendProtocolMessageAsync(
             context.ConnectionId,
             (ushort)MessageType.Handshake,
@@ -133,5 +160,53 @@ public class HandshakeHandler : IMessageHandler
             decoded = Array.Empty<byte>();
             return false;
         }
+    }
+
+    private string? SignHandshake(ReadOnlySpan<byte> serverPublicKey, ReadOnlySpan<byte> clientPublicKey)
+    {
+        var base64PrivateKey = _protocolSecurityOptions.HandshakeSigningPrivateKeyBase64;
+        if (string.IsNullOrWhiteSpace(base64PrivateKey))
+        {
+            return null;
+        }
+
+        try
+        {
+            var privateKey = Convert.FromBase64String(base64PrivateKey);
+            using var ecdsa = ECDsa.Create();
+            ecdsa.ImportPkcs8PrivateKey(privateKey, out _);
+            var transcript = BuildSignatureTranscript(serverPublicKey, clientPublicKey);
+            var signature = ecdsa.SignData(transcript, HashAlgorithmName.SHA256);
+            return Convert.ToBase64String(signature);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to sign handshake transcript");
+            return null;
+        }
+    }
+
+    private static byte[] BuildSignatureTranscript(ReadOnlySpan<byte> serverPublicKey, ReadOnlySpan<byte> clientPublicKey)
+    {
+        var marker = Encoding.ASCII.GetBytes("AEGIS-HANDSHAKE-V1");
+        var transcript = new byte[
+            marker.Length +
+            sizeof(int) + serverPublicKey.Length +
+            sizeof(int) + clientPublicKey.Length];
+
+        var offset = 0;
+        Buffer.BlockCopy(marker, 0, transcript, offset, marker.Length);
+        offset += marker.Length;
+
+        BinaryPrimitives.WriteInt32LittleEndian(transcript.AsSpan(offset, sizeof(int)), serverPublicKey.Length);
+        offset += sizeof(int);
+        serverPublicKey.CopyTo(transcript.AsSpan(offset, serverPublicKey.Length));
+        offset += serverPublicKey.Length;
+
+        BinaryPrimitives.WriteInt32LittleEndian(transcript.AsSpan(offset, sizeof(int)), clientPublicKey.Length);
+        offset += sizeof(int);
+        clientPublicKey.CopyTo(transcript.AsSpan(offset, clientPublicKey.Length));
+
+        return transcript;
     }
 }

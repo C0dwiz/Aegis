@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Collections.Concurrent;
 using System.Buffers;
@@ -28,21 +29,23 @@ public class TcpServer : IDisposable
     private readonly int _maxIncompleteFrameDrops;
     private readonly byte[] _transportMaskingKey;
     private readonly SemaphoreSlim _stopSemaphore;
+    private readonly SslServerAuthenticationOptions? _tlsOptions;
     private ulong _nextConnectionId;
     private bool _disposed;
     private bool _stopped;
-    
+
     public int Port { get; }
     public int MaxConnections { get; }
     public int BufferSize { get; }
     public bool EnableIPv6 { get; }
     public TimeSpan IdleTimeout { get; }
     public bool EnableTransportMasking => _transportMaskingKey.Length > 0;
-    
+    public bool EnableTls => _tlsOptions != null;
+
     public event Func<ConnectionContext, ReadOnlyMemory<byte>, Task>? OnMessageReceived;
     public event Action<ConnectionContext>? OnClientConnected;
     public event Action<ConnectionContext>? OnClientDisconnected;
-    
+
     public TcpServer(
         int port,
         int maxConnections = 10000,
@@ -53,6 +56,7 @@ public class TcpServer : IDisposable
         int maxIncompleteFrameDrops = 3,
         string? transportMaskingKey = null,
         IRateLimiter? rateLimiter = null,
+        SslServerAuthenticationOptions? tlsOptions = null,
         ILogger? logger = null)
     {
         Port = port;
@@ -66,13 +70,14 @@ public class TcpServer : IDisposable
             ? Array.Empty<byte>()
             : Encoding.UTF8.GetBytes(transportMaskingKey);
         _rateLimiter = rateLimiter;
+        _tlsOptions = tlsOptions;
         _logger = logger ?? new NullLogger();
         _listener = CreateListener(enableIPv6);
         _cts = new CancellationTokenSource();
         _connections = new ConcurrentDictionary<ulong, ConnectionContext>();
         _stopSemaphore = new SemaphoreSlim(1, 1);
     }
-    
+
     public async Task StartAsync(int port = 0)
     {
         if (port == 0) port = Port;
@@ -81,9 +86,9 @@ public class TcpServer : IDisposable
             : new IPEndPoint(IPAddress.Any, port);
         _listener.Bind(endpoint);
         _listener.Listen(MaxConnections);
-        
+
         _logger.Info($"TCP server started on port {port}");
-        
+
         while (!_cts.Token.IsCancellationRequested)
         {
             try
@@ -118,22 +123,49 @@ public class TcpServer : IDisposable
             }
         }
     }
-    
+
     private async Task HandleConnectionAsync(Socket socket)
     {
         var connectionId = Interlocked.Increment(ref _nextConnectionId);
         var context = new ConnectionContext(socket, connectionId, BufferSize);
         var remoteIp = GetRemoteIp(socket);
-        
+
         if (!_connections.TryAdd(connectionId, context))
         {
             socket.Dispose();
             return;
         }
-        
+
+        // Upgrade to TLS if configured, otherwise use a plain NetworkStream.
+        // Either way the downstream I/O code uses context.IoStream and never
+        // calls Socket.ReceiveAsync / Socket.SendAsync directly.
+        var networkStream = new NetworkStream(socket, ownsSocket: false);
+        if (_tlsOptions != null)
+        {
+            var sslStream = new SslStream(networkStream, leaveInnerStreamOpen: false);
+            try
+            {
+                await sslStream.AuthenticateAsServerAsync(_tlsOptions, _cts.Token);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning($"TLS handshake failed for connection {connectionId}: {ex.Message}");
+                sslStream.Dispose();
+                networkStream.Dispose();
+                _connections.TryRemove(connectionId, out _);
+                socket.Dispose();
+                return;
+            }
+            context.SetIoStream(sslStream);
+        }
+        else
+        {
+            context.SetIoStream(networkStream);
+        }
+
         OnClientConnected?.Invoke(context);
-        _logger.Info($"Client {connectionId} connected from {socket.RemoteEndPoint}");
-        
+        _logger.Info($"Client {connectionId} connected from {socket.RemoteEndPoint}{(EnableTls ? " [TLS]" : string.Empty)}");
+
         try
         {
             await ProcessConnectionAsync(context);
@@ -157,10 +189,11 @@ public class TcpServer : IDisposable
             context.Dispose();
         }
     }
-    
+
     private async Task ProcessConnectionAsync(ConnectionContext context)
     {
         var socket = context.Socket;
+        var stream = context.IoStream;
         var buffer = context.GetReceiveBuffer();
         var frameQueue = Channel.CreateBounded<PendingFrame>(new BoundedChannelOptions(256)
         {
@@ -170,7 +203,7 @@ public class TcpServer : IDisposable
         });
 
         var consumerTask = ConsumeFramesAsync(context, frameQueue.Reader);
-        
+
         try
         {
             while (!_cts.Token.IsCancellationRequested && socket.Connected)
@@ -182,7 +215,7 @@ public class TcpServer : IDisposable
                     idleTimeout.CancelAfter(TimeSpan.FromMilliseconds(waitMs));
                     try
                     {
-                        bytesReceived = await socket.ReceiveAsync(buffer, SocketFlags.None, idleTimeout.Token);
+                        bytesReceived = await stream.ReadAsync(buffer, idleTimeout.Token);
                     }
                     catch (OperationCanceledException) when (!_cts.Token.IsCancellationRequested)
                     {
@@ -211,7 +244,7 @@ public class TcpServer : IDisposable
                     // Клиент отключился порядком
                     break;
                 }
-                
+
                 context.UpdateActivity();
 
                 var incomingChunk = buffer.Span.Slice(0, bytesReceived);
@@ -268,7 +301,7 @@ public class TcpServer : IDisposable
             }
         }
     }
-    
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -277,24 +310,25 @@ public class TcpServer : IDisposable
         _listener.Dispose();
         _cts.Dispose();
         _stopSemaphore.Dispose();
-        
+
         _disposed = true;
         GC.SuppressFinalize(this);
     }
-    
+
     public async Task SendAsync(ConnectionContext context, ReadOnlyMemory<byte> data)
     {
         if (context == null) throw new ArgumentNullException(nameof(context));
-        
+
         var socket = context.Socket;
         if (!socket.Connected)
             throw new TransportError("Socket not connected");
-        
+
+        var ioStream = context.IoStream;
         try
         {
             if (!EnableTransportMasking)
             {
-                await SendAllAsync(socket, data, _cts.Token);
+                await SendAllAsync(ioStream, data, _cts.Token);
             }
             else
             {
@@ -304,7 +338,7 @@ public class TcpServer : IDisposable
                     var span = rented.AsSpan(0, data.Length);
                     data.Span.CopyTo(span);
                     context.ApplyOutboundMaskInPlace(span, _transportMaskingKey);
-                    await SendAllAsync(socket, rented.AsMemory(0, data.Length), _cts.Token);
+                    await SendAllAsync(ioStream, rented.AsMemory(0, data.Length), _cts.Token);
                 }
                 finally
                 {
@@ -314,20 +348,24 @@ public class TcpServer : IDisposable
 
             context.UpdateActivity();
         }
+        catch (IOException ex)
+        {
+            throw new TransportError($"Stream I/O error: {ex.Message}", ex);
+        }
         catch (SocketException ex)
         {
             throw new TransportError($"Socket error: {ex.SocketErrorCode}", ex);
         }
     }
-    
+
     public async Task SendToConnectionAsync(ulong connectionId, ReadOnlyMemory<byte> data)
     {
         if (!_connections.TryGetValue(connectionId, out var context))
             throw new TransportError($"Connection {connectionId} not found");
-        
+
         await SendAsync(context, data);
     }
-    
+
     public async Task StopAsync()
     {
         await _stopSemaphore.WaitAsync();
@@ -358,19 +396,10 @@ public class TcpServer : IDisposable
         }
     }
 
-    private static async Task SendAllAsync(Socket socket, ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
+    private static async Task SendAllAsync(Stream stream, ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
     {
-        var totalSent = 0;
-        while (totalSent < data.Length)
-        {
-            var sent = await socket.SendAsync(data.Slice(totalSent), SocketFlags.None, cancellationToken);
-            if (sent <= 0)
-            {
-                throw new TransportError("Socket send returned 0 bytes");
-            }
-
-            totalSent += sent;
-        }
+        await stream.WriteAsync(data, cancellationToken);
+        await stream.FlushAsync(cancellationToken);
     }
 
     private bool CanAcceptConnection(Socket socket)

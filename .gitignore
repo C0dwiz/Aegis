@@ -229,3 +229,6 @@ client.*
 
 # Environment variables file
 .env
+
+# Dart/Flutter generated tool state
+**/.dart_tool/

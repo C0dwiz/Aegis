@@ -205,7 +205,7 @@ public class GroupCreateHandler : IMessageHandler
             }
 
             var group = await _groupService.CreateGroupAsync(session.UserId, request.Name, request.Description);
-            await SendResponseAsync(context, message.SequenceId, 
+            await SendResponseAsync(context, message.SequenceId,
                 new GroupCreateResponse(true, group.Id, "Group created"));
 
             _logger.LogInformation("Group '{GroupName}' created by user {UserId}", request.Name, session.UserId);
@@ -370,7 +370,7 @@ public class GroupMessageSendHandler : IMessageHandler
                 request.GroupId, session.UserId, normalizedContent,
                 contentType, request.ReplyToMessageId);
 
-            await SendResponseAsync(context, message.SequenceId, 
+            await SendResponseAsync(context, message.SequenceId,
                 new GroupMessageSendResponse(true, msg.Id, "Message sent"));
 
             _logger.LogInformation("Group message sent to group {GroupId} by user {UserId}", request.GroupId, session.UserId);

@@ -15,12 +15,12 @@ public class SerilogLogger : ILogger
     }
 
     public void Debug(string message) => _logger.Debug("{Message}", message);
-    
+
     public void Info(string message) => _logger.Information("{Message}", message);
-    
+
     public void Warning(string message) => _logger.Warning("{Message}", message);
-    
-    public void Error(string message, Exception? ex = null) => 
+
+    public void Error(string message, Exception? ex = null) =>
         _logger.Error(ex, "{Message}", message);
 }
 

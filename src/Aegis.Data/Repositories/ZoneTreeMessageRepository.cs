@@ -147,11 +147,14 @@ public class ZoneTreeMessageRepository : IMessageRepository, IDisposable
         return Task.FromResult<IDictionary<ulong, int>>(dict);
     }
 
-    public Task MarkMessagesDeliveredAsync(IEnumerable<ulong> messageIds)
+    public Task MarkMessagesDeliveredAsync(IEnumerable<ulong> messageIds, ulong recipientUserId)
     {
-        foreach (var id in messageIds)
+        foreach (var id in messageIds.Distinct())
         {
-            if (_zoneTree.TryGet(id, out var message))
+            if (_zoneTree.TryGet(id, out var message) &&
+                message.ToUserId == recipientUserId &&
+                !message.IsDeleted &&
+                !message.IsDelivered)
             {
                 message.IsDelivered = true;
                 message.DeliveredAt = DateTime.UtcNow;

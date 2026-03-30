@@ -19,9 +19,9 @@ public class ServerMessageSender : IMessageSender
     private readonly ILogger _logger;
 
     public ServerMessageSender(
-        TcpServer? server, 
-        Aegis.Crypto.ICryptoProvider cryptoProvider, 
-        SessionManager sessionManager, 
+        TcpServer? server,
+        Aegis.Crypto.ICryptoProvider cryptoProvider,
+        SessionManager sessionManager,
         IOptions<ProtocolSecurityOptions> protocolSecurityOptions,
         ILogger logger)
     {
@@ -93,9 +93,13 @@ public class ServerMessageSender : IMessageSender
 
         if (shouldEncrypt)
         {
-            // Build temporary header bytes as AAD so header tampering is
-            // detected by AES-GCM authentication.
-            var tempMessage = new Message
+            var nonce = new byte[12];
+            RandomNumberGenerator.Fill(nonce);
+
+            var ciphertextWithTag = new byte[payload.Length + 16];
+            var encryptedPayload = new byte[nonce.Length + ciphertextWithTag.Length];
+            var aadHeader = new byte[ProtocolConstants.HeaderSize];
+            var aadMessage = new Message
             {
                 Magic = ProtocolConstants.Magic,
                 VersionMajor = ProtocolConstants.VersionMajor,
@@ -104,23 +108,18 @@ public class ServerMessageSender : IMessageSender
                 Type = (MessageType)messageType,
                 SequenceId = sequenceId,
                 Payload = Array.Empty<byte>(),
-                PayloadLength = (uint)payload.Length
+                PayloadLength = (uint)encryptedPayload.Length
             };
-            var headerBuf = new byte[ProtocolConstants.HeaderSize];
-            MessageEncoder.Encode(tempMessage, headerBuf);
+            MessageEncoder.Encode(aadMessage, aadHeader);
 
-            var nonce = new byte[12];
-            RandomNumberGenerator.Fill(nonce);
-
-            var ciphertextWithTag = new byte[payload.Length + 16];
             _cryptoProvider.Encrypt(payload, session!.SessionKey.Span, nonce, ciphertextWithTag,
-                headerBuf.AsSpan(0, ProtocolConstants.HeaderSize));
+                aadHeader.AsSpan(0, ProtocolConstants.HeaderSize));
 
-            var encryptedPayload = new byte[nonce.Length + ciphertextWithTag.Length];
             Buffer.BlockCopy(nonce, 0, encryptedPayload, 0, nonce.Length);
             Buffer.BlockCopy(ciphertextWithTag, 0, encryptedPayload, nonce.Length, ciphertextWithTag.Length);
 
             CryptographicOperations.ZeroMemory(ciphertextWithTag);
+            CryptographicOperations.ZeroMemory(aadHeader);
 
             payload = encryptedPayload;
             flags = (byte)(flags | (byte)MessageFlags.Encrypted);

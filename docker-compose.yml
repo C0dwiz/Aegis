@@ -107,6 +107,8 @@ services:
       AEGIS_Logging__Console: "true"
       AEGIS_Logging__File: "false"
       AEGIS_ProtocolSecurity__RequireEncryptedPayloadAfterHandshake: ${AEGIS_REQUIRE_ENCRYPTED_PAYLOAD_AFTER_HANDSHAKE:-true}
+      AEGIS_ProtocolSecurity__RequireSignedHandshakeResponses: ${AEGIS_REQUIRE_SIGNED_HANDSHAKE_RESPONSES:-true}
+      AEGIS_ProtocolSecurity__HandshakeSigningPrivateKeyBase64: ${AEGIS_HANDSHAKE_SIGNING_PRIVATE_KEY_BASE64}
     ports:
       - "8888:8888"
     volumes:

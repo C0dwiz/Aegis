@@ -78,7 +78,7 @@ public class AntiSpamClient : IAntiSpamClient, IDisposable
     private readonly Timer _cleanupTimer;
     private readonly Timer _flushLexiconTimer;
     private readonly Timer _saveModelTimer;
-    
+
     public AntiSpamClient(string serviceUrl = "http://localhost:8080", bool enableOnlineLearning = false)
     {
         _connectionState = new ConcurrentDictionary<ulong, ConnectionRateState>();
@@ -110,7 +110,7 @@ public class AntiSpamClient : IAntiSpamClient, IDisposable
         _flushLexiconTimer = new Timer(_ => FlushCandidateTokens(), null, _flushPeriod, _flushPeriod);
         _saveModelTimer = new Timer(_ => SaveModelSnapshot(), null, _snapshotPeriod, _snapshotPeriod);
     }
-    
+
     public async Task<bool> CheckMessageAsync(ulong connectionId, byte[] message)
     {
         try
@@ -292,7 +292,7 @@ public class AntiSpamClient : IAntiSpamClient, IDisposable
 
         return token.Any(char.IsLetter);
     }
-    
+
     private bool CheckBasicRateLimit(ulong connectionId)
     {
         var now = DateTime.UtcNow;
@@ -323,7 +323,7 @@ public class AntiSpamClient : IAntiSpamClient, IDisposable
             return true;
         }
     }
-    
+
     private void UpdateConnectionStats(ulong connectionId)
     {
         if (_connectionState.TryGetValue(connectionId, out var state))
@@ -331,7 +331,7 @@ public class AntiSpamClient : IAntiSpamClient, IDisposable
             state.LastSeenTicks = DateTime.UtcNow.Ticks;
         }
     }
-    
+
     public void Dispose()
     {
         _cleanupTimer.Dispose();

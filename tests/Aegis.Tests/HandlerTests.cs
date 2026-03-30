@@ -21,7 +21,7 @@ public class TestMessageSender : IMessageSender
 {
     public List<ulong> SentConnectionIds { get; } = new();
     public List<byte[]> SentMessages { get; } = new();
-    
+
     public Task SendMessageAsync(ulong connectionId, byte[] encryptedMessage)
     {
         SentConnectionIds.Add(connectionId);
@@ -56,7 +56,7 @@ public class HandlerTests
     private readonly AegisCryptoProvider _cryptoProvider = new AegisCryptoProvider();
     private readonly Mock<IMessageService> _messageServiceMock = new Mock<IMessageService>();
     private readonly SessionManager _sessionManager;
-    
+
     public HandlerTests()
     {
         _sessionManager = new SessionManager(_cryptoProvider, _logger);
@@ -71,7 +71,7 @@ public class HandlerTests
                 CreatedAt = DateTime.UtcNow
             });
     }
-    
+
     [Fact]
     public async Task MessageRouter_RegisterHandler_ShouldRouteCorrectly()
     {
@@ -90,16 +90,16 @@ public class HandlerTests
             PayloadLength = 5,
             Payload = new byte[] { 1, 2, 3, 4, 5 },
         };
-        
+
         // Act
         await router.RouteAsync(context, message);
-        
+
         // Assert
         Assert.True(testHandler.Handled);
         Assert.Equal(message.SequenceId, testHandler.HandledSequenceId);
         Assert.Equal(context.ConnectionId, testHandler.HandledConnectionId);
     }
-    
+
     [Fact]
     public async Task MessageRouter_UnknownMessage_ShouldSendError()
     {
@@ -117,15 +117,15 @@ public class HandlerTests
             PayloadLength = 0,
             Payload = Array.Empty<byte>(),
         };
-        
+
         // Act
         await router.RouteAsync(context, message);
-        
+
         // Assert
         Assert.NotEmpty(_logger.ErrorMessages);
         Assert.Contains(_logger.ErrorMessages, m => m.Contains("Unknown message type"));
     }
-    
+
     [Fact]
     public async Task AuthHandler_ShouldProcessAuthMessages()
     {
@@ -150,14 +150,14 @@ public class HandlerTests
             PayloadLength = 10,
             Payload = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 },
         };
-        
+
         // Act
         await handler.HandleAsync(context, message);
-        
+
         // Assert - with invalid JSON payload, handler should send error response
         Assert.NotEmpty(_messageSender.SentMessages);
     }
-    
+
     [Fact]
     public async Task PingHandler_ShouldUpdateActivity()
     {
@@ -165,7 +165,7 @@ public class HandlerTests
         var handler = new PingHandler();
         var context = new TestConnectionContext(12345ul);
         var initialActivity = context.LastActivity;
-        
+
         var message = new Aegis.Protocol.Message
         {
             Magic = ProtocolConstants.Magic,
@@ -177,15 +177,15 @@ public class HandlerTests
             PayloadLength = 8,
             Payload = BitConverter.GetBytes(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
         };
-        
+
         // Act
         await handler.HandleAsync(context, message);
-        
+
         // Assert
         Assert.True(context.LastActivity > initialActivity,
             $"LastActivity ({context.LastActivity}) should be greater than initial ({initialActivity})");
     }
-    
+
     [Fact]
     public async Task MessageHandler_AllowedMessage_ShouldSendAck()
     {
@@ -212,18 +212,18 @@ public class HandlerTests
             PayloadLength = (uint)payload.Length,
             Payload = payload,
         };
-        
+
         _antiSpam.AllowNextMessage = true;
-        
+
         // Act
         await handler.HandleAsync(context, message);
-        
+
         // Assert
         Assert.True(_antiSpam.CheckedConnection);
         Assert.True(handler.AckSent);
         Assert.Equal(message.SequenceId, handler.AckSequenceId);
     }
-    
+
     [Fact]
     public async Task MessageHandler_RejectedMessage_ShouldSendError()
     {
@@ -246,45 +246,45 @@ public class HandlerTests
             PayloadLength = (uint)payload.Length,
             Payload = payload,
         };
-        
+
         _antiSpam.AllowNextMessage = false;
-        
+
         // Act
         await handler.HandleAsync(context, message);
-        
+
         // Assert
         Assert.True(_antiSpam.CheckedConnection);
         Assert.Contains("rejected by anti-spam", handler.ErrorMessage);
     }
-    
+
     private class TestConnectionContext : ConnectionContext
     {
         private DateTime _lastActivity = DateTime.UtcNow;
-        
+
         public TestConnectionContext(ulong connectionId) : base(new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp), connectionId)
         {
         }
-        
-        public new DateTime LastActivity 
-        { 
-            get => _lastActivity; 
-            private set => _lastActivity = value; 
+
+        public new DateTime LastActivity
+        {
+            get => _lastActivity;
+            private set => _lastActivity = value;
         }
-        
+
         public override void UpdateActivity()
         {
             _lastActivity = DateTime.UtcNow;
         }
     }
-    
+
     private class TestMessageHandler : IMessageHandler
     {
         public MessageType Type => MessageType.Message;
-        
+
         public bool Handled { get; private set; }
         public ulong HandledConnectionId { get; private set; }
         public ulong HandledSequenceId { get; private set; }
-        
+
         public ValueTask HandleAsync(ConnectionContext context, Aegis.Protocol.Message message)
         {
             Handled = true;
@@ -293,13 +293,13 @@ public class HandlerTests
             return ValueTask.CompletedTask;
         }
     }
-    
+
     private class TestAntiSpamClient : IAntiSpamClient
     {
         public bool AllowNextMessage { get; set; } = true;
         public bool CheckedConnection { get; private set; }
         public ulong CheckedConnectionId { get; private set; }
-        
+
         public async Task<bool> CheckMessageAsync(ulong connectionId, byte[] message)
         {
             CheckedConnection = true;
@@ -308,18 +308,18 @@ public class HandlerTests
             return AllowNextMessage;
         }
     }
-    
+
     private class TestLogger : Aegis.Common.Logging.ILogger
     {
         public List<string> DebugMessages { get; } = new();
         public List<string> InfoMessages { get; } = new();
         public List<string> WarningMessages { get; } = new();
         public List<string> ErrorMessages { get; } = new();
-        
+
         public void Debug(string message) => DebugMessages.Add(message);
         public void Info(string message) => InfoMessages.Add(message);
         public void Warning(string message) => WarningMessages.Add(message);
-        public void Error(string message, Exception? ex = null) 
+        public void Error(string message, Exception? ex = null)
         {
             ErrorMessages.Add(message);
             if (ex != null) ErrorMessages.Add(ex.ToString());
@@ -464,7 +464,7 @@ public class HandlerTests
 
         // Act & Assert - Should not throw, should handle gracefully
         await router.RouteAsync(context, message);
-        
+
         // Should log error about unknown message type
         Assert.NotEmpty(_logger.ErrorMessages);
         Assert.Contains("Unknown message type", _logger.ErrorMessages.First());
