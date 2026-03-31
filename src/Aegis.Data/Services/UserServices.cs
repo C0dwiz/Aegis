@@ -869,6 +869,10 @@ public interface IChannelService
     Task<ChannelMember> UpdateMemberRoleAsync(ulong channelId, ulong actorUserId, ulong targetUserId, ChannelMemberRole newRole);
     Task<ChannelMember> UpdateMemberPermissionsAsync(ulong channelId, ulong actorUserId, ulong targetUserId, MemberPermissions permissions);
     Task<bool> HasPermissionAsync(ulong channelId, ulong userId, string permission);
+    // SERVER-004: explicit leave
+    Task<bool> LeaveChannelAsync(ulong channelId, ulong userId);
+    // SERVER-006: room settings
+    Task<Channel> UpdateRoomSettingsAsync(ulong channelId, ulong userId, JoinRule? joinRule, HistoryVisibility? historyVisibility);
 }
 
 public record MemberPermissions(
@@ -1250,6 +1254,47 @@ public class ChannelService : IChannelService
         return (value ?? string.Empty).Trim().TrimStart('@');
     }
 
+    public async Task<bool> LeaveChannelAsync(ulong channelId, ulong userId)
+    {
+        var member = await _channelRepository.GetChannelMemberAsync(channelId, userId);
+        if (member == null)
+            return false;
+
+        if (member.Role == ChannelMemberRole.Owner)
+            throw new InvalidOperationException("Owner cannot leave the channel; transfer ownership first");
+
+        member.IsActive = false;
+        await _channelRepository.UpdateMemberAsync(member);
+
+        var channel = await _channelRepository.GetByIdAsync(channelId);
+        if (channel != null)
+        {
+            channel.MemberCount = Math.Max(0, channel.MemberCount - 1);
+            channel.UpdatedAt = DateTime.UtcNow;
+            await _channelRepository.UpdateAsync(channel);
+        }
+
+        return true;
+    }
+
+    public async Task<Channel> UpdateRoomSettingsAsync(ulong channelId, ulong userId, JoinRule? joinRule, HistoryVisibility? historyVisibility)
+    {
+        var member = await _channelRepository.GetChannelMemberAsync(channelId, userId)
+            ?? throw new InvalidOperationException("Not a member of this channel");
+
+        if (!CanEditInfo(member))
+            throw new UnauthorizedAccessException("No permission to edit channel settings");
+
+        var channel = await _channelRepository.GetByIdAsync(channelId)
+            ?? throw new InvalidOperationException("Channel not found");
+
+        if (joinRule.HasValue) channel.JoinRule = joinRule.Value;
+        if (historyVisibility.HasValue) channel.HistoryVisibility = historyVisibility.Value;
+        channel.UpdatedAt = DateTime.UtcNow;
+
+        return await _channelRepository.UpdateAsync(channel);
+    }
+
 }
 
 // ===================== GROUP SERVICE =====================
@@ -1260,6 +1305,10 @@ public interface IGroupService
     Task<Group> UpdateGroupAsync(ulong groupId, ulong userId, string? name, string? description, string? avatarUrl);
     Task<GroupMember> UpdateMemberRoleAsync(ulong groupId, ulong actorUserId, ulong targetUserId, GroupMemberRole newRole);
     Task<GroupMember> UpdateMemberPermissionsAsync(ulong groupId, ulong actorUserId, ulong targetUserId, MemberPermissions permissions);
+    // SERVER-004: explicit leave
+    Task<bool> LeaveGroupAsync(ulong groupId, ulong userId);
+    // SERVER-006: room settings
+    Task<Group> UpdateRoomSettingsAsync(ulong groupId, ulong userId, JoinRule? joinRule, HistoryVisibility? historyVisibility);
 }
 
 public class GroupService : IGroupService
@@ -1420,6 +1469,47 @@ public class GroupService : IGroupService
                 member.CanManageRoles = false;
                 break;
         }
+    }
+
+    public async Task<bool> LeaveGroupAsync(ulong groupId, ulong userId)
+    {
+        var member = await _groupRepository.GetGroupMemberAsync(groupId, userId);
+        if (member == null)
+            return false;
+
+        if (member.Role == GroupMemberRole.Owner)
+            throw new InvalidOperationException("Owner cannot leave the group; transfer ownership first");
+
+        member.IsActive = false;
+        await _groupRepository.UpdateMemberAsync(member);
+
+        var group = await _groupRepository.GetByIdAsync(groupId);
+        if (group != null)
+        {
+            group.MemberCount = Math.Max(0, group.MemberCount - 1);
+            group.UpdatedAt = DateTime.UtcNow;
+            await _groupRepository.UpdateAsync(group);
+        }
+
+        return true;
+    }
+
+    public async Task<Group> UpdateRoomSettingsAsync(ulong groupId, ulong userId, JoinRule? joinRule, HistoryVisibility? historyVisibility)
+    {
+        var member = await _groupRepository.GetGroupMemberAsync(groupId, userId)
+            ?? throw new InvalidOperationException("Not a member of this group");
+
+        if (member.Role != GroupMemberRole.Owner && !member.CanEditGroupInfo)
+            throw new UnauthorizedAccessException("No permission to edit group settings");
+
+        var group = await _groupRepository.GetByIdAsync(groupId)
+            ?? throw new InvalidOperationException("Group not found");
+
+        if (joinRule.HasValue) group.JoinRule = joinRule.Value;
+        if (historyVisibility.HasValue) group.HistoryVisibility = historyVisibility.Value;
+        group.UpdatedAt = DateTime.UtcNow;
+
+        return await _groupRepository.UpdateAsync(group);
     }
 }
 

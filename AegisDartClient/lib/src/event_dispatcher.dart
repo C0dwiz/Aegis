@@ -16,7 +16,7 @@ class AegisEventDispatcher {
       StreamController<PrivateChatMessageEvent>.broadcast();
   final StreamController<ChannelMessageEvent> _channelEventController =
       StreamController<ChannelMessageEvent>.broadcast();
-    final StreamController<MessageStatusEvent> _messageStatusController =
+  final StreamController<MessageStatusEvent> _messageStatusController =
       StreamController<MessageStatusEvent>.broadcast();
   final StreamController<ChatListResponse> _chatListController =
       StreamController<ChatListResponse>.broadcast();
@@ -24,6 +24,14 @@ class AegisEventDispatcher {
       StreamController<PrivateChatHistoryResponse>.broadcast();
   final StreamController<ChannelHistoryResponse> _channelHistoryController =
       StreamController<ChannelHistoryResponse>.broadcast();
+  final StreamController<GroupHistoryResponse> _groupHistoryController =
+      StreamController<GroupHistoryResponse>.broadcast();
+  final StreamController<GroupMessageEvent> _groupEventController =
+      StreamController<GroupMessageEvent>.broadcast();
+  final StreamController<MessageReactionEvent> _reactionEventController =
+      StreamController<MessageReactionEvent>.broadcast();
+  final StreamController<MessagePinEvent> _pinEventController =
+      StreamController<MessagePinEvent>.broadcast();
 
   AegisEventDispatcher(Stream<Message> source) {
     _subscription = source.listen(_route);
@@ -35,13 +43,48 @@ class AegisEventDispatcher {
       _privateEventController.stream;
   Stream<ChannelMessageEvent> get channelMessageEvents =>
       _channelEventController.stream;
-    Stream<MessageStatusEvent> get messageStatusEvents =>
+  Stream<MessageStatusEvent> get messageStatusEvents =>
       _messageStatusController.stream;
   Stream<ChatListResponse> get chatListResponses => _chatListController.stream;
   Stream<PrivateChatHistoryResponse> get privateHistoryResponses =>
       _privateHistoryController.stream;
   Stream<ChannelHistoryResponse> get channelHistoryResponses =>
       _channelHistoryController.stream;
+
+  StreamSubscription<GroupHistoryResponse> onGroupHistoryResponse(
+    void Function(GroupHistoryResponse response) handler,
+  ) {
+    return groupHistoryResponses.listen(handler);
+  }
+
+  Stream<GroupHistoryResponse> get groupHistoryResponses =>
+      _groupHistoryController.stream;
+
+  StreamSubscription<GroupMessageEvent> onGroupMessageEvent(
+    void Function(GroupMessageEvent event) handler,
+  ) {
+    return groupMessageEvents.listen(handler);
+  }
+
+  Stream<GroupMessageEvent> get groupMessageEvents =>
+      _groupEventController.stream;
+
+  StreamSubscription<MessageReactionEvent> onMessageReactionEvent(
+    void Function(MessageReactionEvent event) handler,
+  ) {
+    return messageReactionEvents.listen(handler);
+  }
+
+  Stream<MessageReactionEvent> get messageReactionEvents =>
+      _reactionEventController.stream;
+
+  StreamSubscription<MessagePinEvent> onMessagePinEvent(
+    void Function(MessagePinEvent event) handler,
+  ) {
+    return messagePinEvents.listen(handler);
+  }
+
+  Stream<MessagePinEvent> get messagePinEvents => _pinEventController.stream;
 
   StreamSubscription<Message> onAck(void Function(Message message) handler) {
     return ackMessages.listen(handler);
@@ -97,6 +140,10 @@ class AegisEventDispatcher {
     await _chatListController.close();
     await _privateHistoryController.close();
     await _channelHistoryController.close();
+    await _groupHistoryController.close();
+    await _groupEventController.close();
+    await _reactionEventController.close();
+    await _pinEventController.close();
   }
 
   void _route(Message message) {
@@ -141,6 +188,30 @@ class AegisEventDispatcher {
         _tryEmit(
           () => ChannelHistoryResponse.fromBytes(message.payload),
           _channelHistoryController,
+        );
+        break;
+      case MessageType.groupHistoryResponse:
+        _tryEmit(
+          () => GroupHistoryResponse.fromBytes(message.payload),
+          _groupHistoryController,
+        );
+        break;
+      case MessageType.groupMessageEvent:
+        _tryEmit(
+          () => GroupMessageEvent.fromBytes(message.payload),
+          _groupEventController,
+        );
+        break;
+      case MessageType.messageReactionEvent:
+        _tryEmit(
+          () => MessageReactionEvent.fromBytes(message.payload),
+          _reactionEventController,
+        );
+        break;
+      case MessageType.messagePinEvent:
+        _tryEmit(
+          () => MessagePinEvent.fromBytes(message.payload),
+          _pinEventController,
         );
         break;
       default:

@@ -93,7 +93,32 @@ enum MessageType {
   messageDeliveryReceiptResponse(68),
 
   // Async status event (server -> clients)
-  messageStatusEvent(69);
+  messageStatusEvent(69),
+
+  // SERVER-002: Group history
+  groupHistoryRequest(70),
+  groupHistoryResponse(71),
+  groupMessageEvent(72),
+
+  // SERVER-003: Member listing
+  channelMembersRequest(73),
+  channelMembersResponse(74),
+  groupMembersRequest(75),
+  groupMembersResponse(76),
+
+  // SERVER-005: Reactions and pins
+  messageReact(77),
+  messageReactResponse(78),
+  messageReactionEvent(79),
+  messagePin(80),
+  messagePinResponse(81),
+  messagePinEvent(82),
+
+  // SERVER-006: Room settings
+  roomSettingsGet(83),
+  roomSettingsGetResponse(84),
+  roomSettingsUpdate(85),
+  roomSettingsUpdateResponse(86);
 
   const MessageType(this.value);
   final int value;

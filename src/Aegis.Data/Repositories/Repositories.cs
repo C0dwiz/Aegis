@@ -699,6 +699,17 @@ public sealed record ChannelChatSummary(
     int UnreadCount
 );
 
+// SERVER-002: summary record for groups in chat list
+public sealed record GroupChatSummary(
+    ulong GroupId,
+    string Name,
+    string? AvatarUrl,
+    JoinRule JoinRule,
+    HistoryVisibility HistoryVisibility,
+    string? LastMessage,
+    DateTime? LastMessageAt
+);
+
 public class ChannelRepository : Repository<Channel>, IChannelRepository
 {
     private readonly AegisDbContext _context;
@@ -922,6 +933,10 @@ public interface IGroupRepository : IRepository<Group>
     Task<GroupMessage?> GetGroupMessageAsync(ulong messageId);
     Task<GroupMessage> UpdateGroupMessageAsync(GroupMessage message);
     Task<IEnumerable<GroupMessage>> GetGroupMessagesAsync(ulong groupId, int limit = 50);
+    // SERVER-002: paged history
+    Task<IEnumerable<GroupMessage>> GetGroupMessagesBeforeAsync(ulong groupId, ulong? beforeMessageId, int limit = 50);
+    // SERVER-002: chat list summaries for groups
+    Task<IEnumerable<GroupChatSummary>> GetUserGroupChatSummariesAsync(ulong userId);
 }
 
 public class GroupRepository : Repository<Group>, IGroupRepository
@@ -1012,6 +1027,56 @@ public class GroupRepository : Repository<Group>, IGroupRepository
             .Where(gm => gm.GroupId == groupId && !gm.IsDeleted)
             .OrderByDescending(gm => gm.CreatedAt)
             .Take(limit)
+            .ToListAsync();
+    }
+
+    public async Task<IEnumerable<GroupMessage>> GetGroupMessagesBeforeAsync(ulong groupId, ulong? beforeMessageId, int limit = 50)
+    {
+        var query = _context.GroupMessages
+            .Include(gm => gm.FromUser)
+            .Where(gm => gm.GroupId == groupId && !gm.IsDeleted);
+
+        if (beforeMessageId.HasValue)
+        {
+            var pivot = await _context.GroupMessages
+                .Where(gm => gm.Id == beforeMessageId.Value)
+                .Select(gm => gm.CreatedAt)
+                .FirstOrDefaultAsync();
+            query = query.Where(gm => gm.CreatedAt < pivot);
+        }
+
+        return await query
+            .OrderByDescending(gm => gm.CreatedAt)
+            .Take(limit)
+            .ToListAsync();
+    }
+
+    public async Task<IEnumerable<GroupChatSummary>> GetUserGroupChatSummariesAsync(ulong userId)
+    {
+        return await _context.GroupMembers
+            .AsNoTracking()
+            .Where(gm => gm.UserId == userId && gm.IsActive)
+            .Join(_context.Groups,
+                gm => gm.GroupId,
+                g => g.Id,
+                (gm, g) => new { Group = g })
+            .Where(x => x.Group.IsActive)
+            .Select(x => new GroupChatSummary(
+                x.Group.Id,
+                x.Group.Name,
+                x.Group.AvatarUrl,
+                x.Group.JoinRule,
+                x.Group.HistoryVisibility,
+                _context.GroupMessages
+                    .Where(gm => gm.GroupId == x.Group.Id && !gm.IsDeleted)
+                    .OrderByDescending(gm => gm.CreatedAt)
+                    .Select(gm => gm.Content)
+                    .FirstOrDefault(),
+                _context.GroupMessages
+                    .Where(gm => gm.GroupId == x.Group.Id && !gm.IsDeleted)
+                    .OrderByDescending(gm => gm.CreatedAt)
+                    .Select(gm => (DateTime?)gm.CreatedAt)
+                    .FirstOrDefault()))
             .ToListAsync();
     }
 }
@@ -1157,6 +1222,66 @@ public class AppCredentialRepository : IAppCredentialRepository
             .ExecuteUpdateAsync(s => s
                 .SetProperty(a => a.IsActive, false)
                 .SetProperty(a => a.RevokedAt, DateTime.UtcNow));
+        return rows > 0;
+    }
+}
+
+// ===================== REACTION REPOSITORY (SERVER-005) =====================
+
+public interface IReactionRepository
+{
+    /// <summary>Returns all reactions on a message, grouped by emoji.</summary>
+    Task<IEnumerable<MessageReaction>> GetByMessageAsync(string scope, ulong messageId);
+    /// <summary>Adds a reaction. Returns null if the user already reacted with the same emoji.</summary>
+    Task<MessageReaction?> AddAsync(string scope, ulong messageId, ulong userId, string emoji);
+    /// <summary>Removes a reaction. Returns true if it existed.</summary>
+    Task<bool> RemoveAsync(string scope, ulong messageId, ulong userId, string emoji);
+}
+
+public class ReactionRepository : IReactionRepository
+{
+    private readonly AegisDbContext _context;
+
+    public ReactionRepository(AegisDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<IEnumerable<MessageReaction>> GetByMessageAsync(string scope, ulong messageId)
+    {
+        return await _context.MessageReactions
+            .AsNoTracking()
+            .Where(r => r.Scope == scope && r.MessageId == messageId)
+            .ToListAsync();
+    }
+
+    public async Task<MessageReaction?> AddAsync(string scope, ulong messageId, ulong userId, string emoji)
+    {
+        var existing = await _context.MessageReactions
+            .FirstOrDefaultAsync(r => r.Scope == scope && r.MessageId == messageId
+                                      && r.UserId == userId && r.Emoji == emoji);
+        if (existing != null)
+            return null; // already reacted
+
+        var reaction = new MessageReaction
+        {
+            Scope = scope,
+            MessageId = messageId,
+            UserId = userId,
+            Emoji = emoji,
+            CreatedAt = DateTime.UtcNow
+        };
+        _context.MessageReactions.Add(reaction);
+        await _context.SaveChangesAsync();
+        return reaction;
+    }
+
+    public async Task<bool> RemoveAsync(string scope, ulong messageId, ulong userId, string emoji)
+    {
+        var rows = await _context.MessageReactions
+            .Where(r => r.Scope == scope && r.MessageId == messageId
+                        && r.UserId == userId && r.Emoji == emoji)
+            .ExecuteDeleteAsync();
         return rows > 0;
     }
 }

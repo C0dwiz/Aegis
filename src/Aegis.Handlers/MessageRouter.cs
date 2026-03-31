@@ -50,7 +50,21 @@ public class MessageRouter
         [Aegis.Protocol.MessageType.MemberRoleUpdate] = sp => sp.GetRequiredService<MemberRoleUpdateHandler>(),
         [Aegis.Protocol.MessageType.MemberPermissionUpdate] = sp => sp.GetRequiredService<MemberPermissionUpdateHandler>(),
         [Aegis.Protocol.MessageType.MessageReadReceipt] = sp => sp.GetRequiredService<MessageReadReceiptHandler>(),
-        [Aegis.Protocol.MessageType.MessageDeliveryReceipt] = sp => sp.GetRequiredService<MessageDeliveryReceiptHandler>()
+        [Aegis.Protocol.MessageType.MessageDeliveryReceipt] = sp => sp.GetRequiredService<MessageDeliveryReceiptHandler>(),
+        // SERVER-002
+        [Aegis.Protocol.MessageType.GroupHistoryRequest] = sp => sp.GetRequiredService<GroupHistoryHandler>(),
+        // SERVER-003
+        [Aegis.Protocol.MessageType.ChannelMembersRequest] = sp => sp.GetRequiredService<ChannelMembersHandler>(),
+        [Aegis.Protocol.MessageType.GroupMembersRequest] = sp => sp.GetRequiredService<GroupMembersHandler>(),
+        // SERVER-004
+        [Aegis.Protocol.MessageType.ChannelLeave] = sp => sp.GetRequiredService<ChannelLeaveHandler>(),
+        [Aegis.Protocol.MessageType.GroupLeave] = sp => sp.GetRequiredService<GroupLeaveHandler>(),
+        // SERVER-005
+        [Aegis.Protocol.MessageType.MessageReact] = sp => sp.GetRequiredService<MessageReactHandler>(),
+        [Aegis.Protocol.MessageType.MessagePin] = sp => sp.GetRequiredService<MessagePinHandler>(),
+        // SERVER-006
+        [Aegis.Protocol.MessageType.RoomSettingsGet] = sp => sp.GetRequiredService<RoomSettingsGetHandler>(),
+        [Aegis.Protocol.MessageType.RoomSettingsUpdate] = sp => sp.GetRequiredService<RoomSettingsUpdateHandler>(),
     };
 
     private readonly IServiceProvider? _serviceProvider;

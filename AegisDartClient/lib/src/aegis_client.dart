@@ -77,6 +77,20 @@ class AegisClient {
   Stream<MessageStatusEvent> get messageStatusEvents =>
       events.messageStatusEvents;
 
+  /// Typed stream of incoming group message events.
+  Stream<GroupMessageEvent> get groupMessageEvents => events.groupMessageEvents;
+
+  /// Typed stream of incoming group history responses.
+  Stream<GroupHistoryResponse> get groupHistoryResponses =>
+      events.groupHistoryResponses;
+
+  /// Typed stream of incoming message reaction events.
+  Stream<MessageReactionEvent> get messageReactionEvents =>
+      events.messageReactionEvents;
+
+  /// Typed stream of incoming message pin events.
+  Stream<MessagePinEvent> get messagePinEvents => events.messagePinEvents;
+
   /// Stream of disconnect events
   Stream<void> get disconnects => _transport.disconnects;
 
@@ -516,6 +530,30 @@ class AegisClient {
     void Function(MessageStatusEvent event) handler,
   ) {
     return messageStatusEvents.listen(handler);
+  }
+
+  StreamSubscription<GroupMessageEvent> onGroupMessageEvent(
+    void Function(GroupMessageEvent event) handler,
+  ) {
+    return groupMessageEvents.listen(handler);
+  }
+
+  StreamSubscription<GroupHistoryResponse> onGroupHistoryResponse(
+    void Function(GroupHistoryResponse response) handler,
+  ) {
+    return groupHistoryResponses.listen(handler);
+  }
+
+  StreamSubscription<MessageReactionEvent> onMessageReactionEvent(
+    void Function(MessageReactionEvent event) handler,
+  ) {
+    return messageReactionEvents.listen(handler);
+  }
+
+  StreamSubscription<MessagePinEvent> onMessagePinEvent(
+    void Function(MessagePinEvent event) handler,
+  ) {
+    return messagePinEvents.listen(handler);
   }
 
   // ─── Channels ───────────────────────────────────────────────────────────────
@@ -1251,6 +1289,253 @@ class AegisClient {
       Uint8List.fromList(base64Decode(serverPublicKeyBase64)),
     );
     _transport.setSessionKey(sessionKey);
+  }
+
+  // ─── Group History and Members (SERVER-002, SERVER-003) ──────────────────
+
+  /// Get group message history.
+  Future<GroupHistoryResponse> getGroupHistory(
+    int groupId, {
+    int limit = 100,
+    int? beforeMessageId,
+  }) async {
+    _requireAuthenticated();
+
+    final request = GroupHistoryRequest(
+      groupId: groupId,
+      limit: limit,
+      beforeMessageId: beforeMessageId,
+    );
+
+    final msg = Message.withType(
+      MessageType.groupHistoryRequest,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.groupHistoryResponse});
+    return GroupHistoryResponse.fromBytes(response.payload);
+  }
+
+  /// Get channel members.
+  Future<ChannelMembersResponse> getChannelMembers(int channelId) async {
+    _requireAuthenticated();
+
+    final request = ChannelMembersRequest(channelId: channelId);
+    final msg = Message.withType(
+      MessageType.channelMembersRequest,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.channelMembersResponse});
+    return ChannelMembersResponse.fromBytes(response.payload);
+  }
+
+  /// Get group members.
+  Future<GroupMembersResponse> getGroupMembers(int groupId) async {
+    _requireAuthenticated();
+
+    final request = GroupMembersRequest(groupId: groupId);
+    final msg = Message.withType(
+      MessageType.groupMembersRequest,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.groupMembersResponse});
+    return GroupMembersResponse.fromBytes(response.payload);
+  }
+
+  // ─── Leave Operations (SERVER-004) ─────────────────────────────────────────
+
+  /// Leave a channel.
+  Future<ChannelLeaveResponse> leaveChannel(int channelId) async {
+    _requireAuthenticated();
+
+    final request = ChannelLeaveRequest(channelId: channelId);
+    final msg = Message.withType(
+      MessageType.channelLeave,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.channelLeave});
+    return ChannelLeaveResponse.fromBytes(response.payload);
+  }
+
+  /// Leave a group.
+  Future<GroupLeaveResponse> leaveGroup(int groupId) async {
+    _requireAuthenticated();
+
+    final request = GroupLeaveRequest(groupId: groupId);
+    final msg = Message.withType(
+      MessageType.groupLeave,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.groupLeave});
+    return GroupLeaveResponse.fromBytes(response.payload);
+  }
+
+  // ─── Reactions and Pins (SERVER-005) ───────────────────────────────────────
+
+  /// Post a reaction to a message.
+  ///
+  /// [scope] can be "private", "channel", or "group".
+  Future<MessageReactResponse> postReaction(
+    String scope,
+    int messageId,
+    String emoji,
+  ) async {
+    _requireAuthenticated();
+
+    final request = MessageReactRequest(
+      scope: scope,
+      messageId: messageId,
+      emoji: emoji,
+      remove: false,
+    );
+
+    final msg = Message.withType(
+      MessageType.messageReact,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.messageReactResponse});
+    return MessageReactResponse.fromBytes(response.payload);
+  }
+
+  /// Remove a reaction from a message.
+  ///
+  /// [scope] can be "private", "channel", or "group".
+  Future<MessageReactResponse> removeReaction(
+    String scope,
+    int messageId,
+    String emoji,
+  ) async {
+    _requireAuthenticated();
+
+    final request = MessageReactRequest(
+      scope: scope,
+      messageId: messageId,
+      emoji: emoji,
+      remove: true,
+    );
+
+    final msg = Message.withType(
+      MessageType.messageReact,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.messageReactResponse});
+    return MessageReactResponse.fromBytes(response.payload);
+  }
+
+  /// Pin a message in a channel or group.
+  ///
+  /// [scope] must be "channel" or "group".
+  /// [targetId] is the channelId or groupId.
+  Future<MessagePinResponse> pinMessage(
+    String scope,
+    int messageId,
+    int targetId,
+  ) async {
+    _requireAuthenticated();
+
+    final request = MessagePinRequest(
+      scope: scope,
+      messageId: messageId,
+      targetId: targetId,
+      unpin: false,
+    );
+
+    final msg = Message.withType(
+      MessageType.messagePin,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.messagePinResponse});
+    return MessagePinResponse.fromBytes(response.payload);
+  }
+
+  /// Unpin a message in a channel or group.
+  ///
+  /// [scope] must be "channel" or "group".
+  /// [targetId] is the channelId or groupId.
+  Future<MessagePinResponse> unpinMessage(
+    String scope,
+    int messageId,
+    int targetId,
+  ) async {
+    _requireAuthenticated();
+
+    final request = MessagePinRequest(
+      scope: scope,
+      messageId: messageId,
+      targetId: targetId,
+      unpin: true,
+    );
+
+    final msg = Message.withType(
+      MessageType.messagePin,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.messagePinResponse});
+    return MessagePinResponse.fromBytes(response.payload);
+  }
+
+  // ─── Room Settings (SERVER-006) ────────────────────────────────────────────
+
+  /// Get room settings for a channel or group.
+  ///
+  /// [scope] must be "channel" or "group".
+  /// [targetId] is the channelId or groupId.
+  Future<RoomSettingsGetResponse> getRoomSettings(
+    String scope,
+    int targetId,
+  ) async {
+    _requireAuthenticated();
+
+    final request = RoomSettingsGetRequest(
+      scope: scope,
+      targetId: targetId,
+    );
+
+    final msg = Message.withType(
+      MessageType.roomSettingsGet,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.roomSettingsGetResponse});
+    return RoomSettingsGetResponse.fromBytes(response.payload);
+  }
+
+  /// Update room settings for a channel or group.
+  ///
+  /// [scope] must be "channel" or "group".
+  /// [targetId] is the channelId or groupId.
+  /// [joinRule]: 0=Open, 1=InviteOnly, 2=Approval (optional).
+  /// [historyVisibility]: 0=WorldReadable, 1=Joined, 2=Invited (optional).
+  Future<RoomSettingsUpdateResponse> updateRoomSettings(
+    String scope,
+    int targetId, {
+    int? joinRule,
+    int? historyVisibility,
+  }) async {
+    _requireAuthenticated();
+
+    final request = RoomSettingsUpdateRequest(
+      scope: scope,
+      targetId: targetId,
+      joinRule: joinRule,
+      historyVisibility: historyVisibility,
+    );
+
+    final msg = Message.withType(
+      MessageType.roomSettingsUpdate,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.roomSettingsUpdateResponse});
+    return RoomSettingsUpdateResponse.fromBytes(response.payload);
   }
 
   Future<void> _publishPresence({required bool isOnline}) async {

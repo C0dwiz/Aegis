@@ -217,6 +217,10 @@ public class Group
     public bool IsActive { get; set; } = true;
     public int MemberCount { get; set; } = 0;
 
+    // SERVER-006: visibility / join-rule settings
+    public JoinRule JoinRule { get; set; } = JoinRule.InviteOnly;
+    public HistoryVisibility HistoryVisibility { get; set; } = HistoryVisibility.Joined;
+
     // Navigation properties
     public User? CreatedByUser { get; set; }
     public ICollection<GroupMember> Members { get; set; } = new List<GroupMember>();
@@ -342,6 +346,10 @@ public class Channel
     public string? InviteCode { get; set; }
     public string? PublicAlias { get; set; }
     public int MemberCount { get; set; } = 0;
+
+    // SERVER-006: visibility / join-rule settings
+    public JoinRule JoinRule { get; set; } = JoinRule.Open;
+    public HistoryVisibility HistoryVisibility { get; set; } = HistoryVisibility.Joined;
 
     // Navigation properties
     public User? CreatedByUser { get; set; }
@@ -487,4 +495,58 @@ public class AppCredential
 
     // Navigation
     public User? Owner { get; set; }
+}
+
+// ===================== SERVER-005: REACTIONS =====================
+
+/// <summary>
+/// Emoji reaction on a message (private, channel, or group scope).
+/// </summary>
+public class MessageReaction
+{
+    public ulong Id { get; set; }
+
+    /// <summary>"private", "channel", or "group"</summary>
+    public string Scope { get; set; } = string.Empty;
+
+    /// <summary>ID of the reacted-to message within the given scope.</summary>
+    public ulong MessageId { get; set; }
+
+    public ulong UserId { get; set; }
+
+    /// <summary>Unicode emoji string (1-4 chars, validated at handler layer).</summary>
+    public string Emoji { get; set; } = string.Empty;
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    // Navigation
+    public User? User { get; set; }
+}
+
+// ===================== SERVER-006: ROOM SETTINGS =====================
+
+/// <summary>
+/// Who may join a group or channel.
+/// </summary>
+public enum JoinRule
+{
+    /// <summary>Anyone can join (public channel default).</summary>
+    Open = 0,
+    /// <summary>Only members can invite others (group default).</summary>
+    InviteOnly = 1,
+    /// <summary>Joining requires owner/admin approval.</summary>
+    Approval = 2
+}
+
+/// <summary>
+/// Who can read the message history of a room.
+/// </summary>
+public enum HistoryVisibility
+{
+    /// <summary>History visible to anyone (unauthenticated too, for public channels).</summary>
+    WorldReadable = 0,
+    /// <summary>History visible to current members only.</summary>
+    Joined = 1,
+    /// <summary>New members cannot see messages sent before they joined.</summary>
+    Invited = 2
 }

@@ -135,11 +135,11 @@ class MediaAttachmentPayload {
   });
 
   Map<String, dynamic> toJson() => {
-    'FileName': fileName,
-    'MimeType': mimeType,
-    'Base64Data': base64Data,
-    if (sizeBytes != null) 'SizeBytes': sizeBytes,
-  };
+        'FileName': fileName,
+        'MimeType': mimeType,
+        'Base64Data': base64Data,
+        if (sizeBytes != null) 'SizeBytes': sizeBytes,
+      };
 
   factory MediaAttachmentPayload.fromJson(Map<String, dynamic> json) =>
       MediaAttachmentPayload(
@@ -271,18 +271,19 @@ class RegistrationRequest {
   });
 
   Map<String, dynamic> toJson() => {
-    'Username': username,
-    'Email': email,
-    'Password': password,
-    'PublicKey': publicKey,
-  };
+        'Username': username,
+        'Email': email,
+        'Password': password,
+        'PublicKey': publicKey,
+      };
 
-  factory RegistrationRequest.fromJson(Map<String, dynamic> json) => RegistrationRequest(
-    username: json['Username'] as String,
-    email: json['Email'] as String,
-    password: json['Password'] as String,
-    publicKey: json['PublicKey'] as String,
-  );
+  factory RegistrationRequest.fromJson(Map<String, dynamic> json) =>
+      RegistrationRequest(
+        username: json['Username'] as String,
+        email: json['Email'] as String,
+        password: json['Password'] as String,
+        publicKey: json['PublicKey'] as String,
+      );
 
   List<int> toBytes() => msgpack.serialize(toJson());
 }
@@ -300,21 +301,23 @@ class RegistrationResponse {
   });
 
   Map<String, dynamic> toJson() => {
-    'Success': success,
-    if (message != null) 'Message': message,
-    if (user != null) 'User': user!.toJson(),
-  };
+        'Success': success,
+        if (message != null) 'Message': message,
+        if (user != null) 'User': user!.toJson(),
+      };
 
-  factory RegistrationResponse.fromJson(Map<String, dynamic> json) => RegistrationResponse(
-    success: json['Success'] as bool,
-    message: json['Message'] as String?,
-    user: json['User'] != null
-        ? RegisteredUserInfo.fromJson(json['User'] as Map<String, dynamic>)
-        : null,
-  );
+  factory RegistrationResponse.fromJson(Map<String, dynamic> json) =>
+      RegistrationResponse(
+        success: json['Success'] as bool,
+        message: json['Message'] as String?,
+        user: json['User'] != null
+            ? RegisteredUserInfo.fromJson(json['User'] as Map<String, dynamic>)
+            : null,
+      );
 
   factory RegistrationResponse.fromBytes(List<int> bytes) {
-    final decoded = msgpack.deserialize(bytes is Uint8List ? bytes : Uint8List.fromList(bytes));
+    final decoded = msgpack
+        .deserialize(bytes is Uint8List ? bytes : Uint8List.fromList(bytes));
     return RegistrationResponse.fromJson(Map<String, dynamic>.from(decoded));
   }
 }
@@ -330,9 +333,9 @@ class RegisteredUserInfo {
   });
 
   Map<String, dynamic> toJson() => {
-    'Id': id,
-    'Username': username,
-  };
+        'Id': id,
+        'Username': username,
+      };
 
   factory RegisteredUserInfo.fromJson(Map<String, dynamic> json) =>
       RegisteredUserInfo(
@@ -352,14 +355,15 @@ class UserSearchRequest {
   });
 
   Map<String, dynamic> toJson() => {
-    'Query': query,
-    'Limit': limit,
-  };
+        'Query': query,
+        'Limit': limit,
+      };
 
-  factory UserSearchRequest.fromJson(Map<String, dynamic> json) => UserSearchRequest(
-    query: json['Query'] as String,
-    limit: json['Limit'] as int? ?? 20,
-  );
+  factory UserSearchRequest.fromJson(Map<String, dynamic> json) =>
+      UserSearchRequest(
+        query: json['Query'] as String,
+        limit: json['Limit'] as int? ?? 20,
+      );
 
   List<int> toBytes() => msgpack.serialize(toJson());
 }
@@ -377,21 +381,23 @@ class UserSearchResponse {
   });
 
   Map<String, dynamic> toJson() => {
-    'Success': success,
-    'Users': users.map((u) => u.toJson()).toList(),
-    if (message != null) 'Message': message,
-  };
+        'Success': success,
+        'Users': users.map((u) => u.toJson()).toList(),
+        if (message != null) 'Message': message,
+      };
 
-  factory UserSearchResponse.fromJson(Map<String, dynamic> json) => UserSearchResponse(
-    success: json['Success'] as bool,
-    users: (json['Users'] as List<dynamic>)
-        .map((u) => UserSearchResult.fromJson(u as Map<String, dynamic>))
-        .toList(),
-    message: json['Message'] as String?,
-  );
+  factory UserSearchResponse.fromJson(Map<String, dynamic> json) =>
+      UserSearchResponse(
+        success: json['Success'] as bool,
+        users: (json['Users'] as List<dynamic>)
+            .map((u) => UserSearchResult.fromJson(u as Map<String, dynamic>))
+            .toList(),
+        message: json['Message'] as String?,
+      );
 
   factory UserSearchResponse.fromBytes(List<int> bytes) {
-    final decoded = msgpack.deserialize(bytes is Uint8List ? bytes : Uint8List.fromList(bytes));
+    final decoded = msgpack
+        .deserialize(bytes is Uint8List ? bytes : Uint8List.fromList(bytes));
     return UserSearchResponse.fromJson(Map<String, dynamic>.from(decoded));
   }
 }
@@ -411,18 +417,19 @@ class UserSearchResult {
   });
 
   Map<String, dynamic> toJson() => {
-    'Id': id,
-    'Username': username,
-    if (email != null) 'Email': email,
-    if (presenceStatus != null) 'PresenceStatus': presenceStatus,
-  };
+        'Id': id,
+        'Username': username,
+        if (email != null) 'Email': email,
+        if (presenceStatus != null) 'PresenceStatus': presenceStatus,
+      };
 
-  factory UserSearchResult.fromJson(Map<String, dynamic> json) => UserSearchResult(
-    id: json['Id'] as int,
-    username: json['Username'] as String,
-    email: json['Email'] as String?,
-    presenceStatus: json['PresenceStatus'] as String?,
-  );
+  factory UserSearchResult.fromJson(Map<String, dynamic> json) =>
+      UserSearchResult(
+        id: json['Id'] as int,
+        username: json['Username'] as String,
+        email: json['Email'] as String?,
+        presenceStatus: json['PresenceStatus'] as String?,
+      );
 }
 
 /// User presence update payload.
@@ -436,9 +443,10 @@ class UserPresenceUpdateRequest {
   });
 
   Map<String, dynamic> toJson() => {
-    'IsOnline': isOnline,
-    if (clientTimestamp != null) 'ClientTimestamp': clientTimestamp!.toUtc().toIso8601String(),
-  };
+        'IsOnline': isOnline,
+        if (clientTimestamp != null)
+          'ClientTimestamp': clientTimestamp!.toUtc().toIso8601String(),
+      };
 
   List<int> toBytes() => msgpack.serialize(toJson());
 }
@@ -468,28 +476,31 @@ class User {
   });
 
   Map<String, dynamic> toJson() => {
-    'Id': id,
-    'Username': username,
-    'Email': email,
-    'PublicKey': publicKey,
-    if (identityKeyFingerprint != null) 'IdentityKeyFingerprint': identityKeyFingerprint,
-    'IsActive': isActive,
-    'CreatedAt': createdAt.toIso8601String(),
-    'UpdatedAt': updatedAt.toIso8601String(),
-    if (lastSeenAt != null) 'LastSeenAt': lastSeenAt!.toIso8601String(),
-  };
+        'Id': id,
+        'Username': username,
+        'Email': email,
+        'PublicKey': publicKey,
+        if (identityKeyFingerprint != null)
+          'IdentityKeyFingerprint': identityKeyFingerprint,
+        'IsActive': isActive,
+        'CreatedAt': createdAt.toIso8601String(),
+        'UpdatedAt': updatedAt.toIso8601String(),
+        if (lastSeenAt != null) 'LastSeenAt': lastSeenAt!.toIso8601String(),
+      };
 
   factory User.fromJson(Map<String, dynamic> json) => User(
-    id: json['Id'] as int,
-    username: json['Username'] as String,
-    email: json['Email'] as String,
-    publicKey: json['PublicKey'] as String,
-    identityKeyFingerprint: json['IdentityKeyFingerprint'] as String?,
-    isActive: json['IsActive'] as bool,
-    createdAt: DateTime.parse(json['CreatedAt'] as String),
-    updatedAt: DateTime.parse(json['UpdatedAt'] as String),
-    lastSeenAt: json['LastSeenAt'] != null ? DateTime.parse(json['LastSeenAt'] as String) : null,
-  );
+        id: json['Id'] as int,
+        username: json['Username'] as String,
+        email: json['Email'] as String,
+        publicKey: json['PublicKey'] as String,
+        identityKeyFingerprint: json['IdentityKeyFingerprint'] as String?,
+        isActive: json['IsActive'] as bool,
+        createdAt: DateTime.parse(json['CreatedAt'] as String),
+        updatedAt: DateTime.parse(json['UpdatedAt'] as String),
+        lastSeenAt: json['LastSeenAt'] != null
+            ? DateTime.parse(json['LastSeenAt'] as String)
+            : null,
+      );
 }
 
 /// Channel message request payload
@@ -513,29 +524,33 @@ class ChannelMessageRequest {
   });
 
   Map<String, dynamic> toJson() => {
-    'ChannelId': channelId,
-    'Content': content,
-    'ContentType': contentType.value,
-    if (replyToMessageId != null) 'ReplyToMessageId': replyToMessageId,
-    if (attachment != null) 'Attachment': attachment!.toJson(),
-    if (attachments != null)
-      'Attachments': attachments!.map((item) => item.toJson()).toList(),
-    if (parseMode != null) 'ParseMode': parseMode,
-  };
+        'ChannelId': channelId,
+        'Content': content,
+        'ContentType': contentType.value,
+        if (replyToMessageId != null) 'ReplyToMessageId': replyToMessageId,
+        if (attachment != null) 'Attachment': attachment!.toJson(),
+        if (attachments != null)
+          'Attachments': attachments!.map((item) => item.toJson()).toList(),
+        if (parseMode != null) 'ParseMode': parseMode,
+      };
 
-  factory ChannelMessageRequest.fromJson(Map<String, dynamic> json) => ChannelMessageRequest(
-    channelId: json['ChannelId'] as int,
-    content: json['Content'] as String?,
-    contentType: MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
-    replyToMessageId: json['ReplyToMessageId'] as int?,
-    attachment: json['Attachment'] != null
-        ? MediaAttachmentPayload.fromJson(json['Attachment'] as Map<String, dynamic>)
-        : null,
-    attachments: (json['Attachments'] as List<dynamic>?)
-      ?.map((item) => MediaAttachmentPayload.fromJson(item as Map<String, dynamic>))
-      .toList(),
-    parseMode: json['ParseMode'] as String?,
-  );
+  factory ChannelMessageRequest.fromJson(Map<String, dynamic> json) =>
+      ChannelMessageRequest(
+        channelId: json['ChannelId'] as int,
+        content: json['Content'] as String?,
+        contentType:
+            MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
+        replyToMessageId: json['ReplyToMessageId'] as int?,
+        attachment: json['Attachment'] != null
+            ? MediaAttachmentPayload.fromJson(
+                json['Attachment'] as Map<String, dynamic>)
+            : null,
+        attachments: (json['Attachments'] as List<dynamic>?)
+            ?.map((item) =>
+                MediaAttachmentPayload.fromJson(item as Map<String, dynamic>))
+            .toList(),
+        parseMode: json['ParseMode'] as String?,
+      );
 
   List<int> toBytes() => msgpack.serialize(toJson());
 }
@@ -553,19 +568,21 @@ class ChannelMessageResponse {
   });
 
   Map<String, dynamic> toJson() => {
-    'Success': success,
-    'MessageId': messageId,
-    if (messageText != null) 'MessageText': messageText,
-  };
+        'Success': success,
+        'MessageId': messageId,
+        if (messageText != null) 'MessageText': messageText,
+      };
 
-  factory ChannelMessageResponse.fromJson(Map<String, dynamic> json) => ChannelMessageResponse(
-    success: json['Success'] as bool,
-    messageId: json['MessageId'] as int? ?? 0,
-    messageText: json['MessageText'] as String?,
-  );
+  factory ChannelMessageResponse.fromJson(Map<String, dynamic> json) =>
+      ChannelMessageResponse(
+        success: json['Success'] as bool,
+        messageId: json['MessageId'] as int? ?? 0,
+        messageText: json['MessageText'] as String?,
+      );
 
   factory ChannelMessageResponse.fromBytes(List<int> bytes) {
-    final decoded = msgpack.deserialize(bytes is Uint8List ? bytes : Uint8List.fromList(bytes));
+    final decoded = msgpack
+        .deserialize(bytes is Uint8List ? bytes : Uint8List.fromList(bytes));
     return ChannelMessageResponse.fromJson(Map<String, dynamic>.from(decoded));
   }
 }
@@ -597,30 +614,32 @@ class ChannelMessage {
   });
 
   Map<String, dynamic> toJson() => {
-    'Id': id,
-    'ChannelId': channelId,
-    'FromUserId': fromUserId,
-    'Content': content,
-    'ContentType': contentType.value,
-    'CreatedAt': createdAt.toIso8601String(),
-    if (editedAt != null) 'EditedAt': editedAt!.toIso8601String(),
-    'IsEdited': isEdited,
-    if (replyToMessageId != null) 'ReplyToMessageId': replyToMessageId,
-    'IsPinned': isPinned,
-  };
+        'Id': id,
+        'ChannelId': channelId,
+        'FromUserId': fromUserId,
+        'Content': content,
+        'ContentType': contentType.value,
+        'CreatedAt': createdAt.toIso8601String(),
+        if (editedAt != null) 'EditedAt': editedAt!.toIso8601String(),
+        'IsEdited': isEdited,
+        if (replyToMessageId != null) 'ReplyToMessageId': replyToMessageId,
+        'IsPinned': isPinned,
+      };
 
   factory ChannelMessage.fromJson(Map<String, dynamic> json) => ChannelMessage(
-    id: json['Id'] as int,
-    channelId: json['ChannelId'] as int,
-    fromUserId: json['FromUserId'] as int,
-    content: json['Content'] as String,
-    contentType: MessageContentType.fromValue(json['ContentType'] as int),
-    createdAt: DateTime.parse(json['CreatedAt'] as String),
-    editedAt: json['EditedAt'] != null ? DateTime.parse(json['EditedAt'] as String) : null,
-    isEdited: json['IsEdited'] as bool? ?? false,
-    replyToMessageId: json['ReplyToMessageId'] as int?,
-    isPinned: json['IsPinned'] as bool? ?? false,
-  );
+        id: json['Id'] as int,
+        channelId: json['ChannelId'] as int,
+        fromUserId: json['FromUserId'] as int,
+        content: json['Content'] as String,
+        contentType: MessageContentType.fromValue(json['ContentType'] as int),
+        createdAt: DateTime.parse(json['CreatedAt'] as String),
+        editedAt: json['EditedAt'] != null
+            ? DateTime.parse(json['EditedAt'] as String)
+            : null,
+        isEdited: json['IsEdited'] as bool? ?? false,
+        replyToMessageId: json['ReplyToMessageId'] as int?,
+        isPinned: json['IsPinned'] as bool? ?? false,
+      );
 }
 
 /// Channel create request payload
@@ -636,16 +655,17 @@ class ChannelCreateRequest {
   });
 
   Map<String, dynamic> toJson() => {
-    'Name': name,
-    if (description != null) 'Description': description,
-    'Type': type.value,
-  };
+        'Name': name,
+        if (description != null) 'Description': description,
+        'Type': type.value,
+      };
 
-  factory ChannelCreateRequest.fromJson(Map<String, dynamic> json) => ChannelCreateRequest(
-    name: json['Name'] as String,
-    description: json['Description'] as String?,
-    type: ChannelType.fromValue(json['Type'] as int? ?? 0),
-  );
+  factory ChannelCreateRequest.fromJson(Map<String, dynamic> json) =>
+      ChannelCreateRequest(
+        name: json['Name'] as String,
+        description: json['Description'] as String?,
+        type: ChannelType.fromValue(json['Type'] as int? ?? 0),
+      );
 
   List<int> toBytes() => msgpack.serialize(toJson());
 }
@@ -663,19 +683,21 @@ class ChannelCreateResponse {
   });
 
   Map<String, dynamic> toJson() => {
-    'Success': success,
-    'ChannelId': channelId,
-    if (message != null) 'Message': message,
-  };
+        'Success': success,
+        'ChannelId': channelId,
+        if (message != null) 'Message': message,
+      };
 
-  factory ChannelCreateResponse.fromJson(Map<String, dynamic> json) => ChannelCreateResponse(
-    success: json['Success'] as bool,
-    channelId: json['ChannelId'] as int? ?? 0,
-    message: json['Message'] as String?,
-  );
+  factory ChannelCreateResponse.fromJson(Map<String, dynamic> json) =>
+      ChannelCreateResponse(
+        success: json['Success'] as bool,
+        channelId: json['ChannelId'] as int? ?? 0,
+        message: json['Message'] as String?,
+      );
 
   factory ChannelCreateResponse.fromBytes(List<int> bytes) {
-    final decoded = msgpack.deserialize(bytes is Uint8List ? bytes : Uint8List.fromList(bytes));
+    final decoded = msgpack
+        .deserialize(bytes is Uint8List ? bytes : Uint8List.fromList(bytes));
     return ChannelCreateResponse.fromJson(Map<String, dynamic>.from(decoded));
   }
 }
@@ -709,32 +731,32 @@ class Channel {
   });
 
   Map<String, dynamic> toJson() => {
-    'Id': id,
-    'Name': name,
-    if (description != null) 'Description': description,
-    'Type': type.value,
-    'CreatedByUserId': createdByUserId,
-    'CreatedAt': createdAt.toIso8601String(),
-    'UpdatedAt': updatedAt.toIso8601String(),
-    'IsActive': isActive,
-    if (inviteCode != null) 'InviteCode': inviteCode,
-    if (publicAlias != null) 'PublicAlias': publicAlias,
-    'MemberCount': memberCount,
-  };
+        'Id': id,
+        'Name': name,
+        if (description != null) 'Description': description,
+        'Type': type.value,
+        'CreatedByUserId': createdByUserId,
+        'CreatedAt': createdAt.toIso8601String(),
+        'UpdatedAt': updatedAt.toIso8601String(),
+        'IsActive': isActive,
+        if (inviteCode != null) 'InviteCode': inviteCode,
+        if (publicAlias != null) 'PublicAlias': publicAlias,
+        'MemberCount': memberCount,
+      };
 
   factory Channel.fromJson(Map<String, dynamic> json) => Channel(
-    id: json['Id'] as int,
-    name: json['Name'] as String,
-    description: json['Description'] as String?,
-    type: ChannelType.fromValue(json['Type'] as int),
-    createdByUserId: json['CreatedByUserId'] as int,
-    createdAt: DateTime.parse(json['CreatedAt'] as String),
-    updatedAt: DateTime.parse(json['UpdatedAt'] as String),
-    isActive: json['IsActive'] as bool,
-    inviteCode: json['InviteCode'] as String?,
-    publicAlias: json['PublicAlias'] as String?,
-    memberCount: json['MemberCount'] as int,
-  );
+        id: json['Id'] as int,
+        name: json['Name'] as String,
+        description: json['Description'] as String?,
+        type: ChannelType.fromValue(json['Type'] as int),
+        createdByUserId: json['CreatedByUserId'] as int,
+        createdAt: DateTime.parse(json['CreatedAt'] as String),
+        updatedAt: DateTime.parse(json['UpdatedAt'] as String),
+        isActive: json['IsActive'] as bool,
+        inviteCode: json['InviteCode'] as String?,
+        publicAlias: json['PublicAlias'] as String?,
+        memberCount: json['MemberCount'] as int,
+      );
 }
 
 /// Minimal channel info returned in join/create responses
@@ -754,20 +776,20 @@ class ChannelSummary {
   });
 
   Map<String, dynamic> toJson() => {
-    'Id': id,
-    'Name': name,
-    if (description != null) 'Description': description,
-    'Type': type.value,
-    'MemberCount': memberCount,
-  };
+        'Id': id,
+        'Name': name,
+        if (description != null) 'Description': description,
+        'Type': type.value,
+        'MemberCount': memberCount,
+      };
 
   factory ChannelSummary.fromJson(Map<String, dynamic> json) => ChannelSummary(
-    id: json['Id'] as int,
-    name: json['Name'] as String,
-    description: json['Description'] as String?,
-    type: ChannelType.fromValue(json['Type'] as int? ?? 0),
-    memberCount: json['MemberCount'] as int? ?? 0,
-  );
+        id: json['Id'] as int,
+        name: json['Name'] as String,
+        description: json['Description'] as String?,
+        type: ChannelType.fromValue(json['Type'] as int? ?? 0),
+        memberCount: json['MemberCount'] as int? ?? 0,
+      );
 }
 
 /// Channel join request payload
@@ -779,12 +801,13 @@ class ChannelJoinRequest {
   });
 
   Map<String, dynamic> toJson() => {
-    'ChannelId': channelId,
-  };
+        'ChannelId': channelId,
+      };
 
-  factory ChannelJoinRequest.fromJson(Map<String, dynamic> json) => ChannelJoinRequest(
-    channelId: json['ChannelId'] as int,
-  );
+  factory ChannelJoinRequest.fromJson(Map<String, dynamic> json) =>
+      ChannelJoinRequest(
+        channelId: json['ChannelId'] as int,
+      );
 
   List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
 }
@@ -802,18 +825,19 @@ class ChannelJoinResponse {
   });
 
   Map<String, dynamic> toJson() => {
-    'Success': success,
-    if (channel != null) 'Channel': channel!.toJson(),
-    if (message != null) 'Message': message,
-  };
+        'Success': success,
+        if (channel != null) 'Channel': channel!.toJson(),
+        if (message != null) 'Message': message,
+      };
 
-  factory ChannelJoinResponse.fromJson(Map<String, dynamic> json) => ChannelJoinResponse(
-    success: json['Success'] as bool,
-    channel: json['Channel'] != null
-        ? ChannelSummary.fromJson(json['Channel'] as Map<String, dynamic>)
-        : null,
-    message: json['Message'] as String?,
-  );
+  factory ChannelJoinResponse.fromJson(Map<String, dynamic> json) =>
+      ChannelJoinResponse(
+        success: json['Success'] as bool,
+        channel: json['Channel'] != null
+            ? ChannelSummary.fromJson(json['Channel'] as Map<String, dynamic>)
+            : null,
+        message: json['Message'] as String?,
+      );
 
   factory ChannelJoinResponse.fromBytes(List<int> bytes) {
     final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
@@ -840,27 +864,31 @@ class PrivateChatMessageRequest {
   });
 
   Map<String, dynamic> toJson() => {
-    'ToUserId': toUserId,
-    'Content': content,
-    'ContentType': contentType.value,
-    if (attachment != null) 'Attachment': attachment!.toJson(),
-    if (attachments != null)
-      'Attachments': attachments!.map((item) => item.toJson()).toList(),
-    if (parseMode != null) 'ParseMode': parseMode,
-  };
+        'ToUserId': toUserId,
+        'Content': content,
+        'ContentType': contentType.value,
+        if (attachment != null) 'Attachment': attachment!.toJson(),
+        if (attachments != null)
+          'Attachments': attachments!.map((item) => item.toJson()).toList(),
+        if (parseMode != null) 'ParseMode': parseMode,
+      };
 
-  factory PrivateChatMessageRequest.fromJson(Map<String, dynamic> json) => PrivateChatMessageRequest(
-    toUserId: json['ToUserId'] as int,
-    content: json['Content'] as String?,
-    contentType: MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
-    attachment: json['Attachment'] != null
-        ? MediaAttachmentPayload.fromJson(json['Attachment'] as Map<String, dynamic>)
-        : null,
-    attachments: (json['Attachments'] as List<dynamic>?)
-      ?.map((item) => MediaAttachmentPayload.fromJson(item as Map<String, dynamic>))
-      .toList(),
-    parseMode: json['ParseMode'] as String?,
-  );
+  factory PrivateChatMessageRequest.fromJson(Map<String, dynamic> json) =>
+      PrivateChatMessageRequest(
+        toUserId: json['ToUserId'] as int,
+        content: json['Content'] as String?,
+        contentType:
+            MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
+        attachment: json['Attachment'] != null
+            ? MediaAttachmentPayload.fromJson(
+                json['Attachment'] as Map<String, dynamic>)
+            : null,
+        attachments: (json['Attachments'] as List<dynamic>?)
+            ?.map((item) =>
+                MediaAttachmentPayload.fromJson(item as Map<String, dynamic>))
+            .toList(),
+        parseMode: json['ParseMode'] as String?,
+      );
 
   List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
 }
@@ -878,16 +906,17 @@ class PrivateChatMessageResponse {
   });
 
   Map<String, dynamic> toJson() => {
-    'Success': success,
-    'MessageId': messageId,
-    if (messageText != null) 'MessageText': messageText,
-  };
+        'Success': success,
+        'MessageId': messageId,
+        if (messageText != null) 'MessageText': messageText,
+      };
 
-  factory PrivateChatMessageResponse.fromJson(Map<String, dynamic> json) => PrivateChatMessageResponse(
-    success: json['Success'] as bool,
-    messageId: json['MessageId'] as int? ?? 0,
-    messageText: json['MessageText'] as String?,
-  );
+  factory PrivateChatMessageResponse.fromJson(Map<String, dynamic> json) =>
+      PrivateChatMessageResponse(
+        success: json['Success'] as bool,
+        messageId: json['MessageId'] as int? ?? 0,
+        messageText: json['MessageText'] as String?,
+      );
 
   factory PrivateChatMessageResponse.fromBytes(List<int> bytes) {
     final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
@@ -928,19 +957,19 @@ class ChatListItem {
   });
 
   factory ChatListItem.fromJson(Map<String, dynamic> json) => ChatListItem(
-    chatId: json['ChatId'] as int,
-    type: json['Type'] as String,
-    title: json['Title'] as String,
-    avatarUrl: json['AvatarUrl'] as String?,
-    presenceStatus: json['PresenceStatus'] as String?,
-    lastMessage: json['LastMessage'] as String?,
-    lastMessageAt: json['LastMessageAt'] != null
-        ? DateTime.parse(json['LastMessageAt'] as String)
-        : null,
-    unreadCount: json['UnreadCount'] as int? ?? 0,
-    peerUserId: json['PeerUserId'] as int?,
-    channelId: json['ChannelId'] as int?,
-  );
+        chatId: json['ChatId'] as int,
+        type: json['Type'] as String,
+        title: json['Title'] as String,
+        avatarUrl: json['AvatarUrl'] as String?,
+        presenceStatus: json['PresenceStatus'] as String?,
+        lastMessage: json['LastMessage'] as String?,
+        lastMessageAt: json['LastMessageAt'] != null
+            ? DateTime.parse(json['LastMessageAt'] as String)
+            : null,
+        unreadCount: json['UnreadCount'] as int? ?? 0,
+        peerUserId: json['PeerUserId'] as int?,
+        channelId: json['ChannelId'] as int?,
+      );
 }
 
 /// Chat list response payload
@@ -955,13 +984,14 @@ class ChatListResponse {
     this.message,
   });
 
-  factory ChatListResponse.fromJson(Map<String, dynamic> json) => ChatListResponse(
-    success: json['Success'] as bool,
-    chats: (json['Chats'] as List<dynamic>? ?? const <dynamic>[])
-        .map((item) => ChatListItem.fromJson(item as Map<String, dynamic>))
-        .toList(),
-    message: json['Message'] as String?,
-  );
+  factory ChatListResponse.fromJson(Map<String, dynamic> json) =>
+      ChatListResponse(
+        success: json['Success'] as bool,
+        chats: (json['Chats'] as List<dynamic>? ?? const <dynamic>[])
+            .map((item) => ChatListItem.fromJson(item as Map<String, dynamic>))
+            .toList(),
+        message: json['Message'] as String?,
+      );
 
   factory ChatListResponse.fromBytes(List<int> bytes) {
     final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
@@ -982,10 +1012,10 @@ class PrivateChatHistoryRequest {
   });
 
   Map<String, dynamic> toJson() => {
-    'PeerUserId': peerUserId,
-    'Limit': limit,
-    if (beforeMessageId != null) 'BeforeMessageId': beforeMessageId,
-  };
+        'PeerUserId': peerUserId,
+        'Limit': limit,
+        if (beforeMessageId != null) 'BeforeMessageId': beforeMessageId,
+      };
 
   List<int> toBytes() => msgpack.serialize(toJson());
 }
@@ -1025,12 +1055,13 @@ class PrivateChatHistoryItem {
       fromUserId: json['FromUserId'] as int,
       toUserId: json['ToUserId'] as int,
       content: parsed.text,
-      contentType: MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
+      contentType:
+          MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
       createdAt: DateTime.parse(json['CreatedAt'] as String),
-        deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
+      deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
           .map((item) => (item as num).toInt())
           .toList(),
-        readBy: (json['ReadBy'] as List<dynamic>? ?? const <dynamic>[])
+      readBy: (json['ReadBy'] as List<dynamic>? ?? const <dynamic>[])
           .map((item) => (item as num).toInt())
           .toList(),
       parseMode: parsed.parseMode,
@@ -1042,8 +1073,9 @@ class PrivateChatHistoryItem {
   ParsedMediaAttachment? get attachment =>
       tryParseMediaAttachment(content, contentType);
 
-    List<ParsedMediaAttachment> get attachments =>
-      tryParseMediaAttachments(content, contentType)?.attachments ?? const <ParsedMediaAttachment>[];
+  List<ParsedMediaAttachment> get attachments =>
+      tryParseMediaAttachments(content, contentType)?.attachments ??
+      const <ParsedMediaAttachment>[];
 }
 
 /// Private chat history response payload
@@ -1065,7 +1097,8 @@ class PrivateChatHistoryResponse {
         success: json['Success'] as bool,
         peerUserId: json['PeerUserId'] as int? ?? 0,
         messages: (json['Messages'] as List<dynamic>? ?? const <dynamic>[])
-            .map((item) => PrivateChatHistoryItem.fromJson(item as Map<String, dynamic>))
+            .map((item) =>
+                PrivateChatHistoryItem.fromJson(item as Map<String, dynamic>))
             .toList(),
         message: json['Message'] as String?,
       );
@@ -1073,7 +1106,7 @@ class PrivateChatHistoryResponse {
   factory PrivateChatHistoryResponse.fromBytes(List<int> bytes) {
     final raw = msgpack.deserialize(Uint8List.fromList(bytes));
     return PrivateChatHistoryResponse.fromJson(
-      _normalizeMsgPack(raw) as Map<String, dynamic>);
+        _normalizeMsgPack(raw) as Map<String, dynamic>);
   }
 }
 
@@ -1090,10 +1123,10 @@ class ChannelHistoryRequest {
   });
 
   Map<String, dynamic> toJson() => {
-    'ChannelId': channelId,
-    'Limit': limit,
-    if (beforeMessageId != null) 'BeforeMessageId': beforeMessageId,
-  };
+        'ChannelId': channelId,
+        'Limit': limit,
+        if (beforeMessageId != null) 'BeforeMessageId': beforeMessageId,
+      };
 
   List<int> toBytes() => msgpack.serialize(toJson());
 }
@@ -1133,12 +1166,13 @@ class ChannelHistoryItem {
       channelId: json['ChannelId'] as int,
       fromUserId: json['FromUserId'] as int,
       content: parsed.text,
-      contentType: MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
+      contentType:
+          MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
       createdAt: DateTime.parse(json['CreatedAt'] as String),
-        deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
+      deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
           .map((item) => (item as num).toInt())
           .toList(),
-        readBy: (json['ReadBy'] as List<dynamic>? ?? const <dynamic>[])
+      readBy: (json['ReadBy'] as List<dynamic>? ?? const <dynamic>[])
           .map((item) => (item as num).toInt())
           .toList(),
       parseMode: parsed.parseMode,
@@ -1150,8 +1184,9 @@ class ChannelHistoryItem {
   ParsedMediaAttachment? get attachment =>
       tryParseMediaAttachment(content, contentType);
 
-    List<ParsedMediaAttachment> get attachments =>
-      tryParseMediaAttachments(content, contentType)?.attachments ?? const <ParsedMediaAttachment>[];
+  List<ParsedMediaAttachment> get attachments =>
+      tryParseMediaAttachments(content, contentType)?.attachments ??
+      const <ParsedMediaAttachment>[];
 }
 
 /// Channel history response payload
@@ -1176,7 +1211,8 @@ class ChannelHistoryResponse {
         channelId: json['ChannelId'] as int? ?? 0,
         channelName: json['ChannelName'] as String?,
         messages: (json['Messages'] as List<dynamic>? ?? const <dynamic>[])
-            .map((item) => ChannelHistoryItem.fromJson(item as Map<String, dynamic>))
+            .map((item) =>
+                ChannelHistoryItem.fromJson(item as Map<String, dynamic>))
             .toList(),
         message: json['Message'] as String?,
       );
@@ -1184,7 +1220,7 @@ class ChannelHistoryResponse {
   factory ChannelHistoryResponse.fromBytes(List<int> bytes) {
     final raw = msgpack.deserialize(Uint8List.fromList(bytes));
     return ChannelHistoryResponse.fromJson(
-      _normalizeMsgPack(raw) as Map<String, dynamic>);
+        _normalizeMsgPack(raw) as Map<String, dynamic>);
   }
 }
 
@@ -1213,7 +1249,8 @@ class MessageStatusEvent {
           .toList(),
       deliveredTo: (json['DeliveredTo'] as num?)?.toInt(),
       readBy: (json['ReadBy'] as num?)?.toInt(),
-      processedAt: processedAtRaw is String ? DateTime.tryParse(processedAtRaw) : null,
+      processedAt:
+          processedAtRaw is String ? DateTime.tryParse(processedAtRaw) : null,
     );
   }
 
@@ -1261,12 +1298,13 @@ class PrivateChatMessageEvent {
       fromUserId: json['FromUserId'] as int,
       toUserId: json['ToUserId'] as int,
       content: parsed.text,
-      contentType: MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
+      contentType:
+          MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
       createdAt: DateTime.parse(json['CreatedAt'] as String),
-        deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
+      deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
           .map((item) => (item as num).toInt())
           .toList(),
-        readBy: (json['ReadBy'] as List<dynamic>? ?? const <dynamic>[])
+      readBy: (json['ReadBy'] as List<dynamic>? ?? const <dynamic>[])
           .map((item) => (item as num).toInt())
           .toList(),
       parseMode: parsed.parseMode,
@@ -1283,8 +1321,9 @@ class PrivateChatMessageEvent {
   ParsedMediaAttachment? get attachment =>
       tryParseMediaAttachment(content, contentType);
 
-    List<ParsedMediaAttachment> get attachments =>
-      tryParseMediaAttachments(content, contentType)?.attachments ?? const <ParsedMediaAttachment>[];
+  List<ParsedMediaAttachment> get attachments =>
+      tryParseMediaAttachments(content, contentType)?.attachments ??
+      const <ParsedMediaAttachment>[];
 }
 
 /// Incoming channel message event payload
@@ -1322,12 +1361,13 @@ class ChannelMessageEvent {
       channelId: json['ChannelId'] as int,
       fromUserId: json['FromUserId'] as int,
       content: parsed.text,
-      contentType: MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
+      contentType:
+          MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
       createdAt: DateTime.parse(json['CreatedAt'] as String),
-        deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
+      deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
           .map((item) => (item as num).toInt())
           .toList(),
-        readBy: (json['ReadBy'] as List<dynamic>? ?? const <dynamic>[])
+      readBy: (json['ReadBy'] as List<dynamic>? ?? const <dynamic>[])
           .map((item) => (item as num).toInt())
           .toList(),
       parseMode: parsed.parseMode,
@@ -1344,8 +1384,9 @@ class ChannelMessageEvent {
   ParsedMediaAttachment? get attachment =>
       tryParseMediaAttachment(content, contentType);
 
-    List<ParsedMediaAttachment> get attachments =>
-      tryParseMediaAttachments(content, contentType)?.attachments ?? const <ParsedMediaAttachment>[];
+  List<ParsedMediaAttachment> get attachments =>
+      tryParseMediaAttachments(content, contentType)?.attachments ??
+      const <ParsedMediaAttachment>[];
 }
 
 /// Message entity (stored/delivered message, not the wire-level frame)
@@ -1379,19 +1420,19 @@ class ChatMessage {
   });
 
   Map<String, dynamic> toJson() => {
-    'Id': id,
-    'FromUserId': fromUserId,
-    'ToUserId': toUserId,
-    'Content': content,
-    'ContentType': contentType.value,
-    'SequenceNumber': sequenceNumber,
-    'IsDelivered': isDelivered,
-    'IsRead': isRead,
-    if (parseMode != null) 'ParseMode': parseMode,
-    'CreatedAt': createdAt.toIso8601String(),
-    if (deliveredAt != null) 'DeliveredAt': deliveredAt!.toIso8601String(),
-    if (readAt != null) 'ReadAt': readAt!.toIso8601String(),
-  };
+        'Id': id,
+        'FromUserId': fromUserId,
+        'ToUserId': toUserId,
+        'Content': content,
+        'ContentType': contentType.value,
+        'SequenceNumber': sequenceNumber,
+        'IsDelivered': isDelivered,
+        'IsRead': isRead,
+        if (parseMode != null) 'ParseMode': parseMode,
+        'CreatedAt': createdAt.toIso8601String(),
+        if (deliveredAt != null) 'DeliveredAt': deliveredAt!.toIso8601String(),
+        if (readAt != null) 'ReadAt': readAt!.toIso8601String(),
+      };
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     final parsed = parseRichTextContent(json['Content'] as String);
@@ -1406,16 +1447,21 @@ class ChatMessage {
       isRead: json['IsRead'] as bool? ?? false,
       parseMode: parsed.parseMode,
       createdAt: DateTime.parse(json['CreatedAt'] as String),
-      deliveredAt: json['DeliveredAt'] != null ? DateTime.parse(json['DeliveredAt'] as String) : null,
-      readAt: json['ReadAt'] != null ? DateTime.parse(json['ReadAt'] as String) : null,
+      deliveredAt: json['DeliveredAt'] != null
+          ? DateTime.parse(json['DeliveredAt'] as String)
+          : null,
+      readAt: json['ReadAt'] != null
+          ? DateTime.parse(json['ReadAt'] as String)
+          : null,
     );
   }
 
   ParsedMediaAttachment? get attachment =>
       tryParseMediaAttachment(content, contentType);
 
-    List<ParsedMediaAttachment> get attachments =>
-      tryParseMediaAttachments(content, contentType)?.attachments ?? const <ParsedMediaAttachment>[];
+  List<ParsedMediaAttachment> get attachments =>
+      tryParseMediaAttachments(content, contentType)?.attachments ??
+      const <ParsedMediaAttachment>[];
 }
 
 /// Private chat entity
@@ -1441,26 +1487,31 @@ class PrivateChat {
   });
 
   Map<String, dynamic> toJson() => {
-    'Id': id,
-    'User1Id': user1Id,
-    'User2Id': user2Id,
-    'CreatedAt': createdAt.toIso8601String(),
-    if (lastActivityAt != null) 'LastActivityAt': lastActivityAt!.toIso8601String(),
-    if (lastMessageId != null) 'LastMessageId': lastMessageId,
-    'IsActive': isActive,
-    if (lastMessage != null) 'LastMessage': lastMessage!.toJson(),
-  };
+        'Id': id,
+        'User1Id': user1Id,
+        'User2Id': user2Id,
+        'CreatedAt': createdAt.toIso8601String(),
+        if (lastActivityAt != null)
+          'LastActivityAt': lastActivityAt!.toIso8601String(),
+        if (lastMessageId != null) 'LastMessageId': lastMessageId,
+        'IsActive': isActive,
+        if (lastMessage != null) 'LastMessage': lastMessage!.toJson(),
+      };
 
   factory PrivateChat.fromJson(Map<String, dynamic> json) => PrivateChat(
-    id: json['Id'] as int,
-    user1Id: json['User1Id'] as int,
-    user2Id: json['User2Id'] as int,
-    createdAt: DateTime.parse(json['CreatedAt'] as String),
-    lastActivityAt: json['LastActivityAt'] != null ? DateTime.parse(json['LastActivityAt'] as String) : null,
-    lastMessageId: json['LastMessageId'] as int?,
-    isActive: json['IsActive'] as bool? ?? true,
-    lastMessage: json['LastMessage'] != null ? ChatMessage.fromJson(json['LastMessage'] as Map<String, dynamic>) : null,
-  );
+        id: json['Id'] as int,
+        user1Id: json['User1Id'] as int,
+        user2Id: json['User2Id'] as int,
+        createdAt: DateTime.parse(json['CreatedAt'] as String),
+        lastActivityAt: json['LastActivityAt'] != null
+            ? DateTime.parse(json['LastActivityAt'] as String)
+            : null,
+        lastMessageId: json['LastMessageId'] as int?,
+        isActive: json['IsActive'] as bool? ?? true,
+        lastMessage: json['LastMessage'] != null
+            ? ChatMessage.fromJson(json['LastMessage'] as Map<String, dynamic>)
+            : null,
+      );
 }
 
 // ─── Profile payloads ────────────────────────────────────────────────────────
@@ -1492,34 +1543,35 @@ class ProfileData {
   });
 
   Map<String, dynamic> toJson() => {
-    'Id': id,
-    'Username': username,
-    if (displayName != null) 'DisplayName': displayName,
-    if (avatarUrl != null) 'AvatarUrl': avatarUrl,
-    'Avatars': avatars.map((item) => item.toJson()).toList(),
-    if (presenceStatus != null) 'PresenceStatus': presenceStatus,
-    if (bio != null) 'Bio': bio,
-    if (email != null) 'Email': email,
-    'CreatedAt': createdAt.toIso8601String(),
-    if (lastSeenAt != null) 'LastSeenAt': lastSeenAt!.toIso8601String(),
-  };
+        'Id': id,
+        'Username': username,
+        if (displayName != null) 'DisplayName': displayName,
+        if (avatarUrl != null) 'AvatarUrl': avatarUrl,
+        'Avatars': avatars.map((item) => item.toJson()).toList(),
+        if (presenceStatus != null) 'PresenceStatus': presenceStatus,
+        if (bio != null) 'Bio': bio,
+        if (email != null) 'Email': email,
+        'CreatedAt': createdAt.toIso8601String(),
+        if (lastSeenAt != null) 'LastSeenAt': lastSeenAt!.toIso8601String(),
+      };
 
   factory ProfileData.fromJson(Map<String, dynamic> json) => ProfileData(
-    id: json['Id'] as int,
-    username: json['Username'] as String,
-    displayName: json['DisplayName'] as String?,
-    avatarUrl: json['AvatarUrl'] as String?,
-    avatars: (json['Avatars'] as List<dynamic>? ?? const <dynamic>[])
-      .map((item) => ProfileAvatarData.fromJson(item as Map<String, dynamic>))
-      .toList(),
-    presenceStatus: json['PresenceStatus'] as String?,
-    bio: json['Bio'] as String?,
-    email: json['Email'] as String?,
-    createdAt: DateTime.parse(json['CreatedAt'] as String),
-    lastSeenAt: json['LastSeenAt'] != null
-        ? DateTime.parse(json['LastSeenAt'] as String)
-        : null,
-  );
+        id: json['Id'] as int,
+        username: json['Username'] as String,
+        displayName: json['DisplayName'] as String?,
+        avatarUrl: json['AvatarUrl'] as String?,
+        avatars: (json['Avatars'] as List<dynamic>? ?? const <dynamic>[])
+            .map((item) =>
+                ProfileAvatarData.fromJson(item as Map<String, dynamic>))
+            .toList(),
+        presenceStatus: json['PresenceStatus'] as String?,
+        bio: json['Bio'] as String?,
+        email: json['Email'] as String?,
+        createdAt: DateTime.parse(json['CreatedAt'] as String),
+        lastSeenAt: json['LastSeenAt'] != null
+            ? DateTime.parse(json['LastSeenAt'] as String)
+            : null,
+      );
 }
 
 class ProfileAvatarData {
@@ -1536,11 +1588,11 @@ class ProfileAvatarData {
   });
 
   Map<String, dynamic> toJson() => {
-    'Id': id,
-    'AvatarUrl': avatarUrl,
-    'IsPrimary': isPrimary,
-    'CreatedAt': createdAt.toIso8601String(),
-  };
+        'Id': id,
+        'AvatarUrl': avatarUrl,
+        'IsPrimary': isPrimary,
+        'CreatedAt': createdAt.toIso8601String(),
+      };
 
   factory ProfileAvatarData.fromJson(Map<String, dynamic> json) =>
       ProfileAvatarData(
@@ -1558,9 +1610,9 @@ class ProfileAvatarAddRequest {
   ProfileAvatarAddRequest({required this.avatarUrl, this.makePrimary = false});
 
   Map<String, dynamic> toJson() => {
-    'AvatarUrl': avatarUrl,
-    'MakePrimary': makePrimary,
-  };
+        'AvatarUrl': avatarUrl,
+        'MakePrimary': makePrimary,
+      };
 
   List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
 }
@@ -1571,8 +1623,8 @@ class ProfileAvatarDeleteRequest {
   ProfileAvatarDeleteRequest({required this.avatarId});
 
   Map<String, dynamic> toJson() => {
-    'AvatarId': avatarId,
-  };
+        'AvatarId': avatarId,
+      };
 
   List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
 }
@@ -1583,8 +1635,8 @@ class ProfileAvatarSetPrimaryRequest {
   ProfileAvatarSetPrimaryRequest({required this.avatarId});
 
   Map<String, dynamic> toJson() => {
-    'AvatarId': avatarId,
-  };
+        'AvatarId': avatarId,
+      };
 
   List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
 }
@@ -1630,7 +1682,8 @@ class ProfileAvatarListResponse {
       ProfileAvatarListResponse(
         success: json['Success'] as bool,
         avatars: (json['Avatars'] as List<dynamic>? ?? const <dynamic>[])
-            .map((item) => ProfileAvatarData.fromJson(item as Map<String, dynamic>))
+            .map((item) =>
+                ProfileAvatarData.fromJson(item as Map<String, dynamic>))
             .toList(),
         message: json['Message'] as String?,
       );
@@ -1653,10 +1706,10 @@ class ChannelLinkUpdateRequest {
   });
 
   Map<String, dynamic> toJson() => {
-    'ChannelId': channelId,
-    if (publicAlias != null) 'PublicAlias': publicAlias,
-    'RegeneratePrivateInvite': regeneratePrivateInvite,
-  };
+        'ChannelId': channelId,
+        if (publicAlias != null) 'PublicAlias': publicAlias,
+        'RegeneratePrivateInvite': regeneratePrivateInvite,
+      };
 
   List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
 }
@@ -1667,8 +1720,8 @@ class ChannelLinkRequest {
   ChannelLinkRequest({required this.channelId});
 
   Map<String, dynamic> toJson() => {
-    'ChannelId': channelId,
-  };
+        'ChannelId': channelId,
+      };
 
   List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
 }
@@ -1679,8 +1732,8 @@ class ChannelResolveRequest {
   ChannelResolveRequest({required this.linkOrAlias});
 
   Map<String, dynamic> toJson() => {
-    'LinkOrAlias': linkOrAlias,
-  };
+        'LinkOrAlias': linkOrAlias,
+      };
 
   List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
 }
@@ -1698,12 +1751,13 @@ class ChannelLinkInfo {
     required this.privateInviteLink,
   });
 
-  factory ChannelLinkInfo.fromJson(Map<String, dynamic> json) => ChannelLinkInfo(
-    channelId: json['ChannelId'] as int,
-    publicAlias: json['PublicAlias'] as String?,
-    publicLink: json['PublicLink'] as String?,
-    privateInviteLink: json['PrivateInviteLink'] as String,
-  );
+  factory ChannelLinkInfo.fromJson(Map<String, dynamic> json) =>
+      ChannelLinkInfo(
+        channelId: json['ChannelId'] as int,
+        publicAlias: json['PublicAlias'] as String?,
+        publicLink: json['PublicLink'] as String?,
+        privateInviteLink: json['PrivateInviteLink'] as String,
+      );
 }
 
 class ChannelLinkResponse {
@@ -1765,11 +1819,11 @@ class ProfileUpdateRequest {
   });
 
   Map<String, dynamic> toJson() => {
-    if (displayName != null) 'DisplayName': displayName,
-    if (avatarUrl != null) 'AvatarUrl': avatarUrl,
-    if (bio != null) 'Bio': bio,
-    if (username != null) 'Username': username,
-  };
+        if (displayName != null) 'DisplayName': displayName,
+        if (avatarUrl != null) 'AvatarUrl': avatarUrl,
+        if (bio != null) 'Bio': bio,
+        if (username != null) 'Username': username,
+      };
 
   List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
 }
@@ -1809,9 +1863,9 @@ class ProfileGetRequest {
   ProfileGetRequest({this.userId, this.username});
 
   Map<String, dynamic> toJson() => {
-    if (userId != null) 'UserId': userId,
-    if (username != null) 'Username': username,
-  };
+        if (userId != null) 'UserId': userId,
+        if (username != null) 'Username': username,
+      };
 
   List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
 }
@@ -1860,11 +1914,11 @@ class ChannelEditRequest {
   });
 
   Map<String, dynamic> toJson() => {
-    'ChannelId': channelId,
-    if (name != null) 'Name': name,
-    if (description != null) 'Description': description,
-    if (avatarUrl != null) 'AvatarUrl': avatarUrl,
-  };
+        'ChannelId': channelId,
+        if (name != null) 'Name': name,
+        if (description != null) 'Description': description,
+        if (avatarUrl != null) 'AvatarUrl': avatarUrl,
+      };
 
   List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
 }
@@ -1905,11 +1959,11 @@ class GroupEditRequest {
   });
 
   Map<String, dynamic> toJson() => {
-    'GroupId': groupId,
-    if (name != null) 'Name': name,
-    if (description != null) 'Description': description,
-    if (avatarUrl != null) 'AvatarUrl': avatarUrl,
-  };
+        'GroupId': groupId,
+        if (name != null) 'Name': name,
+        if (description != null) 'Description': description,
+        if (avatarUrl != null) 'AvatarUrl': avatarUrl,
+      };
 
   List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
 }
@@ -1956,15 +2010,15 @@ class GroupMessageSendRequest {
   });
 
   Map<String, dynamic> toJson() => {
-    'GroupId': groupId,
-    'Content': content,
-    'ContentType': contentType.value,
-    if (replyToMessageId != null) 'ReplyToMessageId': replyToMessageId,
-    if (attachment != null) 'Attachment': attachment!.toJson(),
-    if (attachments != null)
-      'Attachments': attachments!.map((item) => item.toJson()).toList(),
-    if (parseMode != null) 'ParseMode': parseMode,
-  };
+        'GroupId': groupId,
+        'Content': content,
+        'ContentType': contentType.value,
+        if (replyToMessageId != null) 'ReplyToMessageId': replyToMessageId,
+        if (attachment != null) 'Attachment': attachment!.toJson(),
+        if (attachments != null)
+          'Attachments': attachments!.map((item) => item.toJson()).toList(),
+        if (parseMode != null) 'ParseMode': parseMode,
+      };
 
   List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
 }
@@ -1991,5 +2045,655 @@ class GroupMessageSendResponse {
   factory GroupMessageSendResponse.fromBytes(List<int> bytes) {
     final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
     return GroupMessageSendResponse.fromJson(json);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SERVER-002: Group history
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Group history request
+class GroupHistoryRequest {
+  final int groupId;
+  final int limit;
+  final int? beforeMessageId;
+
+  GroupHistoryRequest({
+    required this.groupId,
+    this.limit = 100,
+    this.beforeMessageId,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'GroupId': groupId,
+        'Limit': limit,
+        if (beforeMessageId != null) 'BeforeMessageId': beforeMessageId,
+      };
+
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+/// Group history message item
+class GroupHistoryItem {
+  final int id;
+  final int groupId;
+  final int fromUserId;
+  final String content;
+  final MessageContentType contentType;
+  final DateTime createdAt;
+  final List<int> deliveredTo;
+  final List<int> readBy;
+  final bool isPinned;
+  final String? parseMode;
+  final String? fromUsername;
+  final String? groupName;
+
+  GroupHistoryItem({
+    required this.id,
+    required this.groupId,
+    required this.fromUserId,
+    required this.content,
+    required this.contentType,
+    required this.createdAt,
+    this.deliveredTo = const <int>[],
+    this.readBy = const <int>[],
+    this.isPinned = false,
+    this.parseMode,
+    this.fromUsername,
+    this.groupName,
+  });
+
+  factory GroupHistoryItem.fromJson(Map<String, dynamic> json) {
+    final parsed = parseRichTextContent(json['Content'] as String);
+    return GroupHistoryItem(
+      id: json['Id'] as int,
+      groupId: json['GroupId'] as int,
+      fromUserId: json['FromUserId'] as int,
+      content: parsed.text,
+      contentType:
+          MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
+      createdAt: DateTime.parse(json['CreatedAt'] as String),
+      deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
+          .map((item) => (item as num).toInt())
+          .toList(),
+      readBy: (json['ReadBy'] as List<dynamic>? ?? const <dynamic>[])
+          .map((item) => (item as num).toInt())
+          .toList(),
+      isPinned: json['IsPinned'] as bool? ?? false,
+      parseMode: parsed.parseMode,
+      fromUsername: json['FromUsername'] as String?,
+      groupName: json['GroupName'] as String?,
+    );
+  }
+
+  ParsedMediaAttachment? get attachment =>
+      tryParseMediaAttachment(content, contentType);
+
+  List<ParsedMediaAttachment> get attachments =>
+      tryParseMediaAttachments(content, contentType)?.attachments ??
+      const <ParsedMediaAttachment>[];
+}
+
+/// Group history response
+class GroupHistoryResponse {
+  final bool success;
+  final int groupId;
+  final String? groupName;
+  final List<GroupHistoryItem> messages;
+  final String? message;
+
+  GroupHistoryResponse({
+    required this.success,
+    required this.groupId,
+    this.groupName,
+    required this.messages,
+    this.message,
+  });
+
+  factory GroupHistoryResponse.fromJson(Map<String, dynamic> json) =>
+      GroupHistoryResponse(
+        success: json['Success'] as bool,
+        groupId: json['GroupId'] as int? ?? 0,
+        groupName: json['GroupName'] as String?,
+        messages: (json['Messages'] as List<dynamic>? ?? const <dynamic>[])
+            .map((item) =>
+                GroupHistoryItem.fromJson(item as Map<String, dynamic>))
+            .toList(),
+        message: json['Message'] as String?,
+      );
+
+  factory GroupHistoryResponse.fromBytes(List<int> bytes) {
+    final raw = msgpack.deserialize(Uint8List.fromList(bytes));
+    return GroupHistoryResponse.fromJson(
+        _normalizeMsgPack(raw) as Map<String, dynamic>);
+  }
+}
+
+/// Group message event (server -> client push)
+class GroupMessageEvent {
+  final int id;
+  final int groupId;
+  final int fromUserId;
+  final String content;
+  final MessageContentType contentType;
+  final DateTime createdAt;
+  final String? fromUsername;
+  final String? groupName;
+  final String? parseMode;
+
+  GroupMessageEvent({
+    required this.id,
+    required this.groupId,
+    required this.fromUserId,
+    required this.content,
+    required this.contentType,
+    required this.createdAt,
+    this.fromUsername,
+    this.groupName,
+    this.parseMode,
+  });
+
+  factory GroupMessageEvent.fromJson(Map<String, dynamic> json) {
+    final parsed = parseRichTextContent(json['Content'] as String);
+    return GroupMessageEvent(
+      id: json['Id'] as int,
+      groupId: json['GroupId'] as int,
+      fromUserId: json['FromUserId'] as int,
+      content: parsed.text,
+      contentType:
+          MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
+      createdAt: DateTime.parse(json['CreatedAt'] as String),
+      fromUsername: json['FromUsername'] as String?,
+      groupName: json['GroupName'] as String?,
+      parseMode: parsed.parseMode,
+    );
+  }
+
+  factory GroupMessageEvent.fromBytes(List<int> bytes) {
+    final raw = msgpack.deserialize(Uint8List.fromList(bytes));
+    return GroupMessageEvent.fromJson(
+        _normalizeMsgPack(raw) as Map<String, dynamic>);
+  }
+
+  ParsedMediaAttachment? get attachment =>
+      tryParseMediaAttachment(content, contentType);
+
+  List<ParsedMediaAttachment> get attachments =>
+      tryParseMediaAttachments(content, contentType)?.attachments ??
+      const <ParsedMediaAttachment>[];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SERVER-003: Member listing
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Member summary for listings
+class MemberSummary {
+  final int userId;
+  final String username;
+  final String role;
+  final DateTime joinedAt;
+  final bool canSendMessages;
+  final bool canDeleteOthersMessages;
+  final bool canPinMessages;
+  final bool canManageRoles;
+
+  MemberSummary({
+    required this.userId,
+    required this.username,
+    required this.role,
+    required this.joinedAt,
+    this.canSendMessages = true,
+    this.canDeleteOthersMessages = false,
+    this.canPinMessages = false,
+    this.canManageRoles = false,
+  });
+
+  factory MemberSummary.fromJson(Map<String, dynamic> json) => MemberSummary(
+        userId: json['UserId'] as int,
+        username: json['Username'] as String,
+        role: json['Role'] as String,
+        joinedAt: DateTime.parse(json['JoinedAt'] as String),
+        canSendMessages: json['CanSendMessages'] as bool? ?? true,
+        canDeleteOthersMessages:
+            json['CanDeleteOthersMessages'] as bool? ?? false,
+        canPinMessages: json['CanPinMessages'] as bool? ?? false,
+        canManageRoles: json['CanManageRoles'] as bool? ?? false,
+      );
+}
+
+/// Channel members request
+class ChannelMembersRequest {
+  final int channelId;
+
+  ChannelMembersRequest({required this.channelId});
+
+  Map<String, dynamic> toJson() => {'ChannelId': channelId};
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+/// Channel members response
+class ChannelMembersResponse {
+  final bool success;
+  final int channelId;
+  final List<MemberSummary> members;
+  final String? message;
+
+  ChannelMembersResponse({
+    required this.success,
+    required this.channelId,
+    required this.members,
+    this.message,
+  });
+
+  factory ChannelMembersResponse.fromJson(Map<String, dynamic> json) =>
+      ChannelMembersResponse(
+        success: json['Success'] as bool,
+        channelId: json['ChannelId'] as int? ?? 0,
+        members: (json['Members'] as List<dynamic>? ?? const <dynamic>[])
+            .map((item) => MemberSummary.fromJson(item as Map<String, dynamic>))
+            .toList(),
+        message: json['Message'] as String?,
+      );
+
+  factory ChannelMembersResponse.fromBytes(List<int> bytes) {
+    final raw = msgpack.deserialize(Uint8List.fromList(bytes));
+    return ChannelMembersResponse.fromJson(
+        _normalizeMsgPack(raw) as Map<String, dynamic>);
+  }
+}
+
+/// Group members request
+class GroupMembersRequest {
+  final int groupId;
+
+  GroupMembersRequest({required this.groupId});
+
+  Map<String, dynamic> toJson() => {'GroupId': groupId};
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+/// Group members response
+class GroupMembersResponse {
+  final bool success;
+  final int groupId;
+  final List<MemberSummary> members;
+  final String? message;
+
+  GroupMembersResponse({
+    required this.success,
+    required this.groupId,
+    required this.members,
+    this.message,
+  });
+
+  factory GroupMembersResponse.fromJson(Map<String, dynamic> json) =>
+      GroupMembersResponse(
+        success: json['Success'] as bool,
+        groupId: json['GroupId'] as int? ?? 0,
+        members: (json['Members'] as List<dynamic>? ?? const <dynamic>[])
+            .map((item) => MemberSummary.fromJson(item as Map<String, dynamic>))
+            .toList(),
+        message: json['Message'] as String?,
+      );
+
+  factory GroupMembersResponse.fromBytes(List<int> bytes) {
+    final raw = msgpack.deserialize(Uint8List.fromList(bytes));
+    return GroupMembersResponse.fromJson(
+        _normalizeMsgPack(raw) as Map<String, dynamic>);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SERVER-004: Leave operations
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Channel leave request
+class ChannelLeaveRequest {
+  final int channelId;
+
+  ChannelLeaveRequest({required this.channelId});
+
+  Map<String, dynamic> toJson() => {'ChannelId': channelId};
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+/// Channel leave response
+class ChannelLeaveResponse {
+  final bool success;
+  final String? message;
+
+  ChannelLeaveResponse({required this.success, this.message});
+
+  factory ChannelLeaveResponse.fromJson(Map<String, dynamic> json) =>
+      ChannelLeaveResponse(
+        success: json['Success'] as bool,
+        message: json['Message'] as String?,
+      );
+
+  factory ChannelLeaveResponse.fromBytes(List<int> bytes) {
+    final raw = msgpack.deserialize(Uint8List.fromList(bytes));
+    return ChannelLeaveResponse.fromJson(
+        _normalizeMsgPack(raw) as Map<String, dynamic>);
+  }
+}
+
+/// Group leave request
+class GroupLeaveRequest {
+  final int groupId;
+
+  GroupLeaveRequest({required this.groupId});
+
+  Map<String, dynamic> toJson() => {'GroupId': groupId};
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+/// Group leave response
+class GroupLeaveResponse {
+  final bool success;
+  final String? message;
+
+  GroupLeaveResponse({required this.success, this.message});
+
+  factory GroupLeaveResponse.fromJson(Map<String, dynamic> json) =>
+      GroupLeaveResponse(
+        success: json['Success'] as bool,
+        message: json['Message'] as String?,
+      );
+
+  factory GroupLeaveResponse.fromBytes(List<int> bytes) {
+    final raw = msgpack.deserialize(Uint8List.fromList(bytes));
+    return GroupLeaveResponse.fromJson(
+        _normalizeMsgPack(raw) as Map<String, dynamic>);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SERVER-005: Reactions
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Reaction count summary
+class ReactionCount {
+  final String emoji;
+  final int count;
+  final bool byMe;
+
+  ReactionCount({
+    required this.emoji,
+    required this.count,
+    required this.byMe,
+  });
+
+  factory ReactionCount.fromJson(Map<String, dynamic> json) => ReactionCount(
+        emoji: json['Emoji'] as String,
+        count: json['Count'] as int,
+        byMe: json['ByMe'] as bool? ?? false,
+      );
+}
+
+/// Message reaction request
+class MessageReactRequest {
+  final String scope; // "private", "channel", "group"
+  final int messageId;
+  final String emoji;
+  final bool remove;
+
+  MessageReactRequest({
+    required this.scope,
+    required this.messageId,
+    required this.emoji,
+    this.remove = false,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'Scope': scope,
+        'MessageId': messageId,
+        'Emoji': emoji,
+        'Remove': remove,
+      };
+
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+/// Message reaction response
+class MessageReactResponse {
+  final bool success;
+  final String? message;
+  final List<ReactionCount> reactions;
+
+  MessageReactResponse({
+    required this.success,
+    this.message,
+    required this.reactions,
+  });
+
+  factory MessageReactResponse.fromJson(Map<String, dynamic> json) =>
+      MessageReactResponse(
+        success: json['Success'] as bool,
+        message: json['Message'] as String?,
+        reactions: (json['Reactions'] as List<dynamic>? ?? const <dynamic>[])
+            .map((item) => ReactionCount.fromJson(item as Map<String, dynamic>))
+            .toList(),
+      );
+
+  factory MessageReactResponse.fromBytes(List<int> bytes) {
+    final raw = msgpack.deserialize(Uint8List.fromList(bytes));
+    return MessageReactResponse.fromJson(
+        _normalizeMsgPack(raw) as Map<String, dynamic>);
+  }
+}
+
+/// Message reaction event (server -> client push)
+class MessageReactionEvent {
+  final String scope;
+  final int messageId;
+  final int userId;
+  final String emoji;
+  final bool removed;
+  final List<ReactionCount> reactions;
+
+  MessageReactionEvent({
+    required this.scope,
+    required this.messageId,
+    required this.userId,
+    required this.emoji,
+    required this.removed,
+    required this.reactions,
+  });
+
+  factory MessageReactionEvent.fromJson(Map<String, dynamic> json) =>
+      MessageReactionEvent(
+        scope: json['Scope'] as String,
+        messageId: json['MessageId'] as int,
+        userId: json['UserId'] as int,
+        emoji: json['Emoji'] as String,
+        removed: json['Removed'] as bool? ?? false,
+        reactions: (json['Reactions'] as List<dynamic>? ?? const <dynamic>[])
+            .map((item) => ReactionCount.fromJson(item as Map<String, dynamic>))
+            .toList(),
+      );
+
+  factory MessageReactionEvent.fromBytes(List<int> bytes) {
+    final raw = msgpack.deserialize(Uint8List.fromList(bytes));
+    return MessageReactionEvent.fromJson(
+        _normalizeMsgPack(raw) as Map<String, dynamic>);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SERVER-005: Pins
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Message pin request
+class MessagePinRequest {
+  final String scope; // "channel" or "group"
+  final int messageId;
+  final int targetId; // channelId or groupId
+  final bool unpin;
+
+  MessagePinRequest({
+    required this.scope,
+    required this.messageId,
+    required this.targetId,
+    this.unpin = false,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'Scope': scope,
+        'MessageId': messageId,
+        'TargetId': targetId,
+        'Unpin': unpin,
+      };
+
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+/// Message pin response
+class MessagePinResponse {
+  final bool success;
+  final String? message;
+
+  MessagePinResponse({required this.success, this.message});
+
+  factory MessagePinResponse.fromJson(Map<String, dynamic> json) =>
+      MessagePinResponse(
+        success: json['Success'] as bool,
+        message: json['Message'] as String?,
+      );
+
+  factory MessagePinResponse.fromBytes(List<int> bytes) {
+    final raw = msgpack.deserialize(Uint8List.fromList(bytes));
+    return MessagePinResponse.fromJson(
+        _normalizeMsgPack(raw) as Map<String, dynamic>);
+  }
+}
+
+/// Message pin event (server -> client push)
+class MessagePinEvent {
+  final String scope;
+  final int messageId;
+  final int targetId;
+  final bool pinned;
+  final int actorUserId;
+
+  MessagePinEvent({
+    required this.scope,
+    required this.messageId,
+    required this.targetId,
+    required this.pinned,
+    required this.actorUserId,
+  });
+
+  factory MessagePinEvent.fromJson(Map<String, dynamic> json) =>
+      MessagePinEvent(
+        scope: json['Scope'] as String,
+        messageId: json['MessageId'] as int,
+        targetId: json['TargetId'] as int,
+        pinned: json['Pinned'] as bool? ?? false,
+        actorUserId: json['ActorUserId'] as int,
+      );
+
+  factory MessagePinEvent.fromBytes(List<int> bytes) {
+    final raw = msgpack.deserialize(Uint8List.fromList(bytes));
+    return MessagePinEvent.fromJson(
+        _normalizeMsgPack(raw) as Map<String, dynamic>);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SERVER-006: Room settings
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Room settings get request
+class RoomSettingsGetRequest {
+  final String scope; // "channel" or "group"
+  final int targetId;
+
+  RoomSettingsGetRequest({required this.scope, required this.targetId});
+
+  Map<String, dynamic> toJson() => {
+        'Scope': scope,
+        'TargetId': targetId,
+      };
+
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+/// Room settings get response
+class RoomSettingsGetResponse {
+  final bool success;
+  final String scope;
+  final int targetId;
+  final int joinRule; // 0=Open, 1=InviteOnly, 2=Approval
+  final int historyVisibility; // 0=WorldReadable, 1=Joined, 2=Invited
+  final String? message;
+
+  RoomSettingsGetResponse({
+    required this.success,
+    required this.scope,
+    required this.targetId,
+    this.joinRule = 0,
+    this.historyVisibility = 1,
+    this.message,
+  });
+
+  factory RoomSettingsGetResponse.fromJson(Map<String, dynamic> json) =>
+      RoomSettingsGetResponse(
+        success: json['Success'] as bool,
+        scope: json['Scope'] as String? ?? '',
+        targetId: json['TargetId'] as int? ?? 0,
+        joinRule: json['JoinRule'] as int? ?? 0,
+        historyVisibility: json['HistoryVisibility'] as int? ?? 1,
+        message: json['Message'] as String?,
+      );
+
+  factory RoomSettingsGetResponse.fromBytes(List<int> bytes) {
+    final raw = msgpack.deserialize(Uint8List.fromList(bytes));
+    return RoomSettingsGetResponse.fromJson(
+        _normalizeMsgPack(raw) as Map<String, dynamic>);
+  }
+}
+
+/// Room settings update request
+class RoomSettingsUpdateRequest {
+  final String scope;
+  final int targetId;
+  final int? joinRule;
+  final int? historyVisibility;
+
+  RoomSettingsUpdateRequest({
+    required this.scope,
+    required this.targetId,
+    this.joinRule,
+    this.historyVisibility,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'Scope': scope,
+        'TargetId': targetId,
+        if (joinRule != null) 'JoinRule': joinRule,
+        if (historyVisibility != null) 'HistoryVisibility': historyVisibility,
+      };
+
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+/// Room settings update response
+class RoomSettingsUpdateResponse {
+  final bool success;
+  final String? message;
+
+  RoomSettingsUpdateResponse({required this.success, this.message});
+
+  factory RoomSettingsUpdateResponse.fromJson(Map<String, dynamic> json) =>
+      RoomSettingsUpdateResponse(
+        success: json['Success'] as bool,
+        message: json['Message'] as String?,
+      );
+
+  factory RoomSettingsUpdateResponse.fromBytes(List<int> bytes) {
+    final raw = msgpack.deserialize(Uint8List.fromList(bytes));
+    return RoomSettingsUpdateResponse.fromJson(
+        _normalizeMsgPack(raw) as Map<String, dynamic>);
   }
 }

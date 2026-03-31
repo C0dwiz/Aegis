@@ -197,6 +197,7 @@ public static class Program
                 services.AddScoped<IBotTokenRepository, BotTokenRepository>();
                 services.AddScoped<IBotConversationStateRepository, BotConversationStateRepository>();
                 services.AddScoped<IAppCredentialRepository, AppCredentialRepository>();
+                services.AddScoped<IReactionRepository, ReactionRepository>();
 
                 // Register services
                 services.AddScoped<IUserRegistrationService, UserRegistrationService>();
@@ -337,6 +338,20 @@ public static class Program
                 services.AddScoped<MemberPermissionUpdateHandler>();
                 services.AddScoped<MessageReadReceiptHandler>();
                 services.AddScoped<MessageDeliveryReceiptHandler>();
+                // SERVER-002
+                services.AddScoped<GroupHistoryHandler>();
+                // SERVER-003
+                services.AddScoped<ChannelMembersHandler>();
+                services.AddScoped<GroupMembersHandler>();
+                // SERVER-004
+                services.AddScoped<ChannelLeaveHandler>();
+                services.AddScoped<GroupLeaveHandler>();
+                // SERVER-005
+                services.AddScoped<MessageReactHandler>();
+                services.AddScoped<MessagePinHandler>();
+                // SERVER-006
+                services.AddScoped<RoomSettingsGetHandler>();
+                services.AddScoped<RoomSettingsUpdateHandler>();
                 services.AddScoped<MessageRouter>();
 
                 // Register background services

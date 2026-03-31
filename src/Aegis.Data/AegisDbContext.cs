@@ -38,6 +38,7 @@ public class AegisDbContext : DbContext
     public DbSet<BotToken> BotTokens { get; set; }
     public DbSet<BotConversationState> BotConversationStates { get; set; }
     public DbSet<AppCredential> AppCredentials { get; set; }
+    public DbSet<MessageReaction> MessageReactions { get; set; }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
@@ -268,6 +269,18 @@ public class AegisDbContext : DbContext
             entity.HasOne(e => e.Owner)
                 .WithMany()
                 .HasForeignKey(e => e.OwnerId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
+        });
+        // MessageReaction configuration (SERVER-005)
+        modelBuilder.Entity<MessageReaction>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.Scope, e.MessageId, e.UserId, e.Emoji }).IsUnique();
+            entity.HasIndex(e => new { e.Scope, e.MessageId });
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
         });    }

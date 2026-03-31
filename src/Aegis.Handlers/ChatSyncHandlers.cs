@@ -61,6 +61,34 @@ public record ChannelHistoryRequest(
     ulong? BeforeMessageId = null
 );
 
+public record GroupHistoryRequest(
+    ulong GroupId,
+    int Limit = 100,
+    ulong? BeforeMessageId = null
+);
+
+public record GroupHistoryResponse(
+    bool Success,
+    ulong GroupId,
+    string? GroupName,
+    IReadOnlyList<GroupHistoryItem> Messages,
+    string? Message = null
+);
+
+public record GroupHistoryItem(
+    ulong Id,
+    ulong GroupId,
+    ulong FromUserId,
+    string Content,
+    MessageContentType ContentType,
+    DateTime CreatedAt,
+    IReadOnlyList<ulong> DeliveredTo,
+    IReadOnlyList<ulong> ReadBy,
+    bool IsPinned = false,
+    string? FromUsername = null,
+    string? GroupName = null
+);
+
 public record ChannelHistoryResponse(
     bool Success,
     ulong ChannelId,
@@ -116,6 +144,7 @@ public class ChatListHandler : IMessageHandler
     private readonly IMessageSender _messageSender;
     private readonly IPrivateChatRepository _privateChatRepository;
     private readonly IChannelRepository _channelRepository;
+    private readonly IGroupRepository _groupRepository;
     private readonly IMessageRepository _messageRepository;
     private readonly ILogger<ChatListHandler> _logger;
     private readonly UserPresenceResolver _presenceResolver;
@@ -125,6 +154,7 @@ public class ChatListHandler : IMessageHandler
         IMessageSender messageSender,
         IPrivateChatRepository privateChatRepository,
         IChannelRepository channelRepository,
+        IGroupRepository groupRepository,
         IMessageRepository messageRepository,
         ILogger<ChatListHandler> logger,
         UserPresenceResolver presenceResolver)
@@ -133,6 +163,7 @@ public class ChatListHandler : IMessageHandler
         _messageSender = messageSender;
         _privateChatRepository = privateChatRepository;
         _channelRepository = channelRepository;
+        _groupRepository = groupRepository;
         _messageRepository = messageRepository;
         _logger = logger;
         _presenceResolver = presenceResolver;
@@ -185,6 +216,22 @@ public class ChatListHandler : IMessageHandler
                     UnreadCount: summary.UnreadCount,
                     PeerUserId: null,
                     ChannelId: summary.ChannelId));
+            }
+
+            var groupSummaries = await _groupRepository.GetUserGroupChatSummariesAsync(session.UserId);
+            foreach (var summary in groupSummaries)
+            {
+                chatItems.Add(new ChatListItem(
+                    ChatId: summary.GroupId,
+                    Type: "group",
+                    Title: summary.Name,
+                    AvatarUrl: summary.AvatarUrl,
+                    PresenceStatus: null,
+                    LastMessage: summary.LastMessage,
+                    LastMessageAt: summary.LastMessageAt,
+                    UnreadCount: 0,
+                    PeerUserId: null,
+                    ChannelId: null));
             }
 
             var ordered = chatItems
@@ -436,6 +483,103 @@ public class ChannelHistoryHandler : IMessageHandler
         await _messageSender.SendProtocolMessageAsync(
             context.ConnectionId,
             (ushort)MessageType.ChannelHistoryResponse,
+            sequenceId,
+            payload);
+    }
+}
+
+// ===================== GROUP HISTORY HANDLER =====================
+
+public class GroupHistoryHandler : IMessageHandler
+{
+    public MessageType Type => MessageType.GroupHistoryRequest;
+
+    private readonly SessionManager _sessionManager;
+    private readonly IMessageSender _messageSender;
+    private readonly IGroupRepository _groupRepository;
+    private readonly ILogger<GroupHistoryHandler> _logger;
+
+    public GroupHistoryHandler(
+        SessionManager sessionManager,
+        IMessageSender messageSender,
+        IGroupRepository groupRepository,
+        ILogger<GroupHistoryHandler> logger)
+    {
+        _sessionManager = sessionManager;
+        _messageSender = messageSender;
+        _groupRepository = groupRepository;
+        _logger = logger;
+    }
+
+    public async ValueTask HandleAsync(ConnectionContext context, Aegis.Protocol.Message message)
+    {
+        try
+        {
+            var session = _sessionManager.GetAuthenticatedSession(context.ConnectionId);
+            if (session == null)
+            {
+                await SendResponseAsync(context, message.SequenceId,
+                    new GroupHistoryResponse(false, 0, null, Array.Empty<GroupHistoryItem>(), "Not authenticated"));
+                return;
+            }
+
+            var payload = PayloadSerializer.Deserialize<GroupHistoryRequest>(message.Payload);
+            if (payload == null || payload.GroupId == 0)
+            {
+                await SendResponseAsync(context, message.SequenceId,
+                    new GroupHistoryResponse(false, 0, null, Array.Empty<GroupHistoryItem>(), "Invalid payload"));
+                return;
+            }
+
+            var member = await _groupRepository.GetGroupMemberAsync(payload.GroupId, session.UserId);
+            if (member == null || !member.IsActive)
+            {
+                await SendResponseAsync(context, message.SequenceId,
+                    new GroupHistoryResponse(false, payload.GroupId, null, Array.Empty<GroupHistoryItem>(), "Not a group member"));
+                return;
+            }
+
+            var group = await _groupRepository.GetByIdAsync(payload.GroupId);
+            var limit = Math.Clamp(payload.Limit, 1, 500);
+
+            var history = await _groupRepository.GetGroupMessagesBeforeAsync(
+                payload.GroupId,
+                payload.BeforeMessageId,
+                limit);
+
+            var ordered = history
+                .OrderBy(m => m.CreatedAt)
+                .Select(m => new GroupHistoryItem(
+                    Id: m.Id,
+                    GroupId: m.GroupId,
+                    FromUserId: m.FromUserId,
+                    Content: m.Content,
+                    ContentType: m.ContentType,
+                    CreatedAt: m.CreatedAt,
+                    DeliveredTo: m.IsDelivered ? [session.UserId] : [],
+                    ReadBy: m.IsRead ? [session.UserId] : [],
+                    IsPinned: m.IsPinned,
+                    FromUsername: m.FromUser?.Username,
+                    GroupName: group?.Name))
+                .ToList();
+
+            await SendResponseAsync(context, message.SequenceId,
+                new GroupHistoryResponse(true, payload.GroupId, group?.Name, ordered));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogHandlerError(ex, "group_history_load", context, message, _sessionManager);
+            await SendResponseAsync(context, message.SequenceId,
+                new GroupHistoryResponse(false, 0, null, Array.Empty<GroupHistoryItem>(), "Internal server error"));
+        }
+    }
+
+    private async Task SendResponseAsync(ConnectionContext context, ulong sequenceId, GroupHistoryResponse response)
+    {
+        var payload = PayloadSerializer.Serialize(response);
+        await _messageSender.SendProtocolMessageAsync(
+            context.ConnectionId,
+            (ushort)MessageType.GroupHistoryResponse,
             sequenceId,
             payload);
     }

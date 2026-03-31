@@ -93,7 +93,34 @@ public enum MessageType : ushort
     MessageDeliveryReceiptResponse = 68,
 
     // Async status event (server -> clients)
-    MessageStatusEvent = 69
+    MessageStatusEvent = 69,
+
+    // Group history (SERVER-002)
+    GroupHistoryRequest = 70,
+    GroupHistoryResponse = 71,
+    GroupMessageEvent = 72,
+
+    // Member listing (SERVER-003)
+    ChannelMembersRequest = 73,
+    ChannelMembersResponse = 74,
+    GroupMembersRequest = 75,
+    GroupMembersResponse = 76,
+
+    // Reactions (SERVER-005)
+    MessageReact = 77,
+    MessageReactResponse = 78,
+    MessageReactionEvent = 79,
+
+    // Pins (SERVER-005)
+    MessagePin = 80,
+    MessagePinResponse = 81,
+    MessagePinEvent = 82,
+
+    // Room settings: visibility / join-rule / history (SERVER-006)
+    RoomSettingsGet = 83,
+    RoomSettingsGetResponse = 84,
+    RoomSettingsUpdate = 85,
+    RoomSettingsUpdateResponse = 86
 }
 
 /// <summary>

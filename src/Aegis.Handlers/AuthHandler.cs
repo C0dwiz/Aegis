@@ -143,7 +143,7 @@ public class AuthHandler : IMessageHandler
                         Success = true,
                         UserId = session.UserId,
                         Username = session.User.Username,
-                        SessionToken = string.Empty
+                        SessionToken = session.SessionToken
                     });
 
                     await DeliverUndeliveredMessagesAsync(context.ConnectionId, session.UserId);
@@ -206,7 +206,7 @@ public class AuthHandler : IMessageHandler
                 Success = true,
                 UserId = user.Id,
                 Username = user.Username,
-                SessionToken = string.Empty
+                SessionToken = dbSession.SessionToken
             });
 
             await DeliverUndeliveredMessagesAsync(context.ConnectionId, user.Id);
