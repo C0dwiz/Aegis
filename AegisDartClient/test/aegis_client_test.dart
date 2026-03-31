@@ -3,6 +3,49 @@ import 'package:test/test.dart';
 import 'package:aegis_client/aegis_client.dart';
 
 void main() {
+  group('API credentials', () {
+    test('should expose official credentials', () {
+      expect(AegisOfficialApiCredentials.credentials.appId, equals(2041001));
+      expect(
+        AegisOfficialApiCredentials.credentials.appHash,
+        equals(
+            '8f4c1db0e7c2456d9ab31f4e6d8c9a0137f2c4b56d8e1a903bc7d52e6f194a3c'),
+      );
+    });
+
+    test('should use official credentials by default', () {
+      final client = AegisClient();
+
+      expect(client.apiCredentials, isNotNull);
+      expect(
+        client.apiCredentials!.appId,
+        equals(AegisOfficialApiCredentials.credentials.appId),
+      );
+
+      client.dispose();
+    });
+
+    test('should allow explicit custom credentials', () {
+      final client = AegisClient.withApiCredentials(
+        const AegisApiCredentials(appId: 99, appHash: 'custom-hash'),
+      );
+
+      expect(client.apiCredentials, isNotNull);
+      expect(client.apiCredentials!.appId, equals(99));
+      expect(client.apiCredentials!.appHash, equals('custom-hash'));
+
+      client.dispose();
+    });
+
+    test('should allow disabling api credentials', () {
+      final client = AegisClient.withoutApiCredentials();
+
+      expect(client.apiCredentials, isNull);
+
+      client.dispose();
+    });
+  });
+
   group('MessageEncoder', () {
     test('should encode and decode message correctly', () {
       final originalMessage = Message.withType(
@@ -24,12 +67,14 @@ void main() {
       expect(decodedMessage.flags, equals(originalMessage.flags));
       expect(decodedMessage.type, equals(originalMessage.type));
       expect(decodedMessage.sequenceId, equals(originalMessage.sequenceId));
-      expect(decodedMessage.payloadLength, equals(originalMessage.payloadLength));
+      expect(
+          decodedMessage.payloadLength, equals(originalMessage.payloadLength));
       expect(decodedMessage.payload, equals(originalMessage.payload));
     });
 
     test('should throw ProtocolError for invalid magic', () {
-      final data = Uint8List.fromList([0x00, 0x00, 0x00, 0x00]); // Invalid magic
+      final data =
+          Uint8List.fromList([0x00, 0x00, 0x00, 0x00]); // Invalid magic
 
       expect(
         () => MessageEncoder.decode(data),
@@ -79,8 +124,8 @@ void main() {
       final message = Message.withType(MessageType.message, payload);
 
       final expectedSize = ProtocolConstants.headerSize +
-                          payload.length +
-                          ProtocolConstants.macSize;
+          payload.length +
+          ProtocolConstants.macSize;
 
       expect(message.totalSize, equals(expectedSize));
     });

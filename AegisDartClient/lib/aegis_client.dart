@@ -7,7 +7,7 @@
 /// ```dart
 /// import 'package:aegis_client/aegis_client.dart';
 ///
-/// final client = AegisClient();
+/// final client = AegisClient.official();
 /// await client.connect('localhost', 5000);
 /// await client.login('alice', 'password');
 /// await client.sendPrivateMessage('bob', 'Hello!');
@@ -47,6 +47,7 @@ export 'src/exceptions.dart';
 
 // Security utilities
 export 'src/security_utils.dart';
+export 'src/official_api_credentials.dart';
 
 // Logging
 export 'src/logger.dart';

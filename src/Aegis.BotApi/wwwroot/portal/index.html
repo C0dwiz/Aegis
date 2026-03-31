@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aegis Developer Portal</title>
+    <link rel="stylesheet" href="portal.css" />
+</head>
+
+<body>
+    <div class="auth-wrap">
+        <div class="auth-card">
+            <div class="auth-logo">
+                <div class="logo-icon">⚡</div>
+                <h1>Aegis</h1>
+                <p>Developer Portal</p>
+            </div>
+
+            <div class="tab-bar">
+                <button class="tab-btn active" id="tab-login" onclick="switchTab('login')">Sign In</button>
+                <button class="tab-btn" id="tab-reg" onclick="switchTab('reg')">Register</button>
+            </div>
+
+            <!-- Login form -->
+            <form id="login-form" onsubmit="doLogin(event)">
+                <div id="login-alert" class="alert"></div>
+
+                <div class="form-group">
+                    <label for="login-username">Username</label>
+                    <input id="login-username" type="text" placeholder="your_username" autocomplete="username"
+                        required />
+                </div>
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <input id="login-password" type="password" placeholder="••••••••" autocomplete="current-password"
+                        required />
+                </div>
+
+                <button type="submit" class="btn btn-primary" id="login-btn">
+                    Sign In
+                </button>
+            </form>
+
+            <!-- Register form (hidden by default) -->
+            <form id="reg-form" style="display:none" onsubmit="doRegister(event)">
+                <div id="reg-alert" class="alert"></div>
+
+                <div class="form-group">
+                    <label for="reg-username">Username <small style="color:var(--text-dim)">(3-32 chars,
+                            letters/digits/_.-)</small></label>
+                    <input id="reg-username" type="text" placeholder="your_username" autocomplete="off" required />
+                </div>
+                <div class="form-group">
+                    <label for="reg-email">Email <small style="color:var(--text-dim)">(optional)</small></label>
+                    <input id="reg-email" type="email" placeholder="you@example.com" autocomplete="email" />
+                </div>
+                <div class="form-group">
+                    <label for="reg-password">Password <small style="color:var(--text-dim)">(min 8
+                            chars)</small></label>
+                    <input id="reg-password" type="password" placeholder="••••••••" autocomplete="new-password"
+                        required />
+                </div>
+                <div class="form-group">
+                    <label for="reg-password2">Confirm password</label>
+                    <input id="reg-password2" type="password" placeholder="••••••••" autocomplete="new-password"
+                        required />
+                </div>
+
+                <button type="submit" class="btn btn-primary" id="reg-btn">
+                    Create Account
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Redirect if already logged in
+        (function () {
+            const t = localStorage.getItem('aegis_session_token');
+            if (t) window.location.replace('dashboard.html');
+        })();
+
+        function switchTab(tab) {
+            const isLogin = tab === 'login';
+            document.getElementById('tab-login').classList.toggle('active', isLogin);
+            document.getElementById('tab-reg').classList.toggle('active', !isLogin);
+            document.getElementById('login-form').style.display = isLogin ? '' : 'none';
+            document.getElementById('reg-form').style.display = isLogin ? 'none' : '';
+            hideAlerts();
+        }
+
+        function hideAlerts() {
+            ['login-alert', 'reg-alert'].forEach(id => {
+                const el = document.getElementById(id);
+                el.className = 'alert';
+                el.textContent = '';
+            });
+        }
+
+        function showAlert(id, msg, type = 'error') {
+            const el = document.getElementById(id);
+            el.className = `alert alert-${type} show`;
+            el.textContent = msg;
+        }
+
+        async function doLogin(e) {
+            e.preventDefault();
+            hideAlerts();
+            const btn = document.getElementById('login-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>';
+
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: document.getElementById('login-username').value.trim(),
+                        password: document.getElementById('login-password').value,
+                    }),
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    localStorage.setItem('aegis_session_token', data.sessionToken);
+                    localStorage.setItem('aegis_user_id', String(data.userId));
+                    localStorage.setItem('aegis_username', data.username);
+                    window.location.replace('dashboard.html');
+                } else if (res.status === 401) {
+                    showAlert('login-alert', 'Invalid username or password.');
+                } else {
+                    const err = await res.json().catch(() => ({}));
+                    showAlert('login-alert', err.error || 'Login failed. Try again.');
+                }
+            } catch {
+                showAlert('login-alert', 'Network error. Is the server running?');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Sign In';
+            }
+        }
+
+        async function doRegister(e) {
+            e.preventDefault();
+            hideAlerts();
+
+            const pw = document.getElementById('reg-password').value;
+            const pw2 = document.getElementById('reg-password2').value;
+            if (pw !== pw2) { showAlert('reg-alert', 'Passwords do not match.'); return; }
+            if (pw.length < 8) { showAlert('reg-alert', 'Password must be at least 8 characters.'); return; }
+
+            const btn = document.getElementById('reg-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>';
+
+            try {
+                const res = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: document.getElementById('reg-username').value.trim(),
+                        email: document.getElementById('reg-email').value.trim() || undefined,
+                        password: pw,
+                    }),
+                });
+
+                const data = await res.json().catch(() => ({}));
+
+                if (res.ok || res.status === 201) {
+                    localStorage.setItem('aegis_session_token', data.sessionToken);
+                    localStorage.setItem('aegis_user_id', String(data.userId));
+                    localStorage.setItem('aegis_username', data.username);
+                    window.location.replace('dashboard.html');
+                } else {
+                    showAlert('reg-alert', data.error || 'Registration failed. Try again.');
+                }
+            } catch {
+                showAlert('reg-alert', 'Network error. Is the server running?');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Create Account';
+            }
+        }
+    </script>
+</body>
+
+</html>

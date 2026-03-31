@@ -132,7 +132,7 @@ public class MessageDelivery
     public string? DeviceId { get; set; }
 
     // Navigation properties
-    public Message Message { get; set; } = null!;
+    // NOTE: Message navigation removed - messages stored in ZoneTree, MessageId is data only
     public User User { get; set; } = null!;
 }
 
@@ -184,7 +184,9 @@ public class Message
     public User? FromUser { get; set; }
     public User? ToUser { get; set; }
     public Message? ReplyToMessage { get; set; }
-    public ICollection<MessageDelivery> DeliveryStatus { get; set; } = new List<MessageDelivery>();
+    // NOTE: Removed DeliveryStatus navigation - delivery tracking is separate in PostgreSQL
+    // Messages are stored in ZoneTree; MessageDelivery tracks delivery status independently
+    public ICollection<Message> Replies { get; set; } = new List<Message>();
 }
 
 /// <summary>
@@ -445,4 +447,44 @@ public enum ChannelMemberRole
     Moderator = 1,
     Admin = 2,
     Owner = 3
+}
+
+/// <summary>
+/// Third-party application credentials (similar to Telegram api_id/api_hash).
+/// Developers register their client applications here and receive credentials
+/// that must be passed in each protocol handshake.
+/// </summary>
+public class AppCredential
+{
+    /// <summary>Auto-incremented numeric application identifier.</summary>
+    public int AppId { get; set; }
+
+    /// <summary>Cryptographically random 32-byte secret (hex-encoded, 64 chars).</summary>
+    public string AppHash { get; set; } = string.Empty;
+
+    /// <summary>Human-readable application name shown in the developer portal.</summary>
+    public string AppTitle { get; set; } = string.Empty;
+
+    /// <summary>Short identifier used for logging/display (e.g. "myapp_android").</summary>
+    public string ShortName { get; set; } = string.Empty;
+
+    /// <summary>Optional description of what the application does.</summary>
+    public string? Description { get; set; }
+
+    /// <summary>Optional website URL for the application.</summary>
+    public string? Website { get; set; }
+
+    /// <summary>Target platform: android, ios, web, desktop, other.</summary>
+    public string Platform { get; set; } = "other";
+
+    /// <summary>Owner user id (the developer who created this app).</summary>
+    public ulong OwnerId { get; set; }
+
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? LastUsedAt { get; set; }
+    public DateTime? RevokedAt { get; set; }
+
+    // Navigation
+    public User? Owner { get; set; }
 }

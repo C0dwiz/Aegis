@@ -52,7 +52,7 @@ class AdvancedAegisClient {
 
   Future<void> _connectAndAuthenticate() async {
     _client?.dispose();
-    _client = AegisClient();
+    _client = AegisClient.official();
 
     await _client!.connect(host, port);
 
@@ -68,7 +68,9 @@ class AdvancedAegisClient {
   void _startHeartbeat() {
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 15), (_) async {
       try {
-        if (_client == null || !_client!.isConnected || !_client!.isAuthenticated) {
+        if (_client == null ||
+            !_client!.isConnected ||
+            !_client!.isAuthenticated) {
           return;
         }
 
@@ -98,7 +100,7 @@ Future<void> main() async {
   final password = 'test_password_123';
 
   // Create user once for the advanced session.
-  final bootstrapClient = AegisClient();
+  final bootstrapClient = AegisClient.official();
   try {
     await bootstrapClient.connect('localhost', 8888);
     await bootstrapClient.register(

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading.Tasks;
 using Tenray.ZoneTree;
@@ -12,6 +13,11 @@ public class ZoneTreeMessageRepository : IMessageRepository, IDisposable
 {
     private readonly IZoneTree<ulong, Message> _zoneTree;
     private const int DefaultPageSize = 100;
+    
+    // In-memory cache for unread counts per user (TTL = 5 min)
+    // Invalidated on MarkMessagesReadAsync to prevent stale data
+    private readonly ConcurrentDictionary<ulong, (Dictionary<ulong, int> Counts, DateTime ExpiresAt)> _unreadCountCache = new();
+    private const int UnreadCountCacheTtlSeconds = 300;
 
     public ZoneTreeMessageRepository(string dbPath)
     {
@@ -133,6 +139,15 @@ public class ZoneTreeMessageRepository : IMessageRepository, IDisposable
 
     public Task<IDictionary<ulong, int>> GetUnreadCountsBySenderAsync(ulong userId)
     {
+        // Check cache first to avoid full ZoneTree scans
+        if (_unreadCountCache.TryGetValue(userId, out var cached) && 
+            cached.ExpiresAt > DateTime.UtcNow)
+        {
+            return Task.FromResult<IDictionary<ulong, int>>(
+                new Dictionary<ulong, int>(cached.Counts));
+        }
+
+        // Cache miss: scan ZoneTree
         var dict = new Dictionary<ulong, int>();
         using var iterator = _zoneTree.CreateIterator();
         while (iterator.Next())
@@ -144,6 +159,9 @@ public class ZoneTreeMessageRepository : IMessageRepository, IDisposable
                     dict[m.FromUserId]++;
             }
         }
+
+        // Update cache with TTL
+        _unreadCountCache[userId] = (dict, DateTime.UtcNow.AddSeconds(UnreadCountCacheTtlSeconds));
         return Task.FromResult<IDictionary<ulong, int>>(dict);
     }
 
@@ -167,6 +185,8 @@ public class ZoneTreeMessageRepository : IMessageRepository, IDisposable
     public Task MarkMessagesReadAsync(IEnumerable<ulong> messageIds, ulong readerUserId)
     {
         var now = DateTime.UtcNow;
+        var invalidateAffectedSenders = new HashSet<ulong>();
+        
         foreach (var id in messageIds.Distinct())
         {
             if (_zoneTree.TryGet(id, out var message) &&
@@ -183,8 +203,18 @@ public class ZoneTreeMessageRepository : IMessageRepository, IDisposable
                 }
 
                 _zoneTree.Upsert(id, message);
+                // Track senders whose message counts changed
+                invalidateAffectedSenders.Add(message.FromUserId);
             }
         }
+
+        // Invalidate unread count cache for this reader (since we updated IsRead)
+        _unreadCountCache.TryRemove(readerUserId, out _);
+        
+        // Optionally invalidate cache for affected senders (if tracking their sent→read transitions)
+        // Uncomment if sender-side read receipts need real-time cache updates:
+        // foreach (var senderId in invalidateAffectedSenders)
+        //     _unreadCountCache.TryRemove(senderId, out _);
 
         return Task.CompletedTask;
     }

@@ -123,6 +123,8 @@ Brotli-сжатие применяется автоматически, когд�
 3. Сервер возвращает свой `ServerPublicKey` (base64). Опционально подписывает handshake транскрипт ECDSA P-256 SHA-256 (если включено `RequireSignedHandshakeResponses`).
 4. Клиент вычисляет тот же `sharedSecret` и сессионный ключ.
 
+`AppId` / `AppHash`, если сервер требует app credentials, передаются в том же handshake-запросе и идентифицируют клиентское приложение. Это отдельный механизм и он не заменяет подпись server handshake: подпись нужна для подтверждения подлинности ответа сервера, а не клиента.
+
 Формат signed-handshake transcript фиксирован и платформенно-независим: `"AEGIS-HANDSHAKE-V1" + len(serverPub)[int32 little-endian] + serverPub + len(clientPub)[int32 little-endian] + clientPub`.
 
 ### AES-GCM шифрование payload
@@ -220,7 +222,9 @@ Payload: [ SequenceId: 8 bytes big-endian ] [ Status: 1 byte ]
 ```json
 {
   "PublicKey": "<base64 ECDH ephemeral public key>",
-  "ClientVersion": 1
+  "ClientVersion": 1,
+  "AppId": 2041001,
+  "AppHash": "<app-hash, если включены app credentials>"
 }
 ```
 
@@ -234,6 +238,8 @@ Payload: [ SequenceId: 8 bytes big-endian ] [ Status: 1 byte ]
   "SignatureAlgorithm": "ECDSA_P256_SHA256"
 }
 ```
+
+`AppId` / `AppHash` в запросе и `Signature` в ответе решают разные задачи: первое проверяет client app policy, второе позволяет клиенту проверить, что handshake действительно подписан доверенным сервером.
 
 ---
 
@@ -977,6 +983,9 @@ UI-интерпретация: `✓` = `DeliveredTo` не null; `✓✓` = `Read
 | `RateLimit` | `MaxConnectionsPerIP`             | 10                    |
 | `ProtocolSecurity` | `RequireEncryptedPayloadAfterHandshake` | true     |
 | `ProtocolSecurity` | `RequireSignedHandshakeResponses`      | false    |
+| `ProtocolSecurity` | `RequireAppCredentials`               | true     |
+
+Если `RequireSignedHandshakeResponses = true`, серверу дополнительно нужен ECDSA signing private key; соответствующий public key распространяется клиентам или tooling отдельно и не участвует в проверке `AppId` / `AppHash`.
 
 TLS включается через переменные окружения:
 ```

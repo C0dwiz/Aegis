@@ -465,6 +465,13 @@ public interface ISessionRepository : IRepository<Session>
     Task<IEnumerable<Session>> GetUserActiveSessions(ulong userId);
     Task<bool> DeleteExpiredSessionsAsync();
     Task<Session?> GetByConnectionIdAsync(string connectionId);
+    /// <summary>
+    /// Gets expired sessions in batches for cleanup. Used by SessionCleanupBackgroundService.
+    /// </summary>
+    /// <param name="cutoffTime">Sessions with ExpiresAt &lt; cutoffTime are considered expired</param>
+    /// <param name="maxResults">Maximum number of results to return per batch (default 1000)</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    Task<IEnumerable<Session>> GetExpiredSessionsAsync(DateTime cutoffTime, int maxResults = 1000, CancellationToken cancellationToken = default);
 }
 
 public class SessionRepository : Repository<Session>, ISessionRepository
@@ -509,6 +516,17 @@ public class SessionRepository : Repository<Session>, ISessionRepository
         return await _context.Sessions
             .Include(s => s.User)
             .FirstOrDefaultAsync(s => s.ConnectionId == connectionId && s.IsActive);
+    }
+
+    public async Task<IEnumerable<Session>> GetExpiredSessionsAsync(
+        DateTime cutoffTime, int maxResults = 1000, CancellationToken cancellationToken = default)
+    {
+        return await _context.Sessions
+            .Where(s => s.ExpiresAt < cutoffTime)
+            .OrderBy(s => s.ExpiresAt)  // Process oldest first
+            .Take(maxResults)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
     }
 }
 
@@ -1050,5 +1068,95 @@ public class PrivateChatRepository : Repository<PrivateChat>, IPrivateChatReposi
         };
 
         return await CreateAsync(privateChat);
+    }
+}
+
+// ===================== APP CREDENTIAL REPOSITORY =====================
+
+public interface IAppCredentialRepository
+{
+    Task<AppCredential?> GetByAppIdAsync(int appId);
+    Task<AppCredential?> ValidateAsync(int appId, string appHash);
+    Task<IEnumerable<AppCredential>> GetByOwnerAsync(ulong ownerId);
+    Task<AppCredential> CreateAsync(AppCredential entity);
+    Task<AppCredential> UpdateAsync(AppCredential entity);
+    Task<bool> RevokeAsync(int appId, ulong ownerId);
+}
+
+public class AppCredentialRepository : IAppCredentialRepository
+{
+    private readonly AegisDbContext _context;
+
+    public AppCredentialRepository(AegisDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<AppCredential?> GetByAppIdAsync(int appId)
+    {
+        return await _context.AppCredentials
+            .AsNoTracking()
+            .FirstOrDefaultAsync(a => a.AppId == appId && a.IsActive);
+    }
+
+    public async Task<AppCredential?> ValidateAsync(int appId, string appHash)
+    {
+        if (string.IsNullOrWhiteSpace(appHash))
+            return null;
+
+        var credential = await _context.AppCredentials
+            .AsNoTracking()
+            .FirstOrDefaultAsync(a => a.AppId == appId && a.IsActive);
+
+        if (credential == null)
+            return null;
+
+        // Constant-time compare to prevent timing oracle
+        if (!System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+                System.Text.Encoding.UTF8.GetBytes(credential.AppHash),
+                System.Text.Encoding.UTF8.GetBytes(appHash)))
+        {
+            return null;
+        }
+
+        // Update last-used timestamp (fire-and-forget; don't block handshake)
+        await _context.AppCredentials
+            .Where(a => a.AppId == appId)
+            .ExecuteUpdateAsync(s => s.SetProperty(a => a.LastUsedAt, DateTime.UtcNow));
+
+        return credential;
+    }
+
+    public async Task<IEnumerable<AppCredential>> GetByOwnerAsync(ulong ownerId)
+    {
+        return await _context.AppCredentials
+            .AsNoTracking()
+            .Where(a => a.OwnerId == ownerId)
+            .OrderByDescending(a => a.CreatedAt)
+            .ToListAsync();
+    }
+
+    public async Task<AppCredential> CreateAsync(AppCredential entity)
+    {
+        _context.AppCredentials.Add(entity);
+        await _context.SaveChangesAsync();
+        return entity;
+    }
+
+    public async Task<AppCredential> UpdateAsync(AppCredential entity)
+    {
+        _context.AppCredentials.Update(entity);
+        await _context.SaveChangesAsync();
+        return entity;
+    }
+
+    public async Task<bool> RevokeAsync(int appId, ulong ownerId)
+    {
+        var rows = await _context.AppCredentials
+            .Where(a => a.AppId == appId && a.OwnerId == ownerId && a.IsActive)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.IsActive, false)
+                .SetProperty(a => a.RevokedAt, DateTime.UtcNow));
+        return rows > 0;
     }
 }

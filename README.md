@@ -21,6 +21,32 @@
 - **Хеширование паролей** с использованием современных алгоритмов
 - **X3DH протокол** для ключевого обмена
 - **MAC проверка** целостности сообщений
+- **Обязательные app credentials** (`api_id` / `api_hash`) для first-party клиентов на этапе handshake
+- **Подписанный server handshake response** через отдельный ECDSA signing key; это не замена `api_id` / `api_hash`, а дополнительная проверка подлинности сервера
+
+## Smoke Test
+
+Для быстрой проверки TCP/TLS handshake, регистрации, аутентификации и базовых сообщений можно использовать `smoke_test.py`.
+
+Примеры запуска:
+
+```bash
+python smoke_test.py --host 127.0.0.1 --port 8888
+python smoke_test.py --api-id 2041001 --api-hash 8f4c1db0e7c2456d9ab31f4e6d8c9a0137f2c4b56d8e1a903bc7d52e6f194a3c
+python smoke_test.py --without-api-credentials
+```
+
+Новые флаги для handshake app credentials:
+
+- `--api-id` и `--api-hash`: явно передают кастомную пару `api_id` / `api_hash`
+- `--without-api-credentials`: отключает отправку `AppId` / `AppHash` в handshake
+- без этих флагов утилита использует официальную first-party пару по умолчанию
+
+`--without-api-credentials` имеет смысл только для серверов, где отключена обязательная проверка `RequireAppCredentials`; при `RequireAppCredentials=true` такой handshake будет отклонён.
+
+Переменные окружения `AEGIS_APP_ID` и `AEGIS_APP_HASH` по-прежнему поддерживаются как override/fallback для CLI-режима.
+
+Важно: `api_id` / `api_hash` и handshake signing keys выполняют разные роли. `api_id` / `api_hash` идентифицируют клиентское приложение в handshake, а `AEGIS_HANDSHAKE_SIGNING_PRIVATE_KEY_BASE64` используется сервером только для подписи своего handshake response, если включён `RequireSignedHandshakeResponses`. Соответствующий public key нужен клиентам или утилитам для проверки этой подписи и сам по себе сервером не используется.
 
 ## Архитектура
 

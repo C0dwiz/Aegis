@@ -37,6 +37,7 @@ public class AegisDbContext : DbContext
     public DbSet<Bot> Bots { get; set; }
     public DbSet<BotToken> BotTokens { get; set; }
     public DbSet<BotConversationState> BotConversationStates { get; set; }
+    public DbSet<AppCredential> AppCredentials { get; set; }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
@@ -108,8 +109,8 @@ public class AegisDbContext : DbContext
             entity.HasIndex(e => new { e.MessageId, e.UserId }).IsUnique();
             entity.HasIndex(e => new { e.UserId, e.Status, e.StatusUpdatedAt });
             entity.HasIndex(e => new { e.Status, e.StatusUpdatedAt });
-            entity.HasOne(e => e.Message).WithMany(m => m.DeliveryStatus).HasForeignKey(e => e.MessageId)
-                .OnDelete(DeleteBehavior.Cascade);
+            // NOTE: MessageId is NOT a FK - messages are stored in ZoneTree, not PostgreSQL
+            // MessageDelivery tracks delivery status for messages regardless of storage location
             entity.HasOne(e => e.User).WithMany().HasForeignKey(e => e.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
             entity.Property(e => e.StatusUpdatedAt).HasDefaultValueSql(DefaultTimestampSql);
@@ -257,5 +258,17 @@ public class AegisDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
-    }
+        // AppCredential configuration
+        modelBuilder.Entity<AppCredential>(entity =>
+        {
+            entity.HasKey(e => e.AppId);
+            entity.Property(e => e.AppId).UseIdentityAlwaysColumn();
+            entity.HasIndex(e => e.AppHash).IsUnique();
+            entity.HasIndex(e => new { e.OwnerId, e.IsActive });
+            entity.HasOne(e => e.Owner)
+                .WithMany()
+                .HasForeignKey(e => e.OwnerId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
+        });    }
 }

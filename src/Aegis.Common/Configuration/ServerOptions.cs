@@ -41,6 +41,13 @@ public class ProtocolSecurityOptions
 
     // Base64-encoded PKCS#8 ECDSA P-256 private key for handshake response signatures.
     public string HandshakeSigningPrivateKeyBase64 { get; set; } = string.Empty;
+
+    /// <summary>
+    /// When true, every handshake must supply a valid AppId + AppHash from a registered
+    /// application credential.  Set to false during migration to allow legacy clients
+    /// without credentials to still connect.
+    /// </summary>
+    public bool RequireAppCredentials { get; set; } = false;
 }
 
 public class RateLimitOptions

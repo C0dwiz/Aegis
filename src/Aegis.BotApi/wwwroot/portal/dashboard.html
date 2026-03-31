@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Apps — Aegis Developer Portal</title>
+    <link rel="stylesheet" href="portal.css" />
+</head>
+
+<body>
+    <div class="dash-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-logo">
+                <div class="logo-icon">⚡</div>
+                <span>Aegis Dev</span>
+            </div>
+
+            <nav class="sidebar-nav">
+                <div class="nav-item active">
+                    <span style="font-size:1.1rem">📦</span>
+                    <span>My Applications</span>
+                </div>
+                <div class="nav-item" onclick="window.open('/swagger','_blank')">
+                    <span style="font-size:1.1rem">📖</span>
+                    <span>API Docs</span>
+                </div>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="user-badge">
+                    <div class="avatar" id="avatar-letter">?</div>
+                    <div class="user-info">
+                        <strong id="sidebar-username">…</strong>
+                        <small>ID: <span id="sidebar-userid">…</span></small>
+                    </div>
+                </div>
+                <button class="btn btn-secondary" style="margin-top:12px;width:100%;font-size:.82rem"
+                    onclick="logout()">
+                    Sign Out
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main -->
+        <main class="main-content">
+            <div class="page-header">
+                <div>
+                    <h2>My Applications</h2>
+                    <p>Create <code>api_id</code> / <code>api_hash</code> credentials for your Aegis clients.</p>
+                </div>
+                <button class="btn btn-primary" style="width:auto;padding:10px 20px" onclick="openCreateModal()">
+                    + New App
+                </button>
+            </div>
+
+            <div id="global-alert" class="alert"></div>
+
+            <div class="apps-grid" id="apps-grid">
+                <!-- populated by JS -->
+                <div class="empty-state">
+                    <div class="empty-icon"><span class="spinner"
+                            style="width:32px;height:32px;border-width:3px"></span></div>
+                    <p>Loading…</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Create App Modal -->
+    <div class="modal-overlay" id="create-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Register New Application</h3>
+                <button class="close-btn" onclick="closeCreateModal()">✕</button>
+            </div>
+
+            <div id="modal-alert" class="alert"></div>
+
+            <form id="create-form" onsubmit="doCreateApp(event)">
+                <div class="form-group">
+                    <label for="app-title">App Title <small style="color:var(--text-dim)">(2-64 chars)</small></label>
+                    <input id="app-title" type="text" placeholder="My Aegis Client" required />
+                </div>
+                <div class="form-group">
+                    <label for="app-short-name">Short Name <small style="color:var(--text-dim)">(2-32 lowercase
+                            letters/digits/underscores)</small></label>
+                    <input id="app-short-name" type="text" placeholder="my_client" required />
+                </div>
+                <div class="form-group">
+                    <label for="app-desc">Description <small style="color:var(--text-dim)">(optional)</small></label>
+                    <input id="app-desc" type="text" placeholder="A short description of your app" />
+                </div>
+                <div class="form-group">
+                    <label for="app-website">Website <small style="color:var(--text-dim)">(optional)</small></label>
+                    <input id="app-website" type="text" placeholder="https://example.com" />
+                </div>
+                <div class="form-group">
+                    <label for="app-platform">Platform</label>
+                    <select id="app-platform">
+                        <option value="android">Android</option>
+                        <option value="ios">iOS</option>
+                        <option value="web">Web</option>
+                        <option value="desktop" selected>Desktop</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeCreateModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary" style="width:auto;min-width:120px" id="create-btn">
+                        Create App
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Reveal hash modal -->
+    <div class="modal-overlay" id="reveal-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Application Credentials</h3>
+                <button class="close-btn" onclick="closeRevealModal()">✕</button>
+            </div>
+            <p style="color:var(--text-dim);font-size:.88rem;margin-bottom:20px">
+                Copy your <code>api_hash</code> now — it will be masked in future views for security.
+            </p>
+            <div class="cred-row">
+                <span class="cred-label">api_id</span>
+                <span class="cred-value" id="reveal-app-id">—</span>
+                <button class="copy-btn" onclick="copy('reveal-app-id')" title="Copy">⧉</button>
+            </div>
+            <div class="cred-row">
+                <span class="cred-label">api_hash</span>
+                <span class="cred-value" id="reveal-app-hash" style="font-size:.76rem">—</span>
+                <button class="copy-btn" onclick="copy('reveal-app-hash')" title="Copy">⧉</button>
+            </div>
+            <div class="modal-actions" style="margin-top:20px">
+                <button class="btn btn-primary" style="width:auto;min-width:140px" onclick="closeRevealModal()">
+                    Done — I saved it
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API = '';  // same origin
+
+        // ── Guards ────────────────────────────────────────────────────────────
+
+        const token = localStorage.getItem('aegis_session_token');
+        if (!token) window.location.replace('index.html');
+
+        function authHeaders() {
+            return { 'Content-Type': 'application/json', 'X-Session-Token': token };
+        }
+
+        // ── Init ────────────────────────────────────────────────────────────
+
+        async function init() {
+            // Load user info
+            try {
+                const res = await fetch(`${API}/api/auth/me`, { headers: authHeaders() });
+                if (res.status === 401) { logout(); return; }
+                if (res.ok) {
+                    const u = await res.json();
+                    document.getElementById('sidebar-username').textContent = u.username;
+                    document.getElementById('sidebar-userid').textContent = u.userId;
+                    document.getElementById('avatar-letter').textContent = (u.username || '?')[0].toUpperCase();
+                }
+            } catch { /* non-fatal */ }
+
+            await loadApps();
+        }
+
+        // ── Apps list ────────────────────────────────────────────────────────
+
+        async function loadApps() {
+            const grid = document.getElementById('apps-grid');
+            try {
+                const res = await fetch(`${API}/api/apps/`, { headers: authHeaders() });
+                if (res.status === 401) { logout(); return; }
+                const apps = await res.json();
+                renderApps(apps);
+            } catch {
+                grid.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">⚠️</div>
+            <p>Failed to load applications. Check your connection.</p>
+          </div>`;
+            }
+        }
+
+        function renderApps(apps) {
+            const grid = document.getElementById('apps-grid');
+            if (!apps.length) {
+                grid.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">📭</div>
+            <p>No applications yet.<br>Click <strong>+ New App</strong> to create your first one.</p>
+          </div>`;
+                return;
+            }
+
+            grid.innerHTML = apps.map(a => appCardHTML(a)).join('');
+        }
+
+        function appCardHTML(a) {
+            const maskedHash = a.isActive
+                ? (a.appHash && a.appHash.length > 8 ? a.appHash.slice(0, 8) + '…' : a.appHash || '—')
+                : '—';
+            const createdDate = new Date(a.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+            const lastUsed = a.lastUsedAt
+                ? new Date(a.lastUsedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+                : 'Never';
+
+            return `
+        <div class="app-card" id="card-${a.appId}">
+          <div class="app-card-header">
+            <div>
+              <div class="app-card-title">${escHtml(a.appTitle)}</div>
+              <div class="app-card-subtitle">${escHtml(a.shortName)} &nbsp;·&nbsp;
+                <span class="badge badge-platform">${escHtml(a.platform)}</span>
+              </div>
+            </div>
+            <span class="badge ${a.isActive ? 'badge-active' : 'badge-inactive'}">
+              ${a.isActive ? 'Active' : 'Revoked'}
+            </span>
+          </div>
+
+          <div class="cred-row">
+            <span class="cred-label">api_id</span>
+            <span class="cred-value" id="aid-${a.appId}">${a.appId}</span>
+            <button class="copy-btn" onclick="copy('aid-${a.appId}')" title="Copy api_id">⧉</button>
+          </div>
+          <div class="cred-row">
+            <span class="cred-label">api_hash</span>
+            <span class="cred-value">${escHtml(maskedHash)}</span>
+          </div>
+
+          ${a.description ? `<p style="font-size:.82rem;color:var(--text-dim);margin:10px 0 0">${escHtml(a.description)}</p>` : ''}
+
+          <div class="app-card-footer">
+            <span>Created ${createdDate} &nbsp;·&nbsp; Last used: ${lastUsed}</span>
+            ${a.isActive ? `<button class="btn btn-danger" onclick="revokeApp(${a.appId})">Revoke</button>` : ''}
+          </div>
+        </div>`;
+        }
+
+        // ── Revoke ────────────────────────────────────────────────────────────
+
+        async function revokeApp(appId) {
+            if (!confirm(`Revoke application #${appId}? All clients using these credentials will be disconnected.`)) return;
+
+            try {
+                const res = await fetch(`${API}/api/apps/${appId}`, {
+                    method: 'DELETE',
+                    headers: authHeaders(),
+                });
+                if (res.ok) {
+                    showGlobalAlert(`Application #${appId} revoked.`, 'success');
+                    await loadApps();
+                } else {
+                    showGlobalAlert('Failed to revoke application.', 'error');
+                }
+            } catch {
+                showGlobalAlert('Network error.', 'error');
+            }
+        }
+
+        // ── Create modal ──────────────────────────────────────────────────────
+
+        function openCreateModal() {
+            document.getElementById('create-form').reset();
+            document.getElementById('modal-alert').className = 'alert';
+            document.getElementById('create-modal').classList.add('show');
+        }
+
+        function closeCreateModal() {
+            document.getElementById('create-modal').classList.remove('show');
+        }
+
+        async function doCreateApp(e) {
+            e.preventDefault();
+            const btn = document.getElementById('create-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>';
+            document.getElementById('modal-alert').className = 'alert';
+
+            try {
+                const res = await fetch(`${API}/api/apps/`, {
+                    method: 'POST',
+                    headers: authHeaders(),
+                    body: JSON.stringify({
+                        appTitle: document.getElementById('app-title').value.trim(),
+                        shortName: document.getElementById('app-short-name').value.trim(),
+                        description: document.getElementById('app-desc').value.trim() || undefined,
+                        website: document.getElementById('app-website').value.trim() || undefined,
+                        platform: document.getElementById('app-platform').value,
+                    }),
+                });
+
+                const data = await res.json().catch(() => ({}));
+
+                if (res.ok || res.status === 201) {
+                    closeCreateModal();
+                    // Show credentials reveal modal
+                    document.getElementById('reveal-app-id').textContent = data.appId;
+                    document.getElementById('reveal-app-hash').textContent = data.appHash;
+                    document.getElementById('reveal-modal').classList.add('show');
+                    await loadApps();
+                } else {
+                    const el = document.getElementById('modal-alert');
+                    el.className = 'alert alert-error show';
+                    el.textContent = data.error || 'Failed to create app.';
+                }
+            } catch {
+                const el = document.getElementById('modal-alert');
+                el.className = 'alert alert-error show';
+                el.textContent = 'Network error.';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Create App';
+            }
+        }
+
+        function closeRevealModal() {
+            document.getElementById('reveal-modal').classList.remove('show');
+        }
+
+        // ── Helpers ───────────────────────────────────────────────────────────
+
+        function logout() {
+            fetch(`${API}/api/auth/logout`, { method: 'POST', headers: authHeaders() }).catch(() => { });
+            localStorage.removeItem('aegis_session_token');
+            localStorage.removeItem('aegis_user_id');
+            localStorage.removeItem('aegis_username');
+            window.location.replace('index.html');
+        }
+
+        async function copy(elemId) {
+            const el = document.getElementById(elemId);
+            if (!el) return;
+            try {
+                await navigator.clipboard.writeText(el.textContent.trim());
+                const orig = el.style.color;
+                el.style.color = 'var(--success)';
+                setTimeout(() => el.style.color = orig, 1200);
+            } catch { /* clipboard not available */ }
+        }
+
+        function showGlobalAlert(msg, type = 'error') {
+            const el = document.getElementById('global-alert');
+            el.className = `alert alert-${type} show`;
+            el.textContent = msg;
+            setTimeout(() => { el.className = 'alert'; }, 5000);
+        }
+
+        function escHtml(s) {
+            return String(s ?? '')
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        // Close modals on backdrop click
+        document.querySelectorAll('.modal-overlay').forEach(overlay => {
+            overlay.addEventListener('click', e => {
+                if (e.target === overlay) overlay.classList.remove('show');
+            });
+        });
+
+        // Start
+        init();
+    </script>
+</body>
+
+</html>

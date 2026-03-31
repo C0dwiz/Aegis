@@ -6,6 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Aegis.Crypto\Aegis.Crypto.csproj" />
     <ProjectReference Include="..\Aegis.Data\Aegis.Data.csproj" />
   </ItemGroup>
 

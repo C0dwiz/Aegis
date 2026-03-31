@@ -38,6 +38,7 @@ public class IntegrationTests : IDisposable
         services.AddScoped<IPrivateChatRepository, PrivateChatRepository>();
 
         // Add services
+        services.AddScoped<Aegis.Data.Utils.FastIdGenerator>(_ => new Aegis.Data.Utils.FastIdGenerator(1));
         services.AddScoped<IUserRegistrationService, UserRegistrationService>();
         services.AddScoped<IUserAuthenticationService, UserAuthenticationService>();
         services.AddScoped<IUserSearchService, UserSearchService>();

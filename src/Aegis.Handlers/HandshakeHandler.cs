@@ -4,6 +4,7 @@ using Aegis.Crypto;
 using Aegis.Protocol;
 using Aegis.Transport;
 using Aegis.Common.Configuration;
+using Aegis.Data.Services;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging;
 using System.Security.Cryptography;
@@ -11,7 +12,15 @@ using System.Buffers.Binary;
 
 namespace Aegis.Handlers;
 
-public record HandshakeRequestPayload(string PublicKey, int? ClientVersion = null);
+/// <summary>
+/// Handshake request sent by the client.
+/// AppId and AppHash are optional unless ProtocolSecurity:RequireAppCredentials = true.
+/// </summary>
+public record HandshakeRequestPayload(
+    string PublicKey,
+    int? ClientVersion = null,
+    int? AppId = null,
+    string? AppHash = null);
 
 public record HandshakeResponsePayload(
     bool Success,
@@ -26,6 +35,7 @@ public class HandshakeHandler : IMessageHandler
     private readonly IMessageSender _messageSender;
     private readonly Aegis.Crypto.ICryptoProvider _cryptoProvider;
     private readonly ProtocolSecurityOptions _protocolSecurityOptions;
+    private readonly IAppCredentialService? _appCredentialService;
     private readonly ILogger<HandshakeHandler> _logger;
 
     public MessageType Type => MessageType.Handshake;
@@ -35,12 +45,14 @@ public class HandshakeHandler : IMessageHandler
         IMessageSender messageSender,
         Aegis.Crypto.ICryptoProvider cryptoProvider,
         IOptions<ProtocolSecurityOptions> protocolSecurityOptions,
-        ILogger<HandshakeHandler> logger)
+        ILogger<HandshakeHandler> logger,
+        IAppCredentialService? appCredentialService = null)
     {
         _sessionManager = sessionManager;
         _messageSender = messageSender;
         _cryptoProvider = cryptoProvider;
         _protocolSecurityOptions = protocolSecurityOptions.Value;
+        _appCredentialService = appCredentialService;
         _logger = logger;
     }
 
@@ -48,11 +60,58 @@ public class HandshakeHandler : IMessageHandler
     {
         try
         {
-            var clientPublicKey = ExtractClientPublicKey(message.Payload);
+            var clientPublicKey = ExtractClientPublicKey(message.Payload, out var parsedRequest);
             if (clientPublicKey.Length == 0)
             {
                 await SendHandshakeResponseAsync(context, message.SequenceId, false, null, "Invalid handshake payload", allowUnsigned: true);
                 return;
+            }
+
+            // Validate app credentials when enforcement is enabled
+            if (_protocolSecurityOptions.RequireAppCredentials)
+            {
+                if (_appCredentialService == null)
+                {
+                    _logger.LogError("RequireAppCredentials is enabled but IAppCredentialService is not registered");
+                    await SendHandshakeResponseAsync(context, message.SequenceId, false, null, "Server configuration error", allowUnsigned: true);
+                    return;
+                }
+
+                if (parsedRequest?.AppId == null || string.IsNullOrWhiteSpace(parsedRequest.AppHash))
+                {
+                    _logger.LogWarning("Handshake rejected: missing AppId/AppHash from {ConnectionId}", context.ConnectionId);
+                    await SendHandshakeResponseAsync(context, message.SequenceId, false, null, "App credentials required", allowUnsigned: true);
+                    return;
+                }
+
+                var credential = await _appCredentialService.ValidateCredentialsAsync(
+                    parsedRequest.AppId.Value, parsedRequest.AppHash);
+
+                if (credential == null)
+                {
+                    _logger.LogWarning(
+                        "Handshake rejected: invalid AppId={AppId} from {ConnectionId}",
+                        parsedRequest.AppId, context.ConnectionId);
+                    await SendHandshakeResponseAsync(context, message.SequenceId, false, null, "Invalid app credentials", allowUnsigned: true);
+                    return;
+                }
+
+                _logger.LogDebug(
+                    "App credential validated: AppId={AppId} ({ShortName}) on {ConnectionId}",
+                    credential.AppId, credential.ShortName, context.ConnectionId);
+            }
+            else if (parsedRequest?.AppId != null && !string.IsNullOrWhiteSpace(parsedRequest.AppHash)
+                     && _appCredentialService != null)
+            {
+                // Credentials are optional but were provided — validate and log, don't reject
+                var credential = await _appCredentialService.ValidateCredentialsAsync(
+                    parsedRequest.AppId.Value, parsedRequest.AppHash);
+                if (credential == null)
+                {
+                    _logger.LogWarning(
+                        "Handshake: unrecognised AppId={AppId} from {ConnectionId} (non-enforced mode, continuing)",
+                        parsedRequest.AppId, context.ConnectionId);
+                }
             }
 
             using var keyExchange = EcdhKeyExchange.GenerateKeyPair();
@@ -92,8 +151,9 @@ public class HandshakeHandler : IMessageHandler
         }
     }
 
-    private static byte[] ExtractClientPublicKey(byte[] payload)
+    private static byte[] ExtractClientPublicKey(byte[] payload, out HandshakeRequestPayload? parsed)
     {
+        parsed = null;
         if (payload.Length == 0)
         {
             return Array.Empty<byte>();
@@ -104,6 +164,7 @@ public class HandshakeHandler : IMessageHandler
             var request = PayloadSerializer.Deserialize<HandshakeRequestPayload>(payload);
             if (request != null && !string.IsNullOrWhiteSpace(request.PublicKey))
             {
+                parsed = request;
                 return Convert.FromBase64String(request.PublicKey);
             }
         }

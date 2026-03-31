@@ -126,8 +126,18 @@ public static class Program
                     context.Configuration.GetSection(MinioStorageOptions.SectionName));
                 services.Configure<ElasticsearchOptions>(
                     context.Configuration.GetSection(ElasticsearchOptions.SectionName));
+                services.Configure<IdGeneratorOptions>(
+                    context.Configuration.GetSection(IdGeneratorOptions.SectionName));
 
-                services.AddHttpClient<ElasticsearchUserSearchIndexService>();
+                // Register distributed ID generator as Scoped to ensure proper initialization
+                // with node ID from configuration
+                services.AddScoped<Aegis.Data.Utils.FastIdGenerator>(serviceProvider =>
+                {
+                    var idGeneratorOptions = serviceProvider
+                        .GetRequiredService<IOptions<IdGeneratorOptions>>()
+                        .Value;
+                    return new Aegis.Data.Utils.FastIdGenerator(idGeneratorOptions.NodeId);
+                });
                 services.AddScoped<IUserSearchIndexService>(serviceProvider =>
                 {
                     var searchOptions = serviceProvider
@@ -166,7 +176,10 @@ public static class Program
                 services.AddScoped<IUserRepository, UserRepository>();
                 services.AddScoped<IUserAvatarRepository, UserAvatarRepository>();
                 services.AddScoped<ISessionRepository, SessionRepository>();
-                services.AddScoped<IMessageRepository>(serviceProvider =>
+                // ZoneTree holds open file handles - must be Singleton to avoid
+                // "database already in use" errors and potential data corruption
+                // under concurrent requests with Scoped lifetime.
+                services.AddSingleton<IMessageRepository>(serviceProvider =>
                 {
                     var databaseOptions = serviceProvider
                         .GetRequiredService<IOptions<DatabaseOptions>>()
@@ -183,12 +196,14 @@ public static class Program
                 services.AddScoped<IBotRepository, BotRepository>();
                 services.AddScoped<IBotTokenRepository, BotTokenRepository>();
                 services.AddScoped<IBotConversationStateRepository, BotConversationStateRepository>();
+                services.AddScoped<IAppCredentialRepository, AppCredentialRepository>();
 
                 // Register services
                 services.AddScoped<IUserRegistrationService, UserRegistrationService>();
                 services.AddScoped<IUserAuthenticationService, UserAuthenticationService>();
                 services.AddScoped<IUserSearchService, UserSearchService>();
                 services.AddScoped<IUserProfileService, UserProfileService>();
+                services.AddScoped<IAppCredentialService, AppCredentialService>();
                 services.AddSingleton<IAvatarStorageService>(serviceProvider =>
                 {
                     var avatarOptions = serviceProvider
@@ -324,7 +339,8 @@ public static class Program
                 services.AddScoped<MessageDeliveryReceiptHandler>();
                 services.AddScoped<MessageRouter>();
 
-                // Register hosted service
+                // Register background services
+                services.AddHostedService<Aegis.Server.Services.SessionCleanupBackgroundService>();
                 services.AddHostedService<AegisMessengerService>();
             })
             .UseSerilog((context, loggerConfig) =>

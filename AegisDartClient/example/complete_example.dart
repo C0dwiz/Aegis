@@ -10,7 +10,7 @@ Future<void> main() async {
   AegisLogger.enabled = true;
   AegisLogger.level = LogLevel.info;
 
-  final client = AegisClient();
+  final client = AegisClient.official();
   final suffix = DateTime.now().millisecondsSinceEpoch;
   final username = 'dart_complete_$suffix';
   final password = 'test_password_123';
@@ -19,6 +19,7 @@ Future<void> main() async {
 
   try {
     print('Step 1: connect');
+    print('Using api_id=${client.apiCredentials?.appId ?? 'none'}');
     await client.connect('localhost', 8888);
 
     print('Step 2: register');
@@ -38,7 +39,8 @@ Future<void> main() async {
     }));
     print('Authenticated: ${client.isAuthenticated}');
 
-    print('Step 3.1: subscribe to incoming events (unified attachment handler)');
+    print(
+        'Step 3.1: subscribe to incoming events (unified attachment handler)');
     privateSub = client.onPrivateMessageEvent((event) {
       if (event.attachment != null) {
         _printAttachment(
@@ -77,7 +79,8 @@ Future<void> main() async {
       description: 'Channel from complete Dart example',
       type: ChannelType.public,
     );
-    print('Channel success: ${channel.success}, channelId: ${channel.channelId}');
+    print(
+        'Channel success: ${channel.success}, channelId: ${channel.channelId}');
 
     print('Step 5.1: create group chat');
     final group = await client.createChannel(
@@ -138,7 +141,8 @@ Future<void> main() async {
     final myId = reg.user?.id ?? 0;
     if (myId > 0) {
       print('Step 8: send private message to self');
-      final pm = await client.sendPrivateMessage(myId, 'private self-test message');
+      final pm =
+          await client.sendPrivateMessage(myId, 'private self-test message');
       print(
         'Private message success: ${pm.success}, '
         'messageId: ${pm.messageId}, '
@@ -184,7 +188,8 @@ Future<void> main() async {
 
       final privateHistory = await client.getPrivateHistory(myId, limit: 20);
       print('Private history items: ${privateHistory.messages.length}');
-      for (final item in privateHistory.messages.where((m) => m.attachment != null)) {
+      for (final item
+          in privateHistory.messages.where((m) => m.attachment != null)) {
         _printAttachment(
           scope: 'private-history',
           contentType: item.contentType,
@@ -195,9 +200,11 @@ Future<void> main() async {
     }
 
     if (channel.success && channel.channelId > 0) {
-      final channelHistory = await client.getChannelHistory(channel.channelId, limit: 20);
+      final channelHistory =
+          await client.getChannelHistory(channel.channelId, limit: 20);
       print('Channel history items: ${channelHistory.messages.length}');
-      for (final item in channelHistory.messages.where((m) => m.attachment != null)) {
+      for (final item
+          in channelHistory.messages.where((m) => m.attachment != null)) {
         _printAttachment(
           scope: 'channel-history',
           contentType: item.contentType,
@@ -239,7 +246,8 @@ Future<Uint8List?> _loadVoiceSample() async {
     }
   }
 
-  print('Provide .ogg file via AEGIS_VOICE_PATH or place it at example/assets/sample.ogg');
+  print(
+      'Provide .ogg file via AEGIS_VOICE_PATH or place it at example/assets/sample.ogg');
   return null;
 }
 

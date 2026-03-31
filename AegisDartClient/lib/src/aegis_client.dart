@@ -9,6 +9,7 @@ import 'event_dispatcher.dart';
 import 'transport.dart';
 import 'exceptions.dart';
 import 'protocol_constants.dart';
+import 'official_api_credentials.dart';
 import 'session_crypto.dart';
 
 extension _ChannelMessageResponseCompat on ChannelMessageResponse {
@@ -56,6 +57,7 @@ class AegisClient {
   int? _userId;
   String? _username;
   late final AegisEventDispatcher events;
+  final AegisApiCredentials? _apiCredentials;
 
   // Per-client sequence-ID counter so responses can be matched unambiguously.
   int _nextSeqId = 1;
@@ -90,11 +92,39 @@ class AegisClient {
   /// The authenticated user's username, available after [login] or [loginWithToken]
   String? get username => _username;
 
-  /// Create a new Aegis client
-  AegisClient() {
+  /// The app credentials that will be sent during handshake.
+  ///
+  /// When null, the client will not include `AppId` / `AppHash` in the
+  /// handshake payload.
+  AegisApiCredentials? get apiCredentials => _apiCredentials;
+
+  /// Create a new Aegis client.
+  ///
+  /// By default the first-party official app credentials are attached to the
+  /// handshake so the client works against servers with
+  /// `RequireAppCredentials=true`.
+  AegisClient({
+    bool useOfficialApiCredentials = true,
+    AegisApiCredentials? apiCredentials,
+  }) : _apiCredentials = apiCredentials ??
+            (useOfficialApiCredentials
+                ? AegisOfficialApiCredentials.credentials
+                : null) {
     _transport = AegisTransport();
     events = AegisEventDispatcher(_transport.messages);
   }
+
+  /// Create a client that explicitly uses the built-in official credentials.
+  AegisClient.official() : this();
+
+  /// Create a client that uses a custom app credential pair.
+  AegisClient.withApiCredentials(AegisApiCredentials apiCredentials)
+      : this(useOfficialApiCredentials: false, apiCredentials: apiCredentials);
+
+  /// Create a client that does not send app credentials in the handshake.
+  ///
+  /// This only works against servers that do not enforce app credentials.
+  AegisClient.withoutApiCredentials() : this(useOfficialApiCredentials: false);
 
   // ─── Connection ────────────────────────────────────────────────────────────
 
@@ -1153,11 +1183,19 @@ class AegisClient {
     required bool requireSignedHandshake,
   }) async {
     final handshake = await AegisHandshakeContext.create();
-    final payload = msgpack.serialize({
+    final handshakePayload = <String, Object>{
       'PublicKey': base64Encode(handshake.publicKey),
       'ClientVersion': ProtocolConstants.versionMajor * 1000 +
           ProtocolConstants.versionMinor,
-    });
+    };
+
+    final apiCredentials = _apiCredentials;
+    if (apiCredentials != null) {
+      handshakePayload['AppId'] = apiCredentials.appId;
+      handshakePayload['AppHash'] = apiCredentials.appHash;
+    }
+
+    final payload = msgpack.serialize(handshakePayload);
 
     final msg = Message.withType(MessageType.handshake, payload);
     final response = await _sendAndWaitResponse(

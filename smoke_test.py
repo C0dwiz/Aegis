@@ -22,6 +22,8 @@ Env vars:
   AEGIS_PORT=8888
   AEGIS_TLS=1
   AEGIS_TLS_NO_VERIFY=1
+    AEGIS_APP_ID=2041001
+    AEGIS_APP_HASH=<official app hash>
   AEGIS_TRUSTED_HANDSHAKE_SIGNING_PUBLIC_KEY_BASE64=<base64 raw 65-byte pubkey>
   AEGIS_REQUIRE_SIGNED_HANDSHAKE=0|1
 """
@@ -30,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from dataclasses import dataclass
 import os
 import socket
 import ssl
@@ -77,6 +80,57 @@ MSG_CHANNEL_MSG = 13
 PASS = "\\033[32mPASS\\033[0m"
 FAIL = "\\033[31mFAIL\\033[0m"
 SKIP = "\\033[33mSKIP\\033[0m"
+
+OFFICIAL_APP_ID = 2041001
+OFFICIAL_APP_HASH = "8f4c1db0e7c2456d9ab31f4e6d8c9a0137f2c4b56d8e1a903bc7d52e6f194a3c"
+
+
+@dataclass(frozen=True)
+class AegisApiCredentials:
+    app_id: int
+    app_hash: str
+
+    def __post_init__(self) -> None:
+        if self.app_id <= 0:
+            raise ValueError("app_id must be a positive integer")
+        if not self.app_hash or not self.app_hash.strip():
+            raise ValueError("app_hash must be a non-empty string")
+
+    @classmethod
+    def official(cls) -> "AegisApiCredentials":
+        return cls(OFFICIAL_APP_ID, OFFICIAL_APP_HASH)
+
+    @classmethod
+    def custom(cls, app_id: int, app_hash: str) -> "AegisApiCredentials":
+        return cls(app_id, app_hash)
+
+    @classmethod
+    def from_env(cls) -> Optional["AegisApiCredentials"]:
+        app_id_raw = os.getenv("AEGIS_APP_ID")
+        app_hash = os.getenv("AEGIS_APP_HASH")
+
+        if not app_id_raw and not app_hash:
+            return None
+        if not app_id_raw or not app_hash:
+            raise ValueError("AEGIS_APP_ID and AEGIS_APP_HASH must be set together")
+
+        return cls.custom(int(app_id_raw), app_hash)
+
+    def apply_to_handshake(self, payload: dict[str, Any]) -> None:
+        payload["AppId"] = self.app_id
+        payload["AppHash"] = self.app_hash
+
+
+def resolve_api_credentials(args: argparse.Namespace) -> Optional[AegisApiCredentials]:
+    if args.without_api_credentials:
+        return None
+
+    if args.api_id is not None or args.api_hash is not None:
+        if args.api_id is None or not args.api_hash:
+            raise ValueError("--api-id and --api-hash must be provided together")
+        return AegisApiCredentials.custom(args.api_id, args.api_hash)
+
+    return AegisApiCredentials.from_env() or AegisApiCredentials.official()
 
 
 def _b2i32_le(v: int) -> bytes:
@@ -319,17 +373,22 @@ def perform_handshake(
     step_name: str,
     trusted_signing_public_key_b64: Optional[str],
     require_signed: bool,
+    api_credentials: Optional[AegisApiCredentials],
 ) -> bool:
     # Build the ephemeral key once and derive session key after response
     private_key = ec.generate_private_key(ec.SECP256R1())
     client_pub = private_key.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
 
+    handshake_payload = {
+        "PublicKey": base64.b64encode(client_pub).decode("ascii"),
+        "ClientVersion": VERSION_MAJOR * 1000 + VERSION_MINOR,
+    }
+    if api_credentials is not None:
+        api_credentials.apply_to_handshake(handshake_payload)
+
     seq = conn.send_mp(
         MSG_HANDSHAKE,
-        {
-            "PublicKey": base64.b64encode(client_pub).decode("ascii"),
-            "ClientVersion": VERSION_MAJOR * 1000 + VERSION_MINOR,
-        },
+        handshake_payload,
     )
 
     _, resp = conn.wait_response_mp(seq, {MSG_HANDSHAKE}, timeout_sec=10.0)
@@ -389,6 +448,7 @@ def run_smoke(
     timeout: float,
     trusted_signing_public_key_b64: Optional[str],
     require_signed_handshake: bool,
+    api_credentials: Optional[AegisApiCredentials],
 ) -> bool:
     proto = "tls" if use_tls else "tcp"
     print(f"\\nAegis Smoke Test -> {proto}://{host}:{port}\\n")
@@ -419,6 +479,7 @@ def run_smoke(
                 "handshake-a",
                 trusted_signing_public_key_b64,
                 require_signed_handshake,
+                api_credentials,
             )
         )
         ok_reg_a, _ = do_register(conn_a, user_a, email_a, pwd)
@@ -430,6 +491,7 @@ def run_smoke(
                 "handshake-b",
                 trusted_signing_public_key_b64,
                 require_signed_handshake,
+                api_credentials,
             )
         )
         ok_reg_b, uid_b = do_register(conn_b, user_b, email_b, pwd)
@@ -492,6 +554,20 @@ def main() -> None:
     )
     parser.add_argument("--timeout", type=float, default=15.0)
     parser.add_argument(
+        "--api-id",
+        type=int,
+        help="Explicit AppId for handshake app credentials",
+    )
+    parser.add_argument(
+        "--api-hash",
+        help="Explicit AppHash for handshake app credentials",
+    )
+    parser.add_argument(
+        "--without-api-credentials",
+        action="store_true",
+        help="Do not include AppId/AppHash in the handshake payload",
+    )
+    parser.add_argument(
         "--trusted-handshake-signing-public-key-base64",
         default=os.getenv("AEGIS_TRUSTED_HANDSHAKE_SIGNING_PUBLIC_KEY_BASE64", "") or None,
     )
@@ -504,6 +580,7 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
+        api_credentials = resolve_api_credentials(args)
         ok = run_smoke(
             host=args.host,
             port=args.port,
@@ -512,6 +589,7 @@ def main() -> None:
             timeout=args.timeout,
             trusted_signing_public_key_b64=args.trusted_handshake_signing_public_key_base64,
             require_signed_handshake=args.require_signed_handshake,
+            api_credentials=api_credentials,
         )
     except Exception:
         traceback.print_exc()

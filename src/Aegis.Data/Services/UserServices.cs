@@ -33,13 +33,13 @@ public class UserRegistrationService : IUserRegistrationService
         IUserRepository userRepository,
         ICryptoProvider cryptoProvider,
         ILogger<UserRegistrationService> logger,
-        Utils.FastIdGenerator? idGenerator = null,
+        Utils.FastIdGenerator idGenerator,
         IUserSearchIndexService? searchIndex = null)
     {
         _userRepository = userRepository;
         _cryptoProvider = cryptoProvider;
         _logger = logger;
-        _idGenerator = idGenerator ?? new Utils.FastIdGenerator(1);
+        _idGenerator = idGenerator; // Now injected via DI, no hardcoded fallback
         _searchIndex = searchIndex ?? new NoOpUserSearchIndexService();
     }
 
@@ -154,9 +154,14 @@ public class UserAuthenticationService : IUserAuthenticationService
 
     public async Task<(User User, Session Session)?> AuthenticateUserAsync(string username, string password, string clientInfo, string? ipAddress = null)
     {
-        var user = await _userRepository.GetByUsernameAsync(username);
+        var normalized = (username ?? string.Empty).Trim();
+        var user = await _userRepository.GetByUsernameAsync(normalized);
         if (user == null || !user.IsActive)
+        {
+            // Constant-time: prevent username enumeration via timing side-channel
+            await _cryptoProvider.VerifyPasswordAsync(password, "$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
             return null;
+        }
 
         var isValidPassword = await _cryptoProvider.VerifyPasswordAsync(password, user.PasswordHash);
         if (!isValidPassword)
@@ -215,9 +220,11 @@ public class UserAuthenticationService : IUserAuthenticationService
         return true;
     }
 
-    private string GenerateSessionToken()
+    private static string GenerateSessionToken()
     {
-        return Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+        Span<byte> bytes = stackalloc byte[32];
+        System.Security.Cryptography.RandomNumberGenerator.Fill(bytes);
+        return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 }
 
@@ -548,7 +555,7 @@ public class UserProfileService : IUserProfileService
             {
                 await _cache.SetAsync(
                     cacheKey,
-                    MessagePackSerializer.Serialize(user, MsgPackOptions),
+                    MessagePackSerializer.Serialize(ToCacheSafeProfile(user), MsgPackOptions),
                     new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CacheTtl });
             }
             catch (Exception ex)
@@ -711,6 +718,25 @@ public class UserProfileService : IUserProfileService
         return true;
     }
 
+    private static User ToCacheSafeProfile(User source) => new User
+    {
+        Id = source.Id,
+        Username = source.Username,
+        Email = source.Email,
+        PublicKey = source.PublicKey,
+        IdentityKeyFingerprint = source.IdentityKeyFingerprint,
+        DisplayName = source.DisplayName,
+        AvatarUrl = source.AvatarUrl,
+        Bio = source.Bio,
+        Location = source.Location,
+        BirthDate = source.BirthDate,
+        IsActive = source.IsActive,
+        CreatedAt = source.CreatedAt,
+        UpdatedAt = source.UpdatedAt,
+        LastSeenAt = source.LastSeenAt,
+        PasswordHash = string.Empty  // Never cache password hashes
+    };
+
     private async Task InvalidateProfileCacheAsync(User user, string previousUsername, string previousEmail)
     {
         if (_cache == null)
@@ -860,11 +886,10 @@ public class ChannelService : IChannelService
     private readonly IChannelRepository _channelRepository;
     private readonly Utils.FastIdGenerator _idGenerator;
 
-    public ChannelService(IChannelRepository channelRepository)
+    public ChannelService(IChannelRepository channelRepository, Utils.FastIdGenerator idGenerator)
     {
         _channelRepository = channelRepository;
-        // TODO: Передавать idGenerator через DI
-        _idGenerator = new Utils.FastIdGenerator(1); // nodeId=1 временно
+        _idGenerator = idGenerator; // Now injected via DI configuration
     }
 
     public async Task<Channel> CreateChannelAsync(ulong creatorUserId, string name, string? description, ChannelType type)
@@ -1242,11 +1267,10 @@ public class GroupService : IGroupService
     private readonly IGroupRepository _groupRepository;
     private readonly Utils.FastIdGenerator _idGenerator;
 
-    public GroupService(IGroupRepository groupRepository)
+    public GroupService(IGroupRepository groupRepository, Utils.FastIdGenerator idGenerator)
     {
         _groupRepository = groupRepository;
-        // TODO: Передавать idGenerator через DI
-        _idGenerator = new Utils.FastIdGenerator(1); // nodeId=1 временно
+        _idGenerator = idGenerator; // Now injected via DI configuration
     }
 
     public async Task<Group> CreateGroupAsync(ulong creatorUserId, string name, string? description)

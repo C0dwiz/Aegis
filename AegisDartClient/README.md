@@ -14,6 +14,8 @@ Dart клиентская библиотека для протокола Aegis M
 - ✅ Stream-based API для обработки входящих сообщений
 - ✅ Поддержка Sequence ID для упорядочивания сообщений
 - ✅ JSON-сериализация для сложных payloads
+- ✅ Поддержка обязательных `api_id` / `api_hash` в handshake
+- ✅ Верификация подписанного server handshake через доверенный public key
 
 ## Установка
 
@@ -30,7 +32,7 @@ dependencies:
 import 'package:aegis_client/aegis_client.dart';
 
 void main() async {
-  final client = AegisClient();
+  final client = AegisClient.official();
 
   try {
     // Подключение к серверу
@@ -98,6 +100,57 @@ void main() async {
 }
 ```
 
+## App Credentials
+
+Сервер теперь может требовать `api_id` и `api_hash` уже на этапе handshake.
+По умолчанию Dart-клиент отправляет встроенную first-party пару, поэтому для
+обычного официального клиента достаточно просто использовать `AegisClient()`
+или `AegisClient.official()`.
+
+```dart
+final client = AegisClient.official();
+print(client.apiCredentials?.appId); // 2041001
+```
+
+Для кастомного зарегистрированного приложения:
+
+```dart
+final client = AegisClient.withApiCredentials(
+  const AegisApiCredentials(
+    appId: 50001,
+    appHash: 'your-issued-app-hash',
+  ),
+);
+```
+
+Если сервер не требует app credentials, их можно отключить явно:
+
+```dart
+final client = AegisClient.withoutApiCredentials();
+```
+
+`api_id` / `api_hash` и signed handshake не заменяют друг друга: app credentials идентифицируют клиентское приложение в handshake, а подпись handshake позволяет клиенту проверить подлинность ответа сервера.
+
+## Signed Handshake Verification
+
+Если сервер включает обязательный signed handshake, клиенту нужно передать доверенный public key подписи сервера при подключении:
+
+```dart
+final client = AegisClient.official();
+
+await client.connect(
+  'localhost',
+  8888,
+  trustedServerHandshakeSigningPublicKeyBase64: '<server-signing-public-key-base64>',
+  requireSignedHandshake: true,
+);
+```
+
+В этом режиме клиент:
+- всё так же отправляет `AppId` / `AppHash`, если включены app credentials;
+- дополнительно требует `Signature` в handshake response;
+- проверяет эту подпись через `trustedServerHandshakeSigningPublicKeyBase64` до вывода session key.
+
 ## Основные компоненты
 
 ### AegisClient
@@ -110,6 +163,12 @@ void main() async {
 - `sendMessage(text, toUserId)` - отправка сообщения (legacy)
 - `ping()` - отправка ping для поддержания соединения
 - `disconnect()` - отключение от сервера
+
+#### Конструкторы app credentials:
+- `AegisClient()` - клиент с официальными first-party credentials по умолчанию
+- `AegisClient.official()` - явный first-party режим
+- `AegisClient.withApiCredentials(credentials)` - кастомные app credentials
+- `AegisClient.withoutApiCredentials()` - handshake без `AppId` / `AppHash`
 
 #### Новые методы:
 - `register(username, email, password, publicKey)` - регистрация пользователя
