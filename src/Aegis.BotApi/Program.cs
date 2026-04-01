@@ -30,6 +30,7 @@ builder.Services.AddScoped<Aegis.Data.Utils.FastIdGenerator>(serviceProvider =>
         .Value;
     return new Aegis.Data.Utils.FastIdGenerator(idGeneratorOptions.NodeId);
 });
+builder.Services.AddHttpClient<ElasticsearchUserSearchIndexService>();
 builder.Services.AddScoped<IUserSearchIndexService>(serviceProvider =>
 {
     var searchOptions = serviceProvider

@@ -73,6 +73,7 @@ services:
       context: .
       dockerfile: Dockerfile.build
     container_name: aegis-server
+    user: "0:0"
     restart: unless-stopped
     depends_on:
       postgres:

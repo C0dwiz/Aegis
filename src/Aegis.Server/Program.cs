@@ -138,6 +138,7 @@ public static class Program
                         .Value;
                     return new Aegis.Data.Utils.FastIdGenerator(idGeneratorOptions.NodeId);
                 });
+                services.AddHttpClient<ElasticsearchUserSearchIndexService>();
                 services.AddScoped<IUserSearchIndexService>(serviceProvider =>
                 {
                     var searchOptions = serviceProvider
