@@ -43,6 +43,15 @@ type InboundMessageKind =
     | GroupMessageSend
     | MemberRoleUpdate
     | MemberPermissionUpdate
+    | GroupHistoryRequest
+    | ChannelMembersRequest
+    | GroupMembersRequest
+    | ChannelLeave
+    | GroupLeave
+    | MessageReact
+    | MessagePin
+    | RoomSettingsGet
+    | RoomSettingsUpdate
 
 [<RequireQualifiedAccess>]
 module ProtocolSafety =
@@ -100,6 +109,15 @@ module ProtocolSafety =
         | 38 -> Some InboundMessageKind.GroupMessageSend
         | 34 -> Some InboundMessageKind.MemberRoleUpdate
         | 36 -> Some InboundMessageKind.MemberPermissionUpdate
+        | 70 -> Some InboundMessageKind.GroupHistoryRequest
+        | 73 -> Some InboundMessageKind.ChannelMembersRequest
+        | 75 -> Some InboundMessageKind.GroupMembersRequest
+        | 16 -> Some InboundMessageKind.ChannelLeave
+        | 12 -> Some InboundMessageKind.GroupLeave
+        | 77 -> Some InboundMessageKind.MessageReact
+        | 80 -> Some InboundMessageKind.MessagePin
+        | 83 -> Some InboundMessageKind.RoomSettingsGet
+        | 85 -> Some InboundMessageKind.RoomSettingsUpdate
         | _ -> None
 
 type ProtocolSafetyFacade private () =

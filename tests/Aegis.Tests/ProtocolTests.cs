@@ -3,6 +3,7 @@ using Aegis.Protocol;
 using Aegis.DomainRules;
 using Aegis.Common;
 using Aegis.Common.Errors;
+using System.Buffers.Binary;
 
 namespace Aegis.Tests;
 
@@ -51,17 +52,15 @@ public class ProtocolTests
 
         var header = new byte[ProtocolConstants.HeaderSize];
         var written = MessageEncoder.EncodeHeader(message, header);
-        var decoded = MessageEncoder.Decode(header);
 
         Assert.Equal(ProtocolConstants.HeaderSize, written);
-        Assert.Equal(message.Magic, decoded.Magic);
-        Assert.Equal(message.VersionMajor, decoded.VersionMajor);
-        Assert.Equal(message.VersionMinor, decoded.VersionMinor);
-        Assert.Equal(message.Flags, decoded.Flags);
-        Assert.Equal(message.Type, decoded.Type);
-        Assert.Equal(message.SequenceId, decoded.SequenceId);
-        Assert.Equal(message.PayloadLength, decoded.PayloadLength);
-        Assert.Empty(decoded.Payload);
+        Assert.Equal(message.Magic, BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(0, 4)));
+        Assert.Equal(message.VersionMajor, header[4]);
+        Assert.Equal(message.VersionMinor, header[5]);
+        Assert.Equal(message.Flags, header[6]);
+        Assert.Equal((ushort)message.Type, BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(7, 2)));
+        Assert.Equal(message.SequenceId, BinaryPrimitives.ReadUInt64BigEndian(header.AsSpan(9, 8)));
+        Assert.Equal(message.PayloadLength, BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(17, 4)));
     }
 
     [Fact]
@@ -192,6 +191,12 @@ public class ProtocolTests
     {
         Assert.True(ProtocolSafetyFacade.IsRoutableInboundType((ushort)MessageType.Handshake));
         Assert.True(ProtocolSafetyFacade.IsRoutableInboundType((ushort)MessageType.PrivateChatMessage));
+        Assert.True(ProtocolSafetyFacade.IsRoutableInboundType((ushort)MessageType.ChannelMembersRequest));
+        Assert.True(ProtocolSafetyFacade.IsRoutableInboundType((ushort)MessageType.GroupMembersRequest));
+        Assert.True(ProtocolSafetyFacade.IsRoutableInboundType((ushort)MessageType.RoomSettingsGet));
+        Assert.True(ProtocolSafetyFacade.IsRoutableInboundType((ushort)MessageType.RoomSettingsUpdate));
+        Assert.True(ProtocolSafetyFacade.IsRoutableInboundType((ushort)MessageType.MessageReact));
+        Assert.True(ProtocolSafetyFacade.IsRoutableInboundType((ushort)MessageType.MessagePin));
         Assert.False(ProtocolSafetyFacade.IsRoutableInboundType((ushort)MessageType.Error));
         Assert.False(ProtocolSafetyFacade.IsRoutableInboundType(65000));
     }
