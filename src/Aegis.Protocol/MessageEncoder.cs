@@ -8,8 +8,30 @@ public static class MessageEncoder
 {
     public static int Encode(Message message, Span<byte> buffer)
     {
-        if (buffer.Length < ProtocolConstants.HeaderSize + message.PayloadLength)
+        var totalSize = ProtocolConstants.HeaderSize + checked((int)message.PayloadLength);
+
+        if (buffer.Length < totalSize)
             throw new ProtocolError($"Buffer too small: {buffer.Length}");
+
+        if (message.PayloadLength > message.Payload.Length)
+            throw new ProtocolError($"Payload length {message.PayloadLength} exceeds payload buffer size {message.Payload.Length}");
+
+        var offset = EncodeHeader(message, buffer);
+
+        // Write payload
+        if (message.PayloadLength > 0)
+        {
+            message.Payload.AsSpan(0, (int)message.PayloadLength).CopyTo(buffer.Slice(offset));
+            offset += (int)message.PayloadLength;
+        }
+
+        return offset;
+    }
+
+    public static int EncodeHeader(Message message, Span<byte> buffer)
+    {
+        if (buffer.Length < ProtocolConstants.HeaderSize)
+            throw new ProtocolError($"Buffer too small for header: {buffer.Length}");
 
         int offset = 0;
 
@@ -29,13 +51,6 @@ public static class MessageEncoder
 
         BinaryPrimitives.WriteUInt32BigEndian(buffer.Slice(offset), message.PayloadLength);
         offset += sizeof(uint);
-
-        // Write payload
-        if (message.PayloadLength > 0)
-        {
-            message.Payload.AsSpan(0, (int)message.PayloadLength).CopyTo(buffer.Slice(offset));
-            offset += (int)message.PayloadLength;
-        }
 
         return offset;
     }

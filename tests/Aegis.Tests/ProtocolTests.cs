@@ -35,6 +35,55 @@ public class ProtocolTests
     }
 
     [Fact]
+    public void EncodeHeader_ShouldSupportHeaderOnlyForEncryptedAad()
+    {
+        var message = new Message
+        {
+            Magic = ProtocolConstants.Magic,
+            VersionMajor = ProtocolConstants.VersionMajor,
+            VersionMinor = ProtocolConstants.VersionMinor,
+            Flags = (byte)MessageFlags.Encrypted,
+            Type = MessageType.Ack,
+            SequenceId = 2,
+            Payload = Array.Empty<byte>(),
+            PayloadLength = 128
+        };
+
+        var header = new byte[ProtocolConstants.HeaderSize];
+        var written = MessageEncoder.EncodeHeader(message, header);
+        var decoded = MessageEncoder.Decode(header);
+
+        Assert.Equal(ProtocolConstants.HeaderSize, written);
+        Assert.Equal(message.Magic, decoded.Magic);
+        Assert.Equal(message.VersionMajor, decoded.VersionMajor);
+        Assert.Equal(message.VersionMinor, decoded.VersionMinor);
+        Assert.Equal(message.Flags, decoded.Flags);
+        Assert.Equal(message.Type, decoded.Type);
+        Assert.Equal(message.SequenceId, decoded.SequenceId);
+        Assert.Equal(message.PayloadLength, decoded.PayloadLength);
+        Assert.Empty(decoded.Payload);
+    }
+
+    [Fact]
+    public void Encode_WhenPayloadLengthExceedsPayloadBuffer_ShouldThrowProtocolError()
+    {
+        var invalid = new Message
+        {
+            Magic = ProtocolConstants.Magic,
+            VersionMajor = ProtocolConstants.VersionMajor,
+            VersionMinor = ProtocolConstants.VersionMinor,
+            Type = MessageType.Ack,
+            SequenceId = 2,
+            Payload = Array.Empty<byte>(),
+            PayloadLength = 1
+        };
+
+        var buffer = new byte[Message.TotalSize(invalid)];
+
+        Assert.Throws<ProtocolError>(() => MessageEncoder.Encode(invalid, buffer));
+    }
+
+    [Fact]
     public void Decode_WithExtraBytes_ShouldThrowProtocolError()
     {
         var original = new Message

@@ -109,8 +109,8 @@ public class ServerMessageSender : IMessageSender
                 Payload = Array.Empty<byte>(),
                 PayloadLength = (uint)encryptedPayload.Length
             };
-            var aadHeader = new byte[Message.TotalSize(aadMessage)];
-            MessageEncoder.Encode(aadMessage, aadHeader);
+            var aadHeader = new byte[ProtocolConstants.HeaderSize];
+            MessageEncoder.EncodeHeader(aadMessage, aadHeader);
 
             _cryptoProvider.Encrypt(payload, session!.SessionKey.Span, nonce, ciphertextWithTag,
                 aadHeader.AsSpan(0, ProtocolConstants.HeaderSize));
