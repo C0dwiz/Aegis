@@ -170,6 +170,10 @@ public class TcpServer : IDisposable
         {
             await ProcessConnectionAsync(context);
         }
+        catch (TransportError ex)
+        {
+            _logger.Warning($"Connection {connectionId} rejected invalid frame: {ex.Message}");
+        }
         catch (Exception ex) when (ex is SocketException or IOException)
         {
             _logger.Warning($"Connection {connectionId} closed: {ex.Message}");

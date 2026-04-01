@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'logger.dart';
 import 'message.dart';
 import 'message_payloads.dart';
 import 'message_type.dart';
@@ -222,8 +223,9 @@ class AegisEventDispatcher {
   void _tryEmit<T>(T Function() parse, StreamController<T> controller) {
     try {
       controller.add(parse());
-    } catch (_) {
-      // Ignore payload parse errors so dispatcher never breaks message flow.
+    } catch (error) {
+      AegisLogger.warning(
+          'Dropped protocol payload due to parse error: $error');
     }
   }
 }

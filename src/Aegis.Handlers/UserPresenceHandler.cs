@@ -3,9 +3,9 @@ using Aegis.Data.Repositories;
 using Aegis.Protocol;
 using Aegis.Transport;
 using MessagePack;
+using MessagePack.Resolvers;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
-using System.Text.Json;
 
 namespace Aegis.Handlers;
 
@@ -87,23 +87,58 @@ public class UserPresenceHandler : IMessageHandler
 
         try
         {
-            using var document = JsonDocument.Parse(MessagePackSerializer.ConvertToJson(payload));
-            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            var dictionary = MessagePackSerializer.Deserialize<Dictionary<string, object?>>(payload,
+                MessagePackSerializerOptions.Standard.WithResolver(ContractlessStandardResolver.Instance));
+
+            if (dictionary.Count == 0 || !dictionary.TryGetValue("IsOnline", out var isOnlineValue))
+            {
+                return false;
+            }
+
+            if (!TryGetBoolean(isOnlineValue, out var isOnline))
+            {
+                return false;
+            }
+
+            DateTime? clientTimestamp = null;
+            if (dictionary.TryGetValue("ClientTimestamp", out var timestampValue) && timestampValue != null)
+            {
+                clientTimestamp = ParseClientTimestamp(timestampValue);
+            }
+
+            request = new UserPresenceUpdateRequest(isOnline, clientTimestamp);
+            return true;
+        }
+        catch (Exception)
+        {
+            return TryDeserializeJsonPayload(payload, out request);
+        }
+    }
+
+    private static bool TryDeserializeJsonPayload(byte[] payload, out UserPresenceUpdateRequest? request)
+    {
+        request = null;
+
+        try
+        {
+            var json = System.Text.Encoding.UTF8.GetString(payload);
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)
             {
                 return false;
             }
 
             if (!document.RootElement.TryGetProperty("IsOnline", out var isOnlineElement)
-                || isOnlineElement.ValueKind is not JsonValueKind.True and not JsonValueKind.False)
+                || isOnlineElement.ValueKind is not System.Text.Json.JsonValueKind.True and not System.Text.Json.JsonValueKind.False)
             {
                 return false;
             }
 
             DateTime? clientTimestamp = null;
             if (document.RootElement.TryGetProperty("ClientTimestamp", out var timestampElement)
-                && timestampElement.ValueKind != JsonValueKind.Null)
+                && timestampElement.ValueKind != System.Text.Json.JsonValueKind.Null)
             {
-                clientTimestamp = ParseClientTimestamp(timestampElement);
+                clientTimestamp = ParseClientTimestamp(timestampElement.GetString());
             }
 
             request = new UserPresenceUpdateRequest(isOnlineElement.GetBoolean(), clientTimestamp);
@@ -115,31 +150,55 @@ public class UserPresenceHandler : IMessageHandler
         }
     }
 
-    private static DateTime? ParseClientTimestamp(JsonElement timestampElement)
+    private static bool TryGetBoolean(object? value, out bool result)
     {
-        if (timestampElement.ValueKind == JsonValueKind.String)
+        switch (value)
         {
-            var raw = timestampElement.GetString();
-            if (DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsedOffset))
-            {
-                return parsedOffset.UtcDateTime;
-            }
+            case bool boolean:
+                result = boolean;
+                return true;
+            case string text when bool.TryParse(text, out var parsed):
+                result = parsed;
+                return true;
+            default:
+                result = false;
+                return false;
+        }
+    }
 
-            if (DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsedDateTime))
-            {
-                return parsedDateTime.Kind == DateTimeKind.Utc
-                    ? parsedDateTime
-                    : parsedDateTime.ToUniversalTime();
-            }
+    private static DateTime? ParseClientTimestamp(object? value)
+    {
+        return value switch
+        {
+            null => null,
+            DateTime dateTime => dateTime.Kind == DateTimeKind.Utc ? dateTime : dateTime.ToUniversalTime(),
+            DateTimeOffset dateTimeOffset => dateTimeOffset.UtcDateTime,
+            string raw => ParseClientTimestamp(raw),
+            long unixMilliseconds => DateTimeOffset.FromUnixTimeMilliseconds(unixMilliseconds).UtcDateTime,
+            int unixMilliseconds => DateTimeOffset.FromUnixTimeMilliseconds(unixMilliseconds).UtcDateTime,
+            _ => null
+        };
+    }
 
+    private static DateTime? ParseClientTimestamp(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
             return null;
         }
 
-        return timestampElement.ValueKind switch
+        if (DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsedOffset))
         {
-            JsonValueKind.Number when timestampElement.TryGetInt64(out var unixMilliseconds) =>
-                DateTimeOffset.FromUnixTimeMilliseconds(unixMilliseconds).UtcDateTime,
-            _ => null
-        };
+            return parsedOffset.UtcDateTime;
+        }
+
+        if (DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsedDateTime))
+        {
+            return parsedDateTime.Kind == DateTimeKind.Utc
+                ? parsedDateTime
+                : parsedDateTime.ToUniversalTime();
+        }
+
+        return null;
     }
 }

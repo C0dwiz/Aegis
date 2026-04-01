@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'package:msgpack_dart/msgpack_dart.dart' as msgpack;
 import 'package:test/test.dart';
 import 'package:aegis_client/aegis_client.dart';
 
@@ -165,6 +166,59 @@ void main() {
 
       AegisLogger.level = LogLevel.error;
       expect(AegisLogger.level, equals(LogLevel.error));
+    });
+  });
+
+  group('MessagePack compatibility', () {
+    test('should decode chat list response from MessagePack', () {
+      final bytes = msgpack.serialize({
+        'Success': true,
+        'Chats': [
+          {
+            'ChatId': 42,
+            'Type': 'channel',
+            'Title': 'general',
+            'LastMessage': 'hello',
+            'LastMessageAt': '2026-04-01T09:45:00Z',
+            'UnreadCount': 3,
+            'ChannelId': 42,
+          }
+        ]
+      });
+
+      final response = ChatListResponse.fromBytes(bytes);
+
+      expect(response.success, isTrue);
+      expect(response.chats, hasLength(1));
+      expect(response.chats.single.chatId, equals(42));
+      expect(
+        response.chats.single.lastMessageAt,
+        equals(DateTime.utc(2026, 4, 1, 9, 45)),
+      );
+    });
+
+    test('should accept DateTime values in decoded history maps', () {
+      final response = ChannelHistoryResponse.fromJson({
+        'Success': true,
+        'ChannelId': 9,
+        'Messages': [
+          {
+            'Id': 100,
+            'ChannelId': 9,
+            'FromUserId': 7,
+            'Content': 'hello',
+            'ContentType': 0,
+            'CreatedAt': DateTime.utc(2026, 4, 1, 9, 46),
+            'DeliveredTo': <int>[],
+            'ReadBy': <int>[],
+          }
+        ]
+      });
+
+      expect(
+        response.messages.single.createdAt,
+        equals(DateTime.utc(2026, 4, 1, 9, 46)),
+      );
     });
   });
 }

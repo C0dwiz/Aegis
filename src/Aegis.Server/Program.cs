@@ -456,15 +456,12 @@ public class AegisMessengerService : BackgroundService
 
     private void OnClientConnected(ConnectionContext context)
     {
-        _sessionManager.CreateSession(context.ConnectionId);
         var ipAddress = (context.Socket.RemoteEndPoint as System.Net.IPEndPoint)?.Address.ToString();
         if (!string.IsNullOrWhiteSpace(ipAddress))
         {
             _rateLimiter.RegisterConnection(context.ConnectionId, ipAddress);
         }
         _healthCheckService.RecordConnectionAccepted();
-        _logger.LogInformation("Client {ConnectionId} connected from {RemoteEndPoint}",
-            context.ConnectionId, context.Socket.RemoteEndPoint);
     }
 
     private void OnClientDisconnected(ConnectionContext context)
@@ -479,7 +476,6 @@ public class AegisMessengerService : BackgroundService
         _messageDeduplicator.ClearConnection(context.ConnectionId);
         _sessionManager.RemoveSession(context.ConnectionId);
         _healthCheckService.RecordConnectionClosed();
-        _logger.LogInformation("Client {ConnectionId} disconnected", context.ConnectionId);
     }
 
     private async Task HealthLoggingLoopAsync(CancellationToken cancellationToken)

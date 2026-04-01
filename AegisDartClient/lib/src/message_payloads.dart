@@ -107,6 +107,46 @@ dynamic _normalizeMsgPack(dynamic value) {
   return value;
 }
 
+Map<String, dynamic> _decodePayloadMap(List<int> bytes) {
+  final data = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
+  if (data.isEmpty) {
+    return <String, dynamic>{};
+  }
+
+  final firstByte = data.first;
+  if (firstByte == 0x7b || firstByte == 0x5b) {
+    return jsonDecode(utf8.decode(data)) as Map<String, dynamic>;
+  }
+
+  final raw = msgpack.deserialize(data);
+  return Map<String, dynamic>.from(_normalizeMsgPack(raw) as Map);
+}
+
+DateTime _parseDateTimeValue(dynamic value) {
+  if (value is DateTime) {
+    return value.toUtc();
+  }
+  if (value is String) {
+    return DateTime.parse(value).toUtc();
+  }
+  if (value is int) {
+    return DateTime.fromMillisecondsSinceEpoch(value, isUtc: true);
+  }
+  if (value is num) {
+    return DateTime.fromMillisecondsSinceEpoch(value.toInt(), isUtc: true);
+  }
+
+  throw FormatException('Unsupported DateTime value: $value');
+}
+
+DateTime? _parseNullableDateTimeValue(dynamic value) {
+  if (value == null) {
+    return null;
+  }
+
+  return _parseDateTimeValue(value);
+}
+
 /// Normalized response for unified media sending API.
 class MediaSendResponse {
   final bool success;
@@ -963,9 +1003,7 @@ class ChatListItem {
         avatarUrl: json['AvatarUrl'] as String?,
         presenceStatus: json['PresenceStatus'] as String?,
         lastMessage: json['LastMessage'] as String?,
-        lastMessageAt: json['LastMessageAt'] != null
-            ? DateTime.parse(json['LastMessageAt'] as String)
-            : null,
+        lastMessageAt: _parseNullableDateTimeValue(json['LastMessageAt']),
         unreadCount: json['UnreadCount'] as int? ?? 0,
         peerUserId: json['PeerUserId'] as int?,
         channelId: json['ChannelId'] as int?,
@@ -994,7 +1032,7 @@ class ChatListResponse {
       );
 
   factory ChatListResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    final json = _decodePayloadMap(bytes);
     return ChatListResponse.fromJson(json);
   }
 }
@@ -1057,7 +1095,7 @@ class PrivateChatHistoryItem {
       content: parsed.text,
       contentType:
           MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
-      createdAt: DateTime.parse(json['CreatedAt'] as String),
+      createdAt: _parseDateTimeValue(json['CreatedAt']),
       deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
           .map((item) => (item as num).toInt())
           .toList(),
@@ -1104,9 +1142,7 @@ class PrivateChatHistoryResponse {
       );
 
   factory PrivateChatHistoryResponse.fromBytes(List<int> bytes) {
-    final raw = msgpack.deserialize(Uint8List.fromList(bytes));
-    return PrivateChatHistoryResponse.fromJson(
-        _normalizeMsgPack(raw) as Map<String, dynamic>);
+    return PrivateChatHistoryResponse.fromJson(_decodePayloadMap(bytes));
   }
 }
 
@@ -1168,7 +1204,7 @@ class ChannelHistoryItem {
       content: parsed.text,
       contentType:
           MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
-      createdAt: DateTime.parse(json['CreatedAt'] as String),
+      createdAt: _parseDateTimeValue(json['CreatedAt']),
       deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
           .map((item) => (item as num).toInt())
           .toList(),
@@ -1218,9 +1254,7 @@ class ChannelHistoryResponse {
       );
 
   factory ChannelHistoryResponse.fromBytes(List<int> bytes) {
-    final raw = msgpack.deserialize(Uint8List.fromList(bytes));
-    return ChannelHistoryResponse.fromJson(
-        _normalizeMsgPack(raw) as Map<String, dynamic>);
+    return ChannelHistoryResponse.fromJson(_decodePayloadMap(bytes));
   }
 }
 
@@ -1249,13 +1283,12 @@ class MessageStatusEvent {
           .toList(),
       deliveredTo: (json['DeliveredTo'] as num?)?.toInt(),
       readBy: (json['ReadBy'] as num?)?.toInt(),
-      processedAt:
-          processedAtRaw is String ? DateTime.tryParse(processedAtRaw) : null,
+      processedAt: _parseNullableDateTimeValue(processedAtRaw),
     );
   }
 
   factory MessageStatusEvent.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    final json = _decodePayloadMap(bytes);
     return MessageStatusEvent.fromJson(json);
   }
 
@@ -1300,7 +1333,7 @@ class PrivateChatMessageEvent {
       content: parsed.text,
       contentType:
           MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
-      createdAt: DateTime.parse(json['CreatedAt'] as String),
+      createdAt: _parseDateTimeValue(json['CreatedAt']),
       deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
           .map((item) => (item as num).toInt())
           .toList(),
@@ -1314,7 +1347,7 @@ class PrivateChatMessageEvent {
   }
 
   factory PrivateChatMessageEvent.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    final json = _decodePayloadMap(bytes);
     return PrivateChatMessageEvent.fromJson(json);
   }
 
@@ -1363,7 +1396,7 @@ class ChannelMessageEvent {
       content: parsed.text,
       contentType:
           MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
-      createdAt: DateTime.parse(json['CreatedAt'] as String),
+      createdAt: _parseDateTimeValue(json['CreatedAt']),
       deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
           .map((item) => (item as num).toInt())
           .toList(),
@@ -1377,7 +1410,7 @@ class ChannelMessageEvent {
   }
 
   factory ChannelMessageEvent.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    final json = _decodePayloadMap(bytes);
     return ChannelMessageEvent.fromJson(json);
   }
 
@@ -2112,7 +2145,7 @@ class GroupHistoryItem {
       content: parsed.text,
       contentType:
           MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
-      createdAt: DateTime.parse(json['CreatedAt'] as String),
+      createdAt: _parseDateTimeValue(json['CreatedAt']),
       deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
           .map((item) => (item as num).toInt())
           .toList(),
@@ -2163,9 +2196,7 @@ class GroupHistoryResponse {
       );
 
   factory GroupHistoryResponse.fromBytes(List<int> bytes) {
-    final raw = msgpack.deserialize(Uint8List.fromList(bytes));
-    return GroupHistoryResponse.fromJson(
-        _normalizeMsgPack(raw) as Map<String, dynamic>);
+    return GroupHistoryResponse.fromJson(_decodePayloadMap(bytes));
   }
 }
 
@@ -2202,7 +2233,7 @@ class GroupMessageEvent {
       content: parsed.text,
       contentType:
           MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
-      createdAt: DateTime.parse(json['CreatedAt'] as String),
+      createdAt: _parseDateTimeValue(json['CreatedAt']),
       fromUsername: json['FromUsername'] as String?,
       groupName: json['GroupName'] as String?,
       parseMode: parsed.parseMode,
@@ -2253,7 +2284,7 @@ class MemberSummary {
         userId: json['UserId'] as int,
         username: json['Username'] as String,
         role: json['Role'] as String,
-        joinedAt: DateTime.parse(json['JoinedAt'] as String),
+        joinedAt: _parseDateTimeValue(json['JoinedAt']),
         canSendMessages: json['CanSendMessages'] as bool? ?? true,
         canDeleteOthersMessages:
             json['CanDeleteOthersMessages'] as bool? ?? false,
