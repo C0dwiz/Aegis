@@ -98,7 +98,6 @@ public class ServerMessageSender : IMessageSender
 
             var ciphertextWithTag = new byte[payload.Length + 16];
             var encryptedPayload = new byte[nonce.Length + ciphertextWithTag.Length];
-            var aadHeader = new byte[ProtocolConstants.HeaderSize];
             var aadMessage = new Message
             {
                 Magic = ProtocolConstants.Magic,
@@ -110,6 +109,7 @@ public class ServerMessageSender : IMessageSender
                 Payload = Array.Empty<byte>(),
                 PayloadLength = (uint)encryptedPayload.Length
             };
+            var aadHeader = new byte[Message.TotalSize(aadMessage)];
             MessageEncoder.Encode(aadMessage, aadHeader);
 
             _cryptoProvider.Encrypt(payload, session!.SessionKey.Span, nonce, ciphertextWithTag,
