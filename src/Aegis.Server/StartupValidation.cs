@@ -41,22 +41,13 @@ internal static class StartupValidation
                 throw new InvalidOperationException("ProtocolSecurity:RequireEncryptedPayloadAfterHandshake must be enabled in production.");
             }
 
-            if (!requireSignedHandshakeResponses)
-            {
-                throw new InvalidOperationException("ProtocolSecurity:RequireSignedHandshakeResponses must be enabled in production.");
-            }
-
-            if (string.IsNullOrWhiteSpace(handshakeSigningPrivateKey))
-            {
-                throw new InvalidOperationException("ProtocolSecurity:HandshakeSigningPrivateKeyBase64 is required when signed handshake responses are enabled.");
-            }
-
             if (dbConnectionString.Contains("Password=aegis", StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException("Default database password is not allowed in production.");
             }
         }
-        else if (requireSignedHandshakeResponses && string.IsNullOrWhiteSpace(handshakeSigningPrivateKey))
+
+        if (requireSignedHandshakeResponses && string.IsNullOrWhiteSpace(handshakeSigningPrivateKey))
         {
             throw new InvalidOperationException("ProtocolSecurity:HandshakeSigningPrivateKeyBase64 is required when signed handshake responses are enabled.");
         }

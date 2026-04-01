@@ -338,8 +338,11 @@ dotnet run --project src/Aegis.Server/Aegis.Server.csproj
 ### Запуск через Docker (PostgreSQL + Aegis Server + Bot API)
 
 ```bash
+cp .env.example .env
 docker compose up --build -d
 ```
+
+По умолчанию сервер работает в Telegram-like режиме через `api_id` / `api_hash`. Signed handshake response остаётся опциональной дополнительной защитой. Если захотите её включить, задайте `AEGIS_REQUIRE_SIGNED_HANDSHAKE_RESPONSES=true` и сгенерируйте ключ через `python gen_secrets.py`.
 
 Сервисы после запуска:
 - TCP сервер: `localhost:8888`

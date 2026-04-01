@@ -107,12 +107,10 @@ services:
       AEGIS_Logging__Console: "true"
       AEGIS_Logging__File: "false"
       AEGIS_ProtocolSecurity__RequireEncryptedPayloadAfterHandshake: ${AEGIS_REQUIRE_ENCRYPTED_PAYLOAD_AFTER_HANDSHAKE:-true}
-      # Signed handshake responses are OPTIONAL (require a signing key pair).
-      # Set AEGIS_REQUIRE_SIGNED_HANDSHAKE_RESPONSES=true in .env and supply the key
-      # to enable this extra layer. Auth is enforced by api_id/api_hash instead.
+      # Signed handshake responses are optional. api_id/api_hash remain the primary
+      # first-party client authentication mechanism.
       AEGIS_ProtocolSecurity__RequireSignedHandshakeResponses: ${AEGIS_REQUIRE_SIGNED_HANDSHAKE_RESPONSES:-false}
       AEGIS_ProtocolSecurity__RequireAppCredentials: ${AEGIS_REQUIRE_APP_CREDENTIALS:-true}
-      # Only set this env var if RequireSignedHandshakeResponses=true
       AEGIS_ProtocolSecurity__HandshakeSigningPrivateKeyBase64: ${AEGIS_HANDSHAKE_SIGNING_PRIVATE_KEY_BASE64:-}
     ports:
       - "8888:8888"
