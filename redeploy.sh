@@ -56,12 +56,12 @@ echo ""
 
 # ── 1. Stop and remove only the app containers (not infra) ──────────────
 echo "► Stopping app containers…"
-docker compose \
+docker-compose \
   --file "$COMPOSE_FILE" \
   --env-file "$ENV_FILE" \
   stop "${SERVICES[@]}"
 
-docker compose \
+docker-compose \
   --file "$COMPOSE_FILE" \
   --env-file "$ENV_FILE" \
   rm -f "${SERVICES[@]}"
@@ -69,7 +69,7 @@ docker compose \
 # ── 2. Rebuild images without cache ────────────────────────────────────
 echo ""
 echo "► Building images (no cache)…"
-docker compose \
+docker-compose \
   --file "$COMPOSE_FILE" \
   --env-file "$ENV_FILE" \
   build --no-cache --pull "${SERVICES[@]}"
@@ -77,7 +77,7 @@ docker compose \
 # ── 3. Start the fresh containers ──────────────────────────────────────
 echo ""
 echo "► Starting containers…"
-docker compose \
+docker-compose \
   --file "$COMPOSE_FILE" \
   --env-file "$ENV_FILE" \
   up -d "${SERVICES[@]}"
@@ -87,7 +87,7 @@ echo ""
 echo "► Container logs (last 30 lines each, Ctrl-C to exit):"
 echo ""
 sleep 3
-docker compose \
+docker-compose \
   --file "$COMPOSE_FILE" \
   --env-file "$ENV_FILE" \
   logs --tail=30 "${SERVICES[@]}"
