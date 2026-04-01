@@ -12,6 +12,8 @@ using Aegis.Data.Repositories;
 using Aegis.Data.Entities;
 using Microsoft.Extensions.Logging;
 using Moq;
+using MessagePack;
+using MessagePack.Resolvers;
 using System.Text.Json;
 using System.Text;
 
@@ -50,6 +52,9 @@ public class TestMessageSender : IMessageSender
 
 public class HandlerTests
 {
+    private static readonly MessagePackSerializerOptions MsgPackOptions =
+        MessagePackSerializerOptions.Standard.WithResolver(ContractlessStandardResolver.Instance);
+
     private readonly TestLogger _logger = new TestLogger();
     private readonly TestAntiSpamClient _antiSpam = new TestAntiSpamClient();
     private readonly TestMessageSender _messageSender = new TestMessageSender();
@@ -71,6 +76,8 @@ public class HandlerTests
                 CreatedAt = DateTime.UtcNow
             });
     }
+
+            private static byte[] SerializePayload<T>(T payload) => MessagePackSerializer.Serialize(payload, MsgPackOptions);
 
     [Fact]
     public async Task MessageRouter_RegisterHandler_ShouldRouteCorrectly()
@@ -184,6 +191,108 @@ public class HandlerTests
         // Assert
         Assert.True(context.LastActivity > initialActivity,
             $"LastActivity ({context.LastActivity}) should be greater than initial ({initialActivity})");
+    }
+
+    [Fact]
+    public async Task UserPresenceHandler_ShouldAcceptIsoTimestampPayloadFromDart()
+    {
+        var userRepository = new Mock<IUserRepository>();
+        var sessionRepository = new Mock<ISessionRepository>();
+        var logger = new Mock<Microsoft.Extensions.Logging.ILogger<UserPresenceHandler>>();
+        var handler = new UserPresenceHandler(_sessionManager, userRepository.Object, sessionRepository.Object, logger.Object);
+        var context = new TestConnectionContext(9001ul);
+
+        _sessionManager.CreateSession(context.ConnectionId);
+        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32]);
+        _sessionManager.AuthenticateSession(context.ConnectionId, 42ul, "tester");
+
+        var user = new User { Id = 42ul, Username = "tester" };
+        var dbSession = new Session { Id = 7ul, UserId = 42ul, ConnectionId = context.ConnectionId.ToString(), IsActive = true };
+
+        userRepository.Setup(x => x.GetByIdAsync(42ul)).ReturnsAsync(user);
+        userRepository.Setup(x => x.UpdateAsync(It.IsAny<User>())).ReturnsAsync((User updated) => updated);
+        sessionRepository.Setup(x => x.GetByConnectionIdAsync(context.ConnectionId.ToString())).ReturnsAsync(dbSession);
+        sessionRepository.Setup(x => x.UpdateAsync(It.IsAny<Session>())).ReturnsAsync((Session updated) => updated);
+
+        var payload = SerializePayload(new Dictionary<string, object?>
+        {
+            ["IsOnline"] = false,
+            ["ClientTimestamp"] = "2026-04-01T09:30:46.766Z"
+        });
+
+        var message = new Aegis.Protocol.Message
+        {
+            Type = MessageType.UserPresence,
+            SequenceId = 3,
+            Payload = payload,
+            PayloadLength = (uint)payload.Length
+        };
+
+        await handler.HandleAsync(context, message);
+
+        Assert.False(_sessionManager.IsUserOnline(42ul));
+        userRepository.Verify(x => x.UpdateAsync(It.Is<User>(u => u.Id == 42ul && u.LastSeenAt.HasValue)), Times.Once);
+        sessionRepository.Verify(x => x.UpdateAsync(It.Is<Session>(s => s.Id == 7ul && !s.IsActive && s.LastActivityAt.HasValue)), Times.Once);
+    }
+
+    [Fact]
+    public async Task MessageReactHandler_ShouldResolveChannelMembersFromMessageChannel()
+    {
+        var channelRepository = new Mock<IChannelRepository>();
+        var groupRepository = new Mock<IGroupRepository>();
+        var reactionRepository = new Mock<IReactionRepository>();
+        var logger = new Mock<Microsoft.Extensions.Logging.ILogger<MessageReactHandler>>();
+        var handler = new MessageReactHandler(
+            _sessionManager,
+            _messageSender,
+            channelRepository.Object,
+            groupRepository.Object,
+            reactionRepository.Object,
+            logger.Object);
+
+        var actorContext = new TestConnectionContext(9101ul);
+        _sessionManager.CreateSession(actorContext.ConnectionId);
+        _sessionManager.EstablishHandshake(actorContext.ConnectionId, new byte[32]);
+        _sessionManager.AuthenticateSession(actorContext.ConnectionId, 1ul, "actor");
+
+        _sessionManager.CreateSession(9102ul);
+        _sessionManager.EstablishHandshake(9102ul, new byte[32]);
+        _sessionManager.AuthenticateSession(9102ul, 2ul, "recipient");
+
+        channelRepository
+            .Setup(x => x.GetChannelMessageAsync(555ul))
+            .ReturnsAsync(new ChannelMessage { Id = 555ul, ChannelId = 99ul, FromUserId = 1ul, Content = "hello" });
+        channelRepository
+            .Setup(x => x.GetChannelMembersAsync(99ul))
+            .ReturnsAsync(new[]
+            {
+                new ChannelMember { ChannelId = 99ul, UserId = 1ul, IsActive = true },
+                new ChannelMember { ChannelId = 99ul, UserId = 2ul, IsActive = true }
+            });
+        reactionRepository
+            .Setup(x => x.AddAsync("channel", 555ul, 1ul, "🔥"))
+            .ReturnsAsync(new MessageReaction { Id = 1ul, Scope = "channel", MessageId = 555ul, UserId = 1ul, Emoji = "🔥" });
+        reactionRepository
+            .Setup(x => x.GetByMessageAsync("channel", 555ul))
+            .ReturnsAsync(new[]
+            {
+                new MessageReaction { Id = 1ul, Scope = "channel", MessageId = 555ul, UserId = 1ul, Emoji = "🔥" }
+            });
+
+        var payload = SerializePayload(new MessageReactRequest("channel", 555ul, "🔥", false));
+        var message = new Aegis.Protocol.Message
+        {
+            Type = MessageType.MessageReact,
+            SequenceId = 77,
+            Payload = payload,
+            PayloadLength = (uint)payload.Length
+        };
+
+        await handler.HandleAsync(actorContext, message);
+
+        channelRepository.Verify(x => x.GetChannelMembersAsync(99ul), Times.Once);
+        channelRepository.Verify(x => x.GetChannelMembersAsync(555ul), Times.Never);
+        Assert.Contains(9102ul, _messageSender.SentConnectionIds);
     }
 
     [Fact]

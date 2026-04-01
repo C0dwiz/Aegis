@@ -1143,12 +1143,24 @@ public class MessageReactHandler : IMessageHandler
         IEnumerable<ulong> memberUserIds;
         if (request.Scope == "channel")
         {
-            var members = await _channelRepository.GetChannelMembersAsync(request.MessageId);
+            var channelMessage = await _channelRepository.GetChannelMessageAsync(request.MessageId);
+            if (channelMessage == null)
+            {
+                return;
+            }
+
+            var members = await _channelRepository.GetChannelMembersAsync(channelMessage.ChannelId);
             memberUserIds = members.Where(m => m.IsActive).Select(m => m.UserId);
         }
         else if (request.Scope == "group")
         {
-            var members = await _groupRepository.GetGroupMembersAsync(request.MessageId);
+            var groupMessage = await _groupRepository.GetGroupMessageAsync(request.MessageId);
+            if (groupMessage == null)
+            {
+                return;
+            }
+
+            var members = await _groupRepository.GetGroupMembersAsync(groupMessage.GroupId);
             memberUserIds = members.Where(m => m.IsActive).Select(m => m.UserId);
         }
         else

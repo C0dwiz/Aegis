@@ -4,6 +4,8 @@ using Aegis.Protocol;
 using Aegis.Transport;
 using MessagePack;
 using Microsoft.Extensions.Logging;
+using System.Globalization;
+using System.Text.Json;
 
 namespace Aegis.Handlers;
 
@@ -45,8 +47,11 @@ public class UserPresenceHandler : IMessageHandler
         }
         catch (MessagePackSerializationException ex)
         {
-            _logger.LogHandlerError(ex, "presence_invalid_json", context, message, _sessionManager);
-            return;
+            if (!TryDeserializeCompatibilityPayload(message.Payload, out request))
+            {
+                _logger.LogHandlerError(ex, "presence_invalid_json", context, message, _sessionManager);
+                return;
+            }
         }
 
         if (request == null)
@@ -74,5 +79,67 @@ public class UserPresenceHandler : IMessageHandler
                 await _sessionRepository.UpdateAsync(dbSession);
             }
         }
+    }
+
+    private static bool TryDeserializeCompatibilityPayload(byte[] payload, out UserPresenceUpdateRequest? request)
+    {
+        request = null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(MessagePackSerializer.ConvertToJson(payload));
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            if (!document.RootElement.TryGetProperty("IsOnline", out var isOnlineElement)
+                || isOnlineElement.ValueKind is not JsonValueKind.True and not JsonValueKind.False)
+            {
+                return false;
+            }
+
+            DateTime? clientTimestamp = null;
+            if (document.RootElement.TryGetProperty("ClientTimestamp", out var timestampElement)
+                && timestampElement.ValueKind != JsonValueKind.Null)
+            {
+                clientTimestamp = ParseClientTimestamp(timestampElement);
+            }
+
+            request = new UserPresenceUpdateRequest(isOnlineElement.GetBoolean(), clientTimestamp);
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private static DateTime? ParseClientTimestamp(JsonElement timestampElement)
+    {
+        if (timestampElement.ValueKind == JsonValueKind.String)
+        {
+            var raw = timestampElement.GetString();
+            if (DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsedOffset))
+            {
+                return parsedOffset.UtcDateTime;
+            }
+
+            if (DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsedDateTime))
+            {
+                return parsedDateTime.Kind == DateTimeKind.Utc
+                    ? parsedDateTime
+                    : parsedDateTime.ToUniversalTime();
+            }
+
+            return null;
+        }
+
+        return timestampElement.ValueKind switch
+        {
+            JsonValueKind.Number when timestampElement.TryGetInt64(out var unixMilliseconds) =>
+                DateTimeOffset.FromUnixTimeMilliseconds(unixMilliseconds).UtcDateTime,
+            _ => null
+        };
     }
 }
