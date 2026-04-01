@@ -12,7 +12,8 @@ import 'message_type.dart';
 import 'protocol_constants.dart';
 
 // Re-export error types so callers that import only this file still see them.
-export 'errors.dart' show ProtocolError, ProtocolDecodeError, ProtocolEncodeError;
+export 'errors.dart'
+    show ProtocolError, ProtocolDecodeError, ProtocolEncodeError;
 
 /// Encoder / Decoder for Aegis protocol frames.
 ///
@@ -56,13 +57,14 @@ class MessageEncoder {
     // Brotli-compress when payload exceeds threshold (per server spec).
     Uint8List payload = message.payload;
     int flags = message.flags;
-    final isEncrypted =
-      (flags & ProtocolConstants.flagEncrypted) != 0;
-    if (!isEncrypted && payload.length > ProtocolConstants.compressionThreshold) {
+    final isEncrypted = (flags & ProtocolConstants.flagEncrypted) != 0;
+    final isCompressed = (flags & ProtocolConstants.flagCompressed) != 0;
+    if (!isEncrypted &&
+        !isCompressed &&
+        payload.length > ProtocolConstants.compressionThreshold) {
       final compressed = _brotli.encode(payload);
-      payload = compressed is Uint8List
-          ? compressed
-          : Uint8List.fromList(compressed);
+      payload =
+          compressed is Uint8List ? compressed : Uint8List.fromList(compressed);
       flags |= ProtocolConstants.flagCompressed;
     }
 
@@ -71,7 +73,8 @@ class MessageEncoder {
     final buffer = pool.acquire(totalSize);
 
     // ByteData view for zero-copy big-endian writes (no manual bit-shifting).
-    final bd = ByteData.view(buffer.buffer, buffer.offsetInBytes, buffer.length);
+    final bd =
+        ByteData.view(buffer.buffer, buffer.offsetInBytes, buffer.length);
 
     bd.setUint32(0, message.magic, Endian.big);
     buffer[4] = message.versionMajor;
@@ -183,9 +186,9 @@ class MessageEncoder {
 
     // ── Payload ────────────────────────────────────────────────────
     if (payloadLength > 0) {
-        final isEncryptedPayload =
+      final isEncryptedPayload =
           (message.flags & ProtocolConstants.flagEncrypted) != 0;
-        if (!isEncryptedPayload &&
+      if (!isEncryptedPayload &&
           (message.flags & ProtocolConstants.flagCompressed) != 0) {
         // Compressed — create a view for the decompressor input, then
         // decompress into a new allocation.

@@ -46,6 +46,91 @@ enum ChatTargetType {
   group,
 }
 
+/// Scope for message operations and reactions in private chats, channels, or groups.
+enum ChatScope {
+  privateChat('private'),
+  channel('channel'),
+  group('group');
+
+  const ChatScope(this.value);
+  final String value;
+
+  static ChatScope fromValue(String value) {
+    return ChatScope.values.firstWhere(
+      (scope) => scope.value == value,
+      orElse: () => ChatScope.privateChat,
+    );
+  }
+}
+
+/// Scope for room-level operations that only apply to channels or groups.
+enum RoomScope {
+  channel('channel'),
+  group('group');
+
+  const RoomScope(this.value);
+  final String value;
+
+  static RoomScope fromValue(String value) {
+    return RoomScope.values.firstWhere(
+      (scope) => scope.value == value,
+      orElse: () => RoomScope.channel,
+    );
+  }
+}
+
+/// Channel/group member role values used by the server.
+enum MemberRole {
+  member(0),
+  moderator(1),
+  admin(2),
+  owner(3);
+
+  const MemberRole(this.value);
+  final int value;
+
+  static MemberRole fromValue(int value) {
+    return MemberRole.values.firstWhere(
+      (role) => role.value == value,
+      orElse: () => MemberRole.member,
+    );
+  }
+}
+
+/// Who may join a room.
+enum RoomJoinRule {
+  open(0),
+  inviteOnly(1),
+  approval(2);
+
+  const RoomJoinRule(this.value);
+  final int value;
+
+  static RoomJoinRule fromValue(int value) {
+    return RoomJoinRule.values.firstWhere(
+      (rule) => rule.value == value,
+      orElse: () => RoomJoinRule.open,
+    );
+  }
+}
+
+/// Who can see room history.
+enum RoomHistoryVisibility {
+  worldReadable(0),
+  joined(1),
+  invited(2);
+
+  const RoomHistoryVisibility(this.value);
+  final int value;
+
+  static RoomHistoryVisibility fromValue(int value) {
+    return RoomHistoryVisibility.values.firstWhere(
+      (visibility) => visibility.value == value,
+      orElse: () => RoomHistoryVisibility.joined,
+    );
+  }
+}
+
 /// Media kind for unified media sending.
 enum MediaKind {
   photo,
@@ -535,11 +620,9 @@ class User {
         publicKey: json['PublicKey'] as String,
         identityKeyFingerprint: json['IdentityKeyFingerprint'] as String?,
         isActive: json['IsActive'] as bool,
-        createdAt: DateTime.parse(json['CreatedAt'] as String),
-        updatedAt: DateTime.parse(json['UpdatedAt'] as String),
-        lastSeenAt: json['LastSeenAt'] != null
-            ? DateTime.parse(json['LastSeenAt'] as String)
-            : null,
+        createdAt: _parseDateTimeValue(json['CreatedAt']),
+        updatedAt: _parseDateTimeValue(json['UpdatedAt']),
+        lastSeenAt: _parseNullableDateTimeValue(json['LastSeenAt']),
       );
 }
 
@@ -672,10 +755,8 @@ class ChannelMessage {
         fromUserId: json['FromUserId'] as int,
         content: json['Content'] as String,
         contentType: MessageContentType.fromValue(json['ContentType'] as int),
-        createdAt: DateTime.parse(json['CreatedAt'] as String),
-        editedAt: json['EditedAt'] != null
-            ? DateTime.parse(json['EditedAt'] as String)
-            : null,
+        createdAt: _parseDateTimeValue(json['CreatedAt']),
+        editedAt: _parseNullableDateTimeValue(json['EditedAt']),
         isEdited: json['IsEdited'] as bool? ?? false,
         replyToMessageId: json['ReplyToMessageId'] as int?,
         isPinned: json['IsPinned'] as bool? ?? false,
@@ -790,8 +871,8 @@ class Channel {
         description: json['Description'] as String?,
         type: ChannelType.fromValue(json['Type'] as int),
         createdByUserId: json['CreatedByUserId'] as int,
-        createdAt: DateTime.parse(json['CreatedAt'] as String),
-        updatedAt: DateTime.parse(json['UpdatedAt'] as String),
+        createdAt: _parseDateTimeValue(json['CreatedAt']),
+        updatedAt: _parseDateTimeValue(json['UpdatedAt']),
         isActive: json['IsActive'] as bool,
         inviteCode: json['InviteCode'] as String?,
         publicAlias: json['PublicAlias'] as String?,
@@ -849,7 +930,7 @@ class ChannelJoinRequest {
         channelId: json['ChannelId'] as int,
       );
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 /// Channel join response payload
@@ -880,8 +961,7 @@ class ChannelJoinResponse {
       );
 
   factory ChannelJoinResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    return ChannelJoinResponse.fromJson(json);
+    return ChannelJoinResponse.fromJson(_decodePayloadMap(bytes));
   }
 }
 
@@ -930,7 +1010,7 @@ class PrivateChatMessageRequest {
         parseMode: json['ParseMode'] as String?,
       );
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 /// Private chat message response payload
@@ -959,15 +1039,14 @@ class PrivateChatMessageResponse {
       );
 
   factory PrivateChatMessageResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    return PrivateChatMessageResponse.fromJson(json);
+    return PrivateChatMessageResponse.fromJson(_decodePayloadMap(bytes));
   }
 }
 
 /// Chat list request payload
 class ChatListRequest {
   Map<String, dynamic> toJson() => <String, dynamic>{};
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 /// Chat list response item
@@ -1296,6 +1375,71 @@ class MessageStatusEvent {
   bool get isReadUpdate => readBy != null;
 }
 
+/// Delivery receipt request payload.
+class MessageDeliveryReceiptRequest {
+  final List<int> messageIds;
+  final DateTime? deliveredAt;
+  final String? deviceId;
+
+  MessageDeliveryReceiptRequest({
+    required this.messageIds,
+    this.deliveredAt,
+    this.deviceId,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'MessageIds': messageIds,
+        if (deliveredAt != null)
+          'DeliveredAt': deliveredAt!.toUtc().toIso8601String(),
+        if (deviceId != null) 'DeviceId': deviceId,
+      };
+
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+/// Read receipt request payload.
+class MessageReadReceiptRequest {
+  final List<int> messageIds;
+  final DateTime? readAt;
+
+  MessageReadReceiptRequest({
+    required this.messageIds,
+    this.readAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'MessageIds': messageIds,
+        if (readAt != null) 'ReadAt': readAt!.toUtc().toIso8601String(),
+      };
+
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+/// Receipt confirmation payload returned by read/delivery receipt handlers.
+class MessageReceiptResponse {
+  final bool success;
+  final List<int> messageIds;
+  final DateTime? processedAt;
+
+  MessageReceiptResponse({
+    required this.success,
+    required this.messageIds,
+    this.processedAt,
+  });
+
+  factory MessageReceiptResponse.fromJson(Map<String, dynamic> json) =>
+      MessageReceiptResponse(
+        success: json['Success'] as bool? ?? false,
+        messageIds: (json['MessageIds'] as List<dynamic>? ?? const <dynamic>[])
+            .map((item) => (item as num).toInt())
+            .toList(growable: false),
+        processedAt: _parseNullableDateTimeValue(json['ProcessedAt']),
+      );
+
+  factory MessageReceiptResponse.fromBytes(List<int> bytes) =>
+      MessageReceiptResponse.fromJson(_decodePayloadMap(bytes));
+}
+
 /// Incoming private message event payload
 class PrivateChatMessageEvent {
   final int id;
@@ -1479,13 +1623,9 @@ class ChatMessage {
       isDelivered: json['IsDelivered'] as bool? ?? false,
       isRead: json['IsRead'] as bool? ?? false,
       parseMode: parsed.parseMode,
-      createdAt: DateTime.parse(json['CreatedAt'] as String),
-      deliveredAt: json['DeliveredAt'] != null
-          ? DateTime.parse(json['DeliveredAt'] as String)
-          : null,
-      readAt: json['ReadAt'] != null
-          ? DateTime.parse(json['ReadAt'] as String)
-          : null,
+      createdAt: _parseDateTimeValue(json['CreatedAt']),
+      deliveredAt: _parseNullableDateTimeValue(json['DeliveredAt']),
+      readAt: _parseNullableDateTimeValue(json['ReadAt']),
     );
   }
 
@@ -1535,10 +1675,8 @@ class PrivateChat {
         id: json['Id'] as int,
         user1Id: json['User1Id'] as int,
         user2Id: json['User2Id'] as int,
-        createdAt: DateTime.parse(json['CreatedAt'] as String),
-        lastActivityAt: json['LastActivityAt'] != null
-            ? DateTime.parse(json['LastActivityAt'] as String)
-            : null,
+        createdAt: _parseDateTimeValue(json['CreatedAt']),
+        lastActivityAt: _parseNullableDateTimeValue(json['LastActivityAt']),
         lastMessageId: json['LastMessageId'] as int?,
         isActive: json['IsActive'] as bool? ?? true,
         lastMessage: json['LastMessage'] != null
@@ -1600,10 +1738,8 @@ class ProfileData {
         presenceStatus: json['PresenceStatus'] as String?,
         bio: json['Bio'] as String?,
         email: json['Email'] as String?,
-        createdAt: DateTime.parse(json['CreatedAt'] as String),
-        lastSeenAt: json['LastSeenAt'] != null
-            ? DateTime.parse(json['LastSeenAt'] as String)
-            : null,
+        createdAt: _parseDateTimeValue(json['CreatedAt']),
+        lastSeenAt: _parseNullableDateTimeValue(json['LastSeenAt']),
       );
 }
 
@@ -1632,7 +1768,7 @@ class ProfileAvatarData {
         id: json['Id'] as int,
         avatarUrl: json['AvatarUrl'] as String,
         isPrimary: json['IsPrimary'] as bool? ?? false,
-        createdAt: DateTime.parse(json['CreatedAt'] as String),
+        createdAt: _parseDateTimeValue(json['CreatedAt']),
       );
 }
 
@@ -1647,7 +1783,7 @@ class ProfileAvatarAddRequest {
         'MakePrimary': makePrimary,
       };
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 class ProfileAvatarDeleteRequest {
@@ -1659,7 +1795,7 @@ class ProfileAvatarDeleteRequest {
         'AvatarId': avatarId,
       };
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 class ProfileAvatarSetPrimaryRequest {
@@ -1671,7 +1807,7 @@ class ProfileAvatarSetPrimaryRequest {
         'AvatarId': avatarId,
       };
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 class ProfileAvatarMutationResponse {
@@ -1695,8 +1831,7 @@ class ProfileAvatarMutationResponse {
       );
 
   factory ProfileAvatarMutationResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    return ProfileAvatarMutationResponse.fromJson(json);
+    return ProfileAvatarMutationResponse.fromJson(_decodePayloadMap(bytes));
   }
 }
 
@@ -1722,8 +1857,7 @@ class ProfileAvatarListResponse {
       );
 
   factory ProfileAvatarListResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    return ProfileAvatarListResponse.fromJson(json);
+    return ProfileAvatarListResponse.fromJson(_decodePayloadMap(bytes));
   }
 }
 
@@ -1744,7 +1878,7 @@ class ChannelLinkUpdateRequest {
         'RegeneratePrivateInvite': regeneratePrivateInvite,
       };
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 class ChannelLinkRequest {
@@ -1756,7 +1890,7 @@ class ChannelLinkRequest {
         'ChannelId': channelId,
       };
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 class ChannelResolveRequest {
@@ -1768,7 +1902,7 @@ class ChannelResolveRequest {
         'LinkOrAlias': linkOrAlias,
       };
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 class ChannelLinkInfo {
@@ -1810,8 +1944,7 @@ class ChannelLinkResponse {
       );
 
   factory ChannelLinkResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    return ChannelLinkResponse.fromJson(json);
+    return ChannelLinkResponse.fromJson(_decodePayloadMap(bytes));
   }
 }
 
@@ -1832,8 +1965,7 @@ class ChannelResolveResponse {
       );
 
   factory ChannelResolveResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    return ChannelResolveResponse.fromJson(json);
+    return ChannelResolveResponse.fromJson(_decodePayloadMap(bytes));
   }
 }
 
@@ -1858,7 +1990,7 @@ class ProfileUpdateRequest {
         if (username != null) 'Username': username,
       };
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 /// Response to a profile update
@@ -1883,8 +2015,7 @@ class ProfileUpdateResponse {
       );
 
   factory ProfileUpdateResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    return ProfileUpdateResponse.fromJson(json);
+    return ProfileUpdateResponse.fromJson(_decodePayloadMap(bytes));
   }
 }
 
@@ -1900,7 +2031,7 @@ class ProfileGetRequest {
         if (username != null) 'Username': username,
       };
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 /// Response to a profile get request
@@ -1925,8 +2056,7 @@ class ProfileGetResponse {
       );
 
   factory ProfileGetResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    return ProfileGetResponse.fromJson(json);
+    return ProfileGetResponse.fromJson(_decodePayloadMap(bytes));
   }
 }
 
@@ -1953,7 +2083,7 @@ class ChannelEditRequest {
         if (avatarUrl != null) 'AvatarUrl': avatarUrl,
       };
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 /// Response to a channel edit request
@@ -1970,8 +2100,7 @@ class ChannelEditResponse {
       );
 
   factory ChannelEditResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    return ChannelEditResponse.fromJson(json);
+    return ChannelEditResponse.fromJson(_decodePayloadMap(bytes));
   }
 }
 
@@ -1998,7 +2127,7 @@ class GroupEditRequest {
         if (avatarUrl != null) 'AvatarUrl': avatarUrl,
       };
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 /// Response to a group edit request
@@ -2015,8 +2144,7 @@ class GroupEditResponse {
       );
 
   factory GroupEditResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    return GroupEditResponse.fromJson(json);
+    return GroupEditResponse.fromJson(_decodePayloadMap(bytes));
   }
 }
 
@@ -2053,7 +2181,7 @@ class GroupMessageSendRequest {
         if (parseMode != null) 'ParseMode': parseMode,
       };
 
-  List<int> toBytes() => utf8.encode(jsonEncode(toJson()));
+  List<int> toBytes() => msgpack.serialize(toJson());
 }
 
 /// Response for group message send.
@@ -2076,8 +2204,7 @@ class GroupMessageSendResponse {
       );
 
   factory GroupMessageSendResponse.fromBytes(List<int> bytes) {
-    final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    return GroupMessageSendResponse.fromJson(json);
+    return GroupMessageSendResponse.fromJson(_decodePayloadMap(bytes));
   }
 }
 
@@ -2476,6 +2603,44 @@ class MessageReactRequest {
     this.remove = false,
   });
 
+  factory MessageReactRequest.privateChat({
+    required int messageId,
+    required String emoji,
+    bool remove = false,
+  }) =>
+      MessageReactRequest(
+        scope: ChatScope.privateChat.value,
+        messageId: messageId,
+        emoji: emoji,
+        remove: remove,
+      );
+
+  factory MessageReactRequest.channel({
+    required int messageId,
+    required String emoji,
+    bool remove = false,
+  }) =>
+      MessageReactRequest(
+        scope: ChatScope.channel.value,
+        messageId: messageId,
+        emoji: emoji,
+        remove: remove,
+      );
+
+  factory MessageReactRequest.group({
+    required int messageId,
+    required String emoji,
+    bool remove = false,
+  }) =>
+      MessageReactRequest(
+        scope: ChatScope.group.value,
+        messageId: messageId,
+        emoji: emoji,
+        remove: remove,
+      );
+
+  ChatScope get chatScope => ChatScope.fromValue(scope);
+
   Map<String, dynamic> toJson() => {
         'Scope': scope,
         'MessageId': messageId,
@@ -2532,6 +2697,8 @@ class MessageReactionEvent {
     required this.reactions,
   });
 
+  ChatScope get chatScope => ChatScope.fromValue(scope);
+
   factory MessageReactionEvent.fromJson(Map<String, dynamic> json) =>
       MessageReactionEvent(
         scope: json['Scope'] as String,
@@ -2568,6 +2735,32 @@ class MessagePinRequest {
     required this.targetId,
     this.unpin = false,
   });
+
+  factory MessagePinRequest.channel({
+    required int channelId,
+    required int messageId,
+    bool unpin = false,
+  }) =>
+      MessagePinRequest(
+        scope: RoomScope.channel.value,
+        messageId: messageId,
+        targetId: channelId,
+        unpin: unpin,
+      );
+
+  factory MessagePinRequest.group({
+    required int groupId,
+    required int messageId,
+    bool unpin = false,
+  }) =>
+      MessagePinRequest(
+        scope: RoomScope.group.value,
+        messageId: messageId,
+        targetId: groupId,
+        unpin: unpin,
+      );
+
+  RoomScope get roomScope => RoomScope.fromValue(scope);
 
   Map<String, dynamic> toJson() => {
         'Scope': scope,
@@ -2614,6 +2807,8 @@ class MessagePinEvent {
     required this.pinned,
     required this.actorUserId,
   });
+
+  RoomScope get roomScope => RoomScope.fromValue(scope);
 
   factory MessagePinEvent.fromJson(Map<String, dynamic> json) =>
       MessagePinEvent(
@@ -2668,6 +2863,11 @@ class RoomSettingsGetResponse {
     this.message,
   });
 
+  RoomScope get roomScope => RoomScope.fromValue(scope);
+  RoomJoinRule get joinRuleValue => RoomJoinRule.fromValue(joinRule);
+  RoomHistoryVisibility get historyVisibilityValue =>
+      RoomHistoryVisibility.fromValue(historyVisibility);
+
   factory RoomSettingsGetResponse.fromJson(Map<String, dynamic> json) =>
       RoomSettingsGetResponse(
         success: json['Success'] as bool,
@@ -2699,6 +2899,37 @@ class RoomSettingsUpdateRequest {
     this.historyVisibility,
   });
 
+  factory RoomSettingsUpdateRequest.channel({
+    required int channelId,
+    RoomJoinRule? joinRule,
+    RoomHistoryVisibility? historyVisibility,
+  }) =>
+      RoomSettingsUpdateRequest(
+        scope: RoomScope.channel.value,
+        targetId: channelId,
+        joinRule: joinRule?.value,
+        historyVisibility: historyVisibility?.value,
+      );
+
+  factory RoomSettingsUpdateRequest.group({
+    required int groupId,
+    RoomJoinRule? joinRule,
+    RoomHistoryVisibility? historyVisibility,
+  }) =>
+      RoomSettingsUpdateRequest(
+        scope: RoomScope.group.value,
+        targetId: groupId,
+        joinRule: joinRule?.value,
+        historyVisibility: historyVisibility?.value,
+      );
+
+  RoomScope get roomScope => RoomScope.fromValue(scope);
+  RoomJoinRule? get joinRuleValue =>
+      joinRule == null ? null : RoomJoinRule.fromValue(joinRule!);
+  RoomHistoryVisibility? get historyVisibilityValue => historyVisibility == null
+      ? null
+      : RoomHistoryVisibility.fromValue(historyVisibility!);
+
   Map<String, dynamic> toJson() => {
         'Scope': scope,
         'TargetId': targetId,
@@ -2727,4 +2958,305 @@ class RoomSettingsUpdateResponse {
     return RoomSettingsUpdateResponse.fromJson(
         _normalizeMsgPack(raw) as Map<String, dynamic>);
   }
+}
+
+/// Group create request payload.
+class GroupCreateRequest {
+  final String name;
+  final String? description;
+
+  GroupCreateRequest({
+    required this.name,
+    this.description,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'Name': name,
+        if (description != null) 'Description': description,
+      };
+
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+/// Group create response payload.
+class GroupCreateResponse {
+  final bool success;
+  final int groupId;
+  final String? message;
+
+  GroupCreateResponse({
+    required this.success,
+    this.groupId = 0,
+    this.message,
+  });
+
+  factory GroupCreateResponse.fromJson(Map<String, dynamic> json) =>
+      GroupCreateResponse(
+        success: json['Success'] as bool? ?? false,
+        groupId: (json['GroupId'] as num?)?.toInt() ?? 0,
+        message: json['Message'] as String?,
+      );
+
+  factory GroupCreateResponse.fromBytes(List<int> bytes) =>
+      GroupCreateResponse.fromJson(_decodePayloadMap(bytes));
+}
+
+/// Message edit request payload.
+class MessageEditRequest {
+  final int messageId;
+  final String newContent;
+  final String scope;
+  final int? channelId;
+  final int? groupId;
+
+  MessageEditRequest({
+    required this.messageId,
+    required this.newContent,
+    this.scope = 'private',
+    this.channelId,
+    this.groupId,
+  });
+
+  factory MessageEditRequest.privateChat({
+    required int messageId,
+    required String newContent,
+  }) =>
+      MessageEditRequest(
+        messageId: messageId,
+        newContent: newContent,
+        scope: ChatScope.privateChat.value,
+      );
+
+  factory MessageEditRequest.channel({
+    required int channelId,
+    required int messageId,
+    required String newContent,
+  }) =>
+      MessageEditRequest(
+        messageId: messageId,
+        newContent: newContent,
+        scope: ChatScope.channel.value,
+        channelId: channelId,
+      );
+
+  factory MessageEditRequest.group({
+    required int groupId,
+    required int messageId,
+    required String newContent,
+  }) =>
+      MessageEditRequest(
+        messageId: messageId,
+        newContent: newContent,
+        scope: ChatScope.group.value,
+        groupId: groupId,
+      );
+
+  ChatScope get chatScope => ChatScope.fromValue(scope);
+
+  Map<String, dynamic> toJson() => {
+        'MessageId': messageId,
+        'NewContent': newContent,
+        'Scope': scope,
+        if (channelId != null) 'ChannelId': channelId,
+        if (groupId != null) 'GroupId': groupId,
+      };
+
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+class MessageEditResponse {
+  final bool success;
+  final String? message;
+  final int messageId;
+
+  MessageEditResponse({
+    required this.success,
+    this.message,
+    this.messageId = 0,
+  });
+
+  factory MessageEditResponse.fromJson(Map<String, dynamic> json) =>
+      MessageEditResponse(
+        success: json['Success'] as bool? ?? false,
+        message: json['Message'] as String?,
+        messageId: (json['MessageId'] as num?)?.toInt() ?? 0,
+      );
+
+  factory MessageEditResponse.fromBytes(List<int> bytes) =>
+      MessageEditResponse.fromJson(_decodePayloadMap(bytes));
+}
+
+/// Message delete request payload.
+class MessageDeleteRequest {
+  final int messageId;
+  final String scope;
+  final int? channelId;
+  final int? groupId;
+
+  MessageDeleteRequest({
+    required this.messageId,
+    this.scope = 'private',
+    this.channelId,
+    this.groupId,
+  });
+
+  factory MessageDeleteRequest.privateChat({
+    required int messageId,
+  }) =>
+      MessageDeleteRequest(
+        messageId: messageId,
+        scope: ChatScope.privateChat.value,
+      );
+
+  factory MessageDeleteRequest.channel({
+    required int channelId,
+    required int messageId,
+  }) =>
+      MessageDeleteRequest(
+        messageId: messageId,
+        scope: ChatScope.channel.value,
+        channelId: channelId,
+      );
+
+  factory MessageDeleteRequest.group({
+    required int groupId,
+    required int messageId,
+  }) =>
+      MessageDeleteRequest(
+        messageId: messageId,
+        scope: ChatScope.group.value,
+        groupId: groupId,
+      );
+
+  ChatScope get chatScope => ChatScope.fromValue(scope);
+
+  Map<String, dynamic> toJson() => {
+        'MessageId': messageId,
+        'Scope': scope,
+        if (channelId != null) 'ChannelId': channelId,
+        if (groupId != null) 'GroupId': groupId,
+      };
+
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+class MessageDeleteResponse {
+  final bool success;
+  final String? message;
+  final int messageId;
+
+  MessageDeleteResponse({
+    required this.success,
+    this.message,
+    this.messageId = 0,
+  });
+
+  factory MessageDeleteResponse.fromJson(Map<String, dynamic> json) =>
+      MessageDeleteResponse(
+        success: json['Success'] as bool? ?? false,
+        message: json['Message'] as String?,
+        messageId: (json['MessageId'] as num?)?.toInt() ?? 0,
+      );
+
+  factory MessageDeleteResponse.fromBytes(List<int> bytes) =>
+      MessageDeleteResponse.fromJson(_decodePayloadMap(bytes));
+}
+
+/// Role update request for channel/group memberships.
+class MemberRoleUpdateRequest {
+  final String scope;
+  final int targetId;
+  final int targetUserId;
+  final int newRole;
+
+  MemberRoleUpdateRequest({
+    required this.scope,
+    required this.targetId,
+    required this.targetUserId,
+    required this.newRole,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'Scope': scope,
+        'TargetId': targetId,
+        'TargetUserId': targetUserId,
+        'NewRole': newRole,
+      };
+
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+class MemberRoleUpdateResponse {
+  final bool success;
+  final String? message;
+
+  MemberRoleUpdateResponse({required this.success, this.message});
+
+  factory MemberRoleUpdateResponse.fromJson(Map<String, dynamic> json) =>
+      MemberRoleUpdateResponse(
+        success: json['Success'] as bool? ?? false,
+        message: json['Message'] as String?,
+      );
+
+  factory MemberRoleUpdateResponse.fromBytes(List<int> bytes) =>
+      MemberRoleUpdateResponse.fromJson(_decodePayloadMap(bytes));
+}
+
+/// Permission update request for channel/group memberships.
+class MemberPermissionUpdateRequest {
+  final String scope;
+  final int targetId;
+  final int targetUserId;
+  final bool? canSendMessages;
+  final bool? canDeleteOthersMessages;
+  final bool? canEditInfo;
+  final bool? canInviteUsers;
+  final bool? canRemoveUsers;
+  final bool? canPinMessages;
+  final bool? canManageRoles;
+
+  MemberPermissionUpdateRequest({
+    required this.scope,
+    required this.targetId,
+    required this.targetUserId,
+    this.canSendMessages,
+    this.canDeleteOthersMessages,
+    this.canEditInfo,
+    this.canInviteUsers,
+    this.canRemoveUsers,
+    this.canPinMessages,
+    this.canManageRoles,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'Scope': scope,
+        'TargetId': targetId,
+        'TargetUserId': targetUserId,
+        if (canSendMessages != null) 'CanSendMessages': canSendMessages,
+        if (canDeleteOthersMessages != null)
+          'CanDeleteOthersMessages': canDeleteOthersMessages,
+        if (canEditInfo != null) 'CanEditInfo': canEditInfo,
+        if (canInviteUsers != null) 'CanInviteUsers': canInviteUsers,
+        if (canRemoveUsers != null) 'CanRemoveUsers': canRemoveUsers,
+        if (canPinMessages != null) 'CanPinMessages': canPinMessages,
+        if (canManageRoles != null) 'CanManageRoles': canManageRoles,
+      };
+
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+class MemberPermissionUpdateResponse {
+  final bool success;
+  final String? message;
+
+  MemberPermissionUpdateResponse({required this.success, this.message});
+
+  factory MemberPermissionUpdateResponse.fromJson(Map<String, dynamic> json) =>
+      MemberPermissionUpdateResponse(
+        success: json['Success'] as bool? ?? false,
+        message: json['Message'] as String?,
+      );
+
+  factory MemberPermissionUpdateResponse.fromBytes(List<int> bytes) =>
+      MemberPermissionUpdateResponse.fromJson(_decodePayloadMap(bytes));
 }

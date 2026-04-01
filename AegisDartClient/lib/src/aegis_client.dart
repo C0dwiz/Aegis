@@ -57,6 +57,9 @@ class AegisClient {
   int? _userId;
   String? _username;
   late final AegisEventDispatcher events;
+  late final AegisChannelFacade channels;
+  late final AegisGroupFacade groups;
+  late final AegisDirectFacade direct;
   final AegisApiCredentials? _apiCredentials;
 
   // Per-client sequence-ID counter so responses can be matched unambiguously.
@@ -126,6 +129,9 @@ class AegisClient {
                 : null) {
     _transport = AegisTransport();
     events = AegisEventDispatcher(_transport.messages);
+    channels = AegisChannelFacade._(this);
+    groups = AegisGroupFacade._(this);
+    direct = AegisDirectFacade._(this);
   }
 
   /// Create a client that explicitly uses the built-in official credentials.
@@ -350,7 +356,7 @@ class AegisClient {
     );
     final response = await _sendAndWaitResponse(
       msg,
-      expectedTypes: {MessageType.groupMessageResponse, MessageType.ack},
+      expectedTypes: {MessageType.groupMessageResponse},
     );
     return GroupMessageSendResponse.fromBytes(response.payload)
         .toMediaSendResponse();
@@ -390,7 +396,7 @@ class AegisClient {
     final msg =
         Message.withType(MessageType.privateChatMessage, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
-        expectedTypes: {MessageType.privateChatMessage, MessageType.ack});
+        expectedTypes: {MessageType.privateChatMessage});
     return PrivateChatMessageResponse.fromBytes(response.payload);
   }
 
@@ -578,7 +584,7 @@ class AegisClient {
 
     final msg = Message.withType(MessageType.channelMessage, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
-        expectedTypes: {MessageType.channelMessage, MessageType.ack});
+        expectedTypes: {MessageType.channelMessage});
     return ChannelMessageResponse.fromBytes(response.payload);
   }
 
@@ -746,7 +752,7 @@ class AegisClient {
         );
         final response = await _sendAndWaitResponse(
           msg,
-          expectedTypes: {MessageType.privateChatMessage, MessageType.ack},
+          expectedTypes: {MessageType.privateChatMessage},
         );
         return PrivateChatMessageResponse.fromBytes(response.payload)
             .toMediaSendResponse();
@@ -767,7 +773,7 @@ class AegisClient {
         );
         final response = await _sendAndWaitResponse(
           msg,
-          expectedTypes: {MessageType.channelMessage, MessageType.ack},
+          expectedTypes: {MessageType.channelMessage},
         );
         return ChannelMessageResponse.fromBytes(response.payload)
             .toMediaSendResponse();
@@ -788,7 +794,7 @@ class AegisClient {
         );
         final response = await _sendAndWaitResponse(
           msg,
-          expectedTypes: {MessageType.groupMessageResponse, MessageType.ack},
+          expectedTypes: {MessageType.groupMessageResponse},
         );
         return GroupMessageSendResponse.fromBytes(response.payload)
             .toMediaSendResponse();
@@ -908,7 +914,7 @@ class AegisClient {
 
     final msg = Message.withType(MessageType.channelCreate, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
-        expectedTypes: {MessageType.channelCreate, MessageType.ack});
+        expectedTypes: {MessageType.channelCreate});
     return ChannelCreateResponse.fromBytes(response.payload);
   }
 
@@ -919,7 +925,7 @@ class AegisClient {
     final request = ChannelJoinRequest(channelId: channelId);
     final msg = Message.withType(MessageType.channelJoin, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
-        expectedTypes: {MessageType.channelJoin, MessageType.ack});
+        expectedTypes: {MessageType.channelJoin});
     return ChannelJoinResponse.fromBytes(response.payload);
   }
 
@@ -941,7 +947,7 @@ class AegisClient {
 
     final msg = Message.withType(MessageType.channelEdit, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
-        expectedTypes: {MessageType.channelEditResponse, MessageType.ack});
+        expectedTypes: {MessageType.channelEditResponse});
     return ChannelEditResponse.fromBytes(response.payload);
   }
 
@@ -959,6 +965,24 @@ class AegisClient {
   }
 
   // ─── Groups (group chats) ─────────────────────────────────────────────────────
+
+  /// Create a new group chat.
+  Future<GroupCreateResponse> createGroup(
+    String name, {
+    String? description,
+  }) async {
+    _requireAuthenticated();
+
+    final request = GroupCreateRequest(
+      name: name,
+      description: description,
+    );
+
+    final msg = Message.withType(MessageType.groupCreate, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.groupCreateResponse});
+    return GroupCreateResponse.fromBytes(response.payload);
+  }
 
   /// Edit group chat properties (name, description, avatar URL).
   Future<GroupEditResponse> updateGroup(
@@ -978,7 +1002,7 @@ class AegisClient {
 
     final msg = Message.withType(MessageType.groupEdit, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
-        expectedTypes: {MessageType.groupEditResponse, MessageType.ack});
+        expectedTypes: {MessageType.groupEditResponse});
     return GroupEditResponse.fromBytes(response.payload);
   }
 
@@ -1076,7 +1100,7 @@ class AegisClient {
     _requireAuthenticated();
     final msg = Message.withType(
       MessageType.profileAvatarList,
-      utf8.encode('{}'),
+      msgpack.serialize(<String, Object?>{}),
     );
     final response = await _sendAndWaitResponse(msg,
         expectedTypes: {MessageType.profileAvatarListResponse});
@@ -1192,27 +1216,170 @@ class AegisClient {
     Set<MessageType>? expectedTypes,
     Duration timeout = const Duration(seconds: 10),
   }) async {
-    // Assign sequence ID before subscribing/sending
+    if (expectedTypes == null || expectedTypes.isEmpty) {
+      throw ArgumentError('expectedTypes must not be empty');
+    }
+
     message.sequenceId = _nextSeqId++;
     message.flags |= ProtocolConstants.flagRequiresAck;
 
     final seqId = message.sequenceId;
 
-    // Subscribe first (synchronous operation on the broadcast stream)
-    final responseFuture = messages.firstWhere((msg) {
-      if (msg.sequenceId != seqId) return false;
-      if (expectedTypes != null && !expectedTypes.contains(msg.type)) {
-        return false;
+    final completer = Completer<Message>();
+    late final StreamSubscription<Message> subscription;
+    Timer? timeoutTimer;
+
+    subscription = messages.listen((msg) {
+      if (msg.sequenceId != seqId) {
+        return;
       }
-      return true;
-    }).timeout(timeout, onTimeout: () {
-      throw TimeoutException('No response for seq=$seqId', timeout);
+
+      if (msg.type == MessageType.ack) {
+        return;
+      }
+
+      if (msg.type == MessageType.error || msg.type == MessageType.nack) {
+        if (!completer.isCompleted) {
+          completer.completeError(
+            Exception(_extractProtocolErrorMessage(msg)),
+          );
+        }
+        return;
+      }
+
+      if (!expectedTypes.contains(msg.type)) {
+        return;
+      }
+
+      if (!completer.isCompleted) {
+        completer.complete(msg);
+      }
     });
 
-    // Now send
+    timeoutTimer = Timer(timeout, () {
+      if (!completer.isCompleted) {
+        completer.completeError(
+          TimeoutException('No response for seq=$seqId', timeout),
+        );
+      }
+    });
+
     await _transport.sendMessage(message);
 
-    return responseFuture;
+    try {
+      return await completer.future;
+    } finally {
+      timeoutTimer.cancel();
+      await subscription.cancel();
+    }
+  }
+
+  String _extractProtocolErrorMessage(Message message) {
+    if (message.payload.isEmpty) {
+      return 'Protocol error: ${message.type}';
+    }
+
+    try {
+      final decoded = msgpack.deserialize(message.payload);
+      if (decoded is Map) {
+        final normalized = Map<String, dynamic>.from(
+          decoded.map((key, value) => MapEntry(key.toString(), value)),
+        );
+        final messageText = normalized['Message'] ??
+            normalized['Error'] ??
+            normalized['message'] ??
+            normalized['error'];
+        if (messageText != null) {
+          return messageText.toString();
+        }
+      }
+    } catch (_) {
+      // Fall through to UTF-8/plain representation.
+    }
+
+    try {
+      return utf8.decode(message.payload);
+    } catch (_) {
+      return 'Protocol error: ${message.type}';
+    }
+  }
+
+  Future<MessageReceiptResponse> _sendReceiptAndWaitResponse(
+    MessageType requestType,
+    MessageType responseType,
+    List<int> messageIds,
+    List<int> payload, {
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    final normalizedIds = messageIds.toSet().toList(growable: false)..sort();
+    final completer = Completer<MessageReceiptResponse>();
+    late final StreamSubscription<Message> subscription;
+    Timer? timeoutTimer;
+
+    bool matchesMessageIds(List<int> candidate) {
+      if (candidate.length != normalizedIds.length) {
+        return false;
+      }
+
+      final sortedCandidate = candidate.toSet().toList(growable: false)..sort();
+      if (sortedCandidate.length != normalizedIds.length) {
+        return false;
+      }
+
+      for (var index = 0; index < normalizedIds.length; index++) {
+        if (sortedCandidate[index] != normalizedIds[index]) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+
+    subscription = messages.listen((msg) {
+      if (msg.type != responseType && msg.type != MessageType.error) {
+        return;
+      }
+
+      if (msg.type == MessageType.error) {
+        if (!completer.isCompleted) {
+          completer.completeError(Exception(_extractProtocolErrorMessage(msg)));
+        }
+        return;
+      }
+
+      try {
+        final response = MessageReceiptResponse.fromBytes(msg.payload);
+        if (!matchesMessageIds(response.messageIds)) {
+          return;
+        }
+
+        if (!completer.isCompleted) {
+          completer.complete(response);
+        }
+      } catch (_) {
+        // Ignore unrelated payloads.
+      }
+    });
+
+    timeoutTimer = Timer(timeout, () {
+      if (!completer.isCompleted) {
+        completer.completeError(
+          TimeoutException('No receipt response for $requestType', timeout),
+        );
+      }
+    });
+
+    final message = Message.withType(requestType, payload)
+      ..sequenceId = _nextSeqId++
+      ..flags |= ProtocolConstants.flagRequiresAck;
+    await _transport.sendMessage(message);
+
+    try {
+      return await completer.future;
+    } finally {
+      timeoutTimer.cancel();
+      await subscription.cancel();
+    }
   }
 
   /// Send the initial handshake after connect.
@@ -1374,6 +1541,299 @@ class AegisClient {
     return GroupLeaveResponse.fromBytes(response.payload);
   }
 
+  // ─── Message edits and deletes ──────────────────────────────────────────────
+
+  Future<MessageEditResponse> editMessage(
+    int messageId,
+    String newContent, {
+    String scope = 'private',
+    int? channelId,
+    int? groupId,
+  }) async {
+    _requireAuthenticated();
+
+    final request = MessageEditRequest(
+      messageId: messageId,
+      newContent: newContent,
+      scope: scope,
+      channelId: channelId,
+      groupId: groupId,
+    );
+
+    final msg = Message.withType(MessageType.messageEdit, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.messageEditResponse});
+    return MessageEditResponse.fromBytes(response.payload);
+  }
+
+  Future<MessageEditResponse> editPrivateMessage(
+    int messageId,
+    String newContent,
+  ) {
+    return editMessage(
+      messageId,
+      newContent,
+      scope: ChatScope.privateChat.value,
+    );
+  }
+
+  Future<MessageEditResponse> editChannelMessage(
+    int channelId,
+    int messageId,
+    String newContent,
+  ) {
+    return editMessage(
+      messageId,
+      newContent,
+      scope: ChatScope.channel.value,
+      channelId: channelId,
+    );
+  }
+
+  Future<MessageEditResponse> editGroupMessage(
+    int groupId,
+    int messageId,
+    String newContent,
+  ) {
+    return editMessage(
+      messageId,
+      newContent,
+      scope: ChatScope.group.value,
+      groupId: groupId,
+    );
+  }
+
+  Future<MessageDeleteResponse> deleteMessage(
+    int messageId, {
+    String scope = 'private',
+    int? channelId,
+    int? groupId,
+  }) async {
+    _requireAuthenticated();
+
+    final request = MessageDeleteRequest(
+      messageId: messageId,
+      scope: scope,
+      channelId: channelId,
+      groupId: groupId,
+    );
+
+    final msg = Message.withType(MessageType.messageDelete, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.messageDeleteResponse});
+    return MessageDeleteResponse.fromBytes(response.payload);
+  }
+
+  Future<MessageDeleteResponse> deletePrivateMessage(int messageId) {
+    return deleteMessage(messageId, scope: ChatScope.privateChat.value);
+  }
+
+  Future<MessageDeleteResponse> deleteChannelMessage(
+    int channelId,
+    int messageId,
+  ) {
+    return deleteMessage(
+      messageId,
+      scope: ChatScope.channel.value,
+      channelId: channelId,
+    );
+  }
+
+  Future<MessageDeleteResponse> deleteGroupMessage(
+    int groupId,
+    int messageId,
+  ) {
+    return deleteMessage(
+      messageId,
+      scope: ChatScope.group.value,
+      groupId: groupId,
+    );
+  }
+
+  // ─── Membership administration ─────────────────────────────────────────────
+
+  Future<MemberRoleUpdateResponse> updateMemberRole({
+    required String scope,
+    required int targetId,
+    required int targetUserId,
+    required int newRole,
+  }) async {
+    _requireAuthenticated();
+
+    final request = MemberRoleUpdateRequest(
+      scope: scope,
+      targetId: targetId,
+      targetUserId: targetUserId,
+      newRole: newRole,
+    );
+
+    final msg = Message.withType(
+      MessageType.memberRoleUpdate,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.memberRoleUpdateResponse});
+    return MemberRoleUpdateResponse.fromBytes(response.payload);
+  }
+
+  Future<MemberRoleUpdateResponse> updateChannelMemberRole({
+    required int channelId,
+    required int targetUserId,
+    required MemberRole newRole,
+  }) {
+    return updateMemberRole(
+      scope: RoomScope.channel.value,
+      targetId: channelId,
+      targetUserId: targetUserId,
+      newRole: newRole.value,
+    );
+  }
+
+  Future<MemberRoleUpdateResponse> updateGroupMemberRole({
+    required int groupId,
+    required int targetUserId,
+    required MemberRole newRole,
+  }) {
+    return updateMemberRole(
+      scope: RoomScope.group.value,
+      targetId: groupId,
+      targetUserId: targetUserId,
+      newRole: newRole.value,
+    );
+  }
+
+  Future<MemberPermissionUpdateResponse> updateMemberPermissions({
+    required String scope,
+    required int targetId,
+    required int targetUserId,
+    bool? canSendMessages,
+    bool? canDeleteOthersMessages,
+    bool? canEditInfo,
+    bool? canInviteUsers,
+    bool? canRemoveUsers,
+    bool? canPinMessages,
+    bool? canManageRoles,
+  }) async {
+    _requireAuthenticated();
+
+    final request = MemberPermissionUpdateRequest(
+      scope: scope,
+      targetId: targetId,
+      targetUserId: targetUserId,
+      canSendMessages: canSendMessages,
+      canDeleteOthersMessages: canDeleteOthersMessages,
+      canEditInfo: canEditInfo,
+      canInviteUsers: canInviteUsers,
+      canRemoveUsers: canRemoveUsers,
+      canPinMessages: canPinMessages,
+      canManageRoles: canManageRoles,
+    );
+
+    final msg = Message.withType(
+      MessageType.memberPermissionUpdate,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.memberPermissionUpdateResponse});
+    return MemberPermissionUpdateResponse.fromBytes(response.payload);
+  }
+
+  Future<MemberPermissionUpdateResponse> updateChannelMemberPermissions({
+    required int channelId,
+    required int targetUserId,
+    bool? canSendMessages,
+    bool? canDeleteOthersMessages,
+    bool? canEditInfo,
+    bool? canInviteUsers,
+    bool? canRemoveUsers,
+    bool? canPinMessages,
+    bool? canManageRoles,
+  }) {
+    return updateMemberPermissions(
+      scope: RoomScope.channel.value,
+      targetId: channelId,
+      targetUserId: targetUserId,
+      canSendMessages: canSendMessages,
+      canDeleteOthersMessages: canDeleteOthersMessages,
+      canEditInfo: canEditInfo,
+      canInviteUsers: canInviteUsers,
+      canRemoveUsers: canRemoveUsers,
+      canPinMessages: canPinMessages,
+      canManageRoles: canManageRoles,
+    );
+  }
+
+  Future<MemberPermissionUpdateResponse> updateGroupMemberPermissions({
+    required int groupId,
+    required int targetUserId,
+    bool? canSendMessages,
+    bool? canDeleteOthersMessages,
+    bool? canEditInfo,
+    bool? canInviteUsers,
+    bool? canRemoveUsers,
+    bool? canPinMessages,
+    bool? canManageRoles,
+  }) {
+    return updateMemberPermissions(
+      scope: RoomScope.group.value,
+      targetId: groupId,
+      targetUserId: targetUserId,
+      canSendMessages: canSendMessages,
+      canDeleteOthersMessages: canDeleteOthersMessages,
+      canEditInfo: canEditInfo,
+      canInviteUsers: canInviteUsers,
+      canRemoveUsers: canRemoveUsers,
+      canPinMessages: canPinMessages,
+      canManageRoles: canManageRoles,
+    );
+  }
+
+  // ─── Delivery and read receipts ────────────────────────────────────────────
+
+  Future<MessageReceiptResponse> sendDeliveryReceipt(
+    List<int> messageIds, {
+    DateTime? deliveredAt,
+    String? deviceId,
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    _requireAuthenticated();
+
+    final request = MessageDeliveryReceiptRequest(
+      messageIds: messageIds,
+      deliveredAt: deliveredAt ?? DateTime.now().toUtc(),
+      deviceId: deviceId,
+    );
+
+    return _sendReceiptAndWaitResponse(
+      MessageType.messageDeliveryReceipt,
+      MessageType.messageDeliveryReceiptResponse,
+      messageIds,
+      request.toBytes(),
+      timeout: timeout,
+    );
+  }
+
+  Future<MessageReceiptResponse> sendReadReceipt(
+    List<int> messageIds, {
+    DateTime? readAt,
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    _requireAuthenticated();
+
+    final request = MessageReadReceiptRequest(
+      messageIds: messageIds,
+      readAt: readAt ?? DateTime.now().toUtc(),
+    );
+
+    return _sendReceiptAndWaitResponse(
+      MessageType.messageReadReceipt,
+      MessageType.messageReadReceiptResponse,
+      messageIds,
+      request.toBytes(),
+      timeout: timeout,
+    );
+  }
+
   // ─── Reactions and Pins (SERVER-005) ───────────────────────────────────────
 
   /// Post a reaction to a message.
@@ -1402,6 +1862,27 @@ class AegisClient {
     return MessageReactResponse.fromBytes(response.payload);
   }
 
+  Future<MessageReactResponse> reactToPrivateMessage(
+    int messageId,
+    String emoji,
+  ) {
+    return postReaction(ChatScope.privateChat.value, messageId, emoji);
+  }
+
+  Future<MessageReactResponse> reactToChannelMessage(
+    int messageId,
+    String emoji,
+  ) {
+    return postReaction(ChatScope.channel.value, messageId, emoji);
+  }
+
+  Future<MessageReactResponse> reactToGroupMessage(
+    int messageId,
+    String emoji,
+  ) {
+    return postReaction(ChatScope.group.value, messageId, emoji);
+  }
+
   /// Remove a reaction from a message.
   ///
   /// [scope] can be "private", "channel", or "group".
@@ -1426,6 +1907,27 @@ class AegisClient {
     final response = await _sendAndWaitResponse(msg,
         expectedTypes: {MessageType.messageReactResponse});
     return MessageReactResponse.fromBytes(response.payload);
+  }
+
+  Future<MessageReactResponse> removeReactionFromPrivateMessage(
+    int messageId,
+    String emoji,
+  ) {
+    return removeReaction(ChatScope.privateChat.value, messageId, emoji);
+  }
+
+  Future<MessageReactResponse> removeReactionFromChannelMessage(
+    int messageId,
+    String emoji,
+  ) {
+    return removeReaction(ChatScope.channel.value, messageId, emoji);
+  }
+
+  Future<MessageReactResponse> removeReactionFromGroupMessage(
+    int messageId,
+    String emoji,
+  ) {
+    return removeReaction(ChatScope.group.value, messageId, emoji);
   }
 
   /// Pin a message in a channel or group.
@@ -1455,6 +1957,20 @@ class AegisClient {
     return MessagePinResponse.fromBytes(response.payload);
   }
 
+  Future<MessagePinResponse> pinChannelMessage(
+    int channelId,
+    int messageId,
+  ) {
+    return pinMessage(RoomScope.channel.value, messageId, channelId);
+  }
+
+  Future<MessagePinResponse> pinGroupMessage(
+    int groupId,
+    int messageId,
+  ) {
+    return pinMessage(RoomScope.group.value, messageId, groupId);
+  }
+
   /// Unpin a message in a channel or group.
   ///
   /// [scope] must be "channel" or "group".
@@ -1482,6 +1998,20 @@ class AegisClient {
     return MessagePinResponse.fromBytes(response.payload);
   }
 
+  Future<MessagePinResponse> unpinChannelMessage(
+    int channelId,
+    int messageId,
+  ) {
+    return unpinMessage(RoomScope.channel.value, messageId, channelId);
+  }
+
+  Future<MessagePinResponse> unpinGroupMessage(
+    int groupId,
+    int messageId,
+  ) {
+    return unpinMessage(RoomScope.group.value, messageId, groupId);
+  }
+
   // ─── Room Settings (SERVER-006) ────────────────────────────────────────────
 
   /// Get room settings for a channel or group.
@@ -1506,6 +2036,14 @@ class AegisClient {
     final response = await _sendAndWaitResponse(msg,
         expectedTypes: {MessageType.roomSettingsGetResponse});
     return RoomSettingsGetResponse.fromBytes(response.payload);
+  }
+
+  Future<RoomSettingsGetResponse> getChannelSettings(int channelId) {
+    return getRoomSettings(RoomScope.channel.value, channelId);
+  }
+
+  Future<RoomSettingsGetResponse> getGroupSettings(int groupId) {
+    return getRoomSettings(RoomScope.group.value, groupId);
   }
 
   /// Update room settings for a channel or group.
@@ -1538,6 +2076,32 @@ class AegisClient {
     return RoomSettingsUpdateResponse.fromBytes(response.payload);
   }
 
+  Future<RoomSettingsUpdateResponse> updateChannelSettings(
+    int channelId, {
+    RoomJoinRule? joinRule,
+    RoomHistoryVisibility? historyVisibility,
+  }) {
+    return updateRoomSettings(
+      RoomScope.channel.value,
+      channelId,
+      joinRule: joinRule?.value,
+      historyVisibility: historyVisibility?.value,
+    );
+  }
+
+  Future<RoomSettingsUpdateResponse> updateGroupSettings(
+    int groupId, {
+    RoomJoinRule? joinRule,
+    RoomHistoryVisibility? historyVisibility,
+  }) {
+    return updateRoomSettings(
+      RoomScope.group.value,
+      groupId,
+      joinRule: joinRule?.value,
+      historyVisibility: historyVisibility?.value,
+    );
+  }
+
   Future<void> _publishPresence({required bool isOnline}) async {
     try {
       final request = UserPresenceUpdateRequest(
@@ -1565,4 +2129,218 @@ class AegisClient {
     final bytes = ByteData(8)..setUint64(0, value, Endian.big);
     return bytes.buffer.asUint8List().toList();
   }
+}
+
+class AegisChannelFacade {
+  final AegisClient _client;
+
+  AegisChannelFacade._(this._client);
+
+  Future<ChannelCreateResponse> create(
+    String name, {
+    String? description,
+    ChannelType type = ChannelType.public,
+  }) =>
+      _client.createChannel(name, description: description, type: type);
+
+  Future<ChannelJoinResponse> join(int channelId) =>
+      _client.joinChannel(channelId);
+
+  Future<ChannelJoinResponse> joinByLink(String linkOrAlias) =>
+      _client.joinChannelByLink(linkOrAlias);
+
+  Future<ChannelLeaveResponse> leave(int channelId) =>
+      _client.leaveChannel(channelId);
+
+  Future<ChannelMessageResponse> sendMessage(
+    int channelId,
+    String content, {
+    MessageContentType contentType = MessageContentType.text,
+    int? replyToMessageId,
+    ParseMode? parseMode,
+  }) =>
+      _client.sendChannelMessage(
+        channelId,
+        content,
+        contentType: contentType,
+        replyToMessageId: replyToMessageId,
+        parseMode: parseMode,
+      );
+
+  Future<ChannelHistoryResponse> history(
+    int channelId, {
+    int limit = 100,
+    int? beforeMessageId,
+  }) =>
+      _client.getChannelHistory(
+        channelId,
+        limit: limit,
+        beforeMessageId: beforeMessageId,
+      );
+
+  Future<ChannelMembersResponse> members(int channelId) =>
+      _client.getChannelMembers(channelId);
+
+  Future<MessagePinResponse> pinMessage(int channelId, int messageId) =>
+      _client.pinChannelMessage(channelId, messageId);
+
+  Future<MessagePinResponse> unpinMessage(int channelId, int messageId) =>
+      _client.unpinChannelMessage(channelId, messageId);
+
+  Future<MessageReactResponse> react(int messageId, String emoji) =>
+      _client.reactToChannelMessage(messageId, emoji);
+
+  Future<MessageReactResponse> removeReaction(int messageId, String emoji) =>
+      _client.removeReactionFromChannelMessage(messageId, emoji);
+
+  Future<MessageEditResponse> editMessage(
+    int channelId,
+    int messageId,
+    String newContent,
+  ) =>
+      _client.editChannelMessage(channelId, messageId, newContent);
+
+  Future<MessageDeleteResponse> deleteMessage(
+    int channelId,
+    int messageId,
+  ) =>
+      _client.deleteChannelMessage(channelId, messageId);
+
+  Future<RoomSettingsGetResponse> getSettings(int channelId) =>
+      _client.getChannelSettings(channelId);
+
+  Future<RoomSettingsUpdateResponse> updateSettings(
+    int channelId, {
+    RoomJoinRule? joinRule,
+    RoomHistoryVisibility? historyVisibility,
+  }) =>
+      _client.updateChannelSettings(
+        channelId,
+        joinRule: joinRule,
+        historyVisibility: historyVisibility,
+      );
+}
+
+class AegisGroupFacade {
+  final AegisClient _client;
+
+  AegisGroupFacade._(this._client);
+
+  Future<GroupCreateResponse> create(
+    String name, {
+    String? description,
+  }) =>
+      _client.createGroup(name, description: description);
+
+  Future<GroupLeaveResponse> leave(int groupId) => _client.leaveGroup(groupId);
+
+  Future<MediaSendResponse> sendMessage(
+    int groupId,
+    String content, {
+    MessageContentType contentType = MessageContentType.text,
+    int? replyToMessageId,
+    ParseMode? parseMode,
+  }) =>
+      _client.sendGroupMessage(
+        groupId,
+        content,
+        contentType: contentType,
+        replyToMessageId: replyToMessageId,
+        parseMode: parseMode,
+      );
+
+  Future<GroupHistoryResponse> history(
+    int groupId, {
+    int limit = 100,
+    int? beforeMessageId,
+  }) =>
+      _client.getGroupHistory(
+        groupId,
+        limit: limit,
+        beforeMessageId: beforeMessageId,
+      );
+
+  Future<GroupMembersResponse> members(int groupId) =>
+      _client.getGroupMembers(groupId);
+
+  Future<MessagePinResponse> pinMessage(int groupId, int messageId) =>
+      _client.pinGroupMessage(groupId, messageId);
+
+  Future<MessagePinResponse> unpinMessage(int groupId, int messageId) =>
+      _client.unpinGroupMessage(groupId, messageId);
+
+  Future<MessageReactResponse> react(int messageId, String emoji) =>
+      _client.reactToGroupMessage(messageId, emoji);
+
+  Future<MessageReactResponse> removeReaction(int messageId, String emoji) =>
+      _client.removeReactionFromGroupMessage(messageId, emoji);
+
+  Future<MessageEditResponse> editMessage(
+    int groupId,
+    int messageId,
+    String newContent,
+  ) =>
+      _client.editGroupMessage(groupId, messageId, newContent);
+
+  Future<MessageDeleteResponse> deleteMessage(
+    int groupId,
+    int messageId,
+  ) =>
+      _client.deleteGroupMessage(groupId, messageId);
+
+  Future<RoomSettingsGetResponse> getSettings(int groupId) =>
+      _client.getGroupSettings(groupId);
+
+  Future<RoomSettingsUpdateResponse> updateSettings(
+    int groupId, {
+    RoomJoinRule? joinRule,
+    RoomHistoryVisibility? historyVisibility,
+  }) =>
+      _client.updateGroupSettings(
+        groupId,
+        joinRule: joinRule,
+        historyVisibility: historyVisibility,
+      );
+}
+
+class AegisDirectFacade {
+  final AegisClient _client;
+
+  AegisDirectFacade._(this._client);
+
+  Future<PrivateChatMessageResponse> sendMessage(
+    int toUserId,
+    String content, {
+    MessageContentType contentType = MessageContentType.text,
+    ParseMode? parseMode,
+  }) =>
+      _client.sendPrivateMessage(
+        toUserId,
+        content,
+        contentType: contentType,
+        parseMode: parseMode,
+      );
+
+  Future<PrivateChatHistoryResponse> history(
+    int peerUserId, {
+    int limit = 100,
+    int? beforeMessageId,
+  }) =>
+      _client.getPrivateHistory(
+        peerUserId,
+        limit: limit,
+        beforeMessageId: beforeMessageId,
+      );
+
+  Future<MessageReactResponse> react(int messageId, String emoji) =>
+      _client.reactToPrivateMessage(messageId, emoji);
+
+  Future<MessageReactResponse> removeReaction(int messageId, String emoji) =>
+      _client.removeReactionFromPrivateMessage(messageId, emoji);
+
+  Future<MessageEditResponse> editMessage(int messageId, String newContent) =>
+      _client.editPrivateMessage(messageId, newContent);
+
+  Future<MessageDeleteResponse> deleteMessage(int messageId) =>
+      _client.deletePrivateMessage(messageId);
 }

@@ -6,14 +6,15 @@ Dart клиентская библиотека для протокола Aegis M
 
 - ✅ Полная реализация бинарного протокола Aegis
 - ✅ TCP транспортный слой с автоматическим переподключением
-- ✅ Поддержка всех типов сообщений (Auth, Ping, Message, Ack, Error, Handshake)
-- ✅ **Новые функции:** Регистрация пользователей, поиск пользователей, каналы, приватные сообщения
-- ✅ **Новые типы сообщений:** Register, UserSearch, ChannelMessage, PrivateChatMessage и др.
+- ✅ MessagePack-first payload layer, совместимый с актуальным серверным wire protocol
+- ✅ Корректная обработка same-type responses, async events и receipt confirmations
+- ✅ **Новые функции:** регистрация, поиск пользователей, чаты, каналы, группы, профиль, reactions, pins, room settings
+- ✅ **Расширенный SDK coverage:** history, members, receipts, message edit/delete, member role/permission updates
 - ✅ Big-endian сериализация для кроссплатформенной совместимости
 - ✅ Встроенное логирование и обработка ошибок
 - ✅ Stream-based API для обработки входящих сообщений
 - ✅ Поддержка Sequence ID для упорядочивания сообщений
-- ✅ JSON-сериализация для сложных payloads
+- ✅ MessagePack-сериализация для protocol payloads и JSON только для вложенного rich/media content
 - ✅ Поддержка обязательных `api_id` / `api_hash` в handshake
 - ✅ Верификация подписанного server handshake через доверенный public key
 
@@ -55,8 +56,8 @@ void main() async {
       print('User registered: ${registrationResponse.user?.username}');
     }
 
-    // Аутентификация
-    await client.authenticate('your_auth_token');
+    // Аутентификация по session token
+    await client.loginWithToken('your_auth_token');
 
     // Поиск пользователей
     final searchResponse = await client.searchUsers('username_pattern');
@@ -71,13 +72,19 @@ void main() async {
 
     if (channelResponse.success) {
       // Присоединение к каналу
-      await client.joinChannel(channelResponse.channel!.id);
+      await client.joinChannel(channelResponse.channelId);
 
       // Отправка сообщения в канал
       await client.sendChannelMessage(
-        channelResponse.channel!.id,
+        channelResponse.channelId,
         'Hello from Dart client!',
       );
+    }
+
+    // Создание группы и загрузка истории
+    final groupResponse = await client.createGroup('My Group');
+    if (groupResponse.success) {
+      await client.getGroupHistory(groupResponse.groupId);
     }
 
     // Отправка приватного сообщения
@@ -159,7 +166,8 @@ await client.connect(
 
 #### Базовые методы:
 - `connect(host, port, {timeout, transportMaskingKey, enableMaskingAutoFallback})` - подключение к серверу
-- `authenticate(token)` - аутентификация
+- `login(username, password)` / `loginWithToken(token)` - аутентификация
+- `authenticate(rawPayloadOrToken)` - low-level совместимый auth helper
 - `sendMessage(text, toUserId)` - отправка сообщения (legacy)
 - `ping()` - отправка ping для поддержания соединения
 - `disconnect()` - отключение от сервера
@@ -174,8 +182,12 @@ await client.connect(
 - `register(username, email, password, publicKey)` - регистрация пользователя
 - `searchUsers(query, limit)` - поиск пользователей
 - `createChannel(name, description, type)` - создание канала
+- `createGroup(name, description)` - создание группы
 - `joinChannel(channelId)` - присоединение к каналу
+- `joinChannelByLink(linkOrAlias)` - вступление по invite/public link
+- `leaveChannel(channelId)` / `leaveGroup(groupId)` - выход из room
 - `sendChannelMessage(channelId, content, contentType, replyToMessageId)` - отправка сообщения в канал
+- `sendGroupMessage(groupId, content, contentType, replyToMessageId)` - отправка сообщения в группу
 - `sendPrivateMessage(toUserId, content, contentType)` - отправка приватного сообщения
 - `sendPrivatePhoto(toUserId, photoBytes, ...)` - отправка фото в приватный чат
 - `sendPrivateFile(toUserId, fileBytes, fileName, ...)` - отправка файла в приватный чат
@@ -184,7 +196,35 @@ await client.connect(
 - `sendChannelFile(channelId, fileBytes, fileName, ...)` - отправка файла в канал
 - `sendChannelVoice(channelId, voiceBytes, ...)` - отправка голосового в канал
 - `sendMedia(chatType, chatId, mediaBytes, mediaKind, ...)` - единый метод отправки фото/файлов/голосовых в любой чат
+- `getChatList()` / `getPrivateHistory()` / `getChannelHistory()` / `getGroupHistory()` - bootstrap и history APIs
+- `sendDeliveryReceipt(messageIds)` / `sendReadReceipt(messageIds)` - delivery/read receipts
+- `editMessage(...)` / `deleteMessage(...)` - message mutation APIs
+- `updateMemberRole(...)` / `updateMemberPermissions(...)` - admin/member management
+- `postReaction(...)` / `removeReaction(...)` / `pinMessage(...)` / `unpinMessage(...)` - room interaction APIs
+- `getRoomSettings(...)` / `updateRoomSettings(...)` - room settings APIs
+- `editPrivateMessage(...)`, `editChannelMessage(...)`, `editGroupMessage(...)` - typed helpers вместо ручного `scope`
+- `deletePrivateMessage(...)`, `deleteChannelMessage(...)`, `deleteGroupMessage(...)` - typed delete helpers
+- `updateChannelMemberRole(...)` / `updateGroupMemberRole(...)` - typed role helpers через `MemberRole`
+- `updateChannelMemberPermissions(...)` / `updateGroupMemberPermissions(...)` - typed permission helpers
+- `reactToPrivateMessage(...)`, `reactToChannelMessage(...)`, `reactToGroupMessage(...)` - typed reaction helpers
+- `pinChannelMessage(...)`, `pinGroupMessage(...)`, `getChannelSettings(...)`, `getGroupSettings(...)` - typed room helpers
 - `tryParseMediaAttachment(content, contentType)` - парсинг медиа-вложения из входящего сообщения
+
+Важно:
+- wire payloads кодируются через MessagePack, а не через JSON;
+- часть server responses приходит тем же `MessageType`, что и запрос;
+- `Ack` больше не воспринимается клиентом как бизнес-ответ метода.
+
+Для ergonomics SDK также предоставляет typed enums:
+- `ChatScope` для private/channel/group операций
+- `RoomScope` для channel/group room APIs
+- `MemberRole` для owner/admin/moderator/member
+- `RoomJoinRule` и `RoomHistoryVisibility` для room settings
+
+И fluent facades поверх клиента:
+- `client.channels.create(...)`, `client.channels.pinMessage(...)`, `client.channels.updateSettings(...)`
+- `client.groups.create(...)`, `client.groups.history(...)`, `client.groups.updateSettings(...)`
+- `client.direct.sendMessage(...)`, `client.direct.history(...)`, `client.direct.editMessage(...)`
 
 ### Message Payloads
 
