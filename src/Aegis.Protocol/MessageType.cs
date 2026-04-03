@@ -120,7 +120,16 @@ public enum MessageType : ushort
     RoomSettingsGet = 83,
     RoomSettingsGetResponse = 84,
     RoomSettingsUpdate = 85,
-    RoomSettingsUpdateResponse = 86
+    RoomSettingsUpdateResponse = 86,
+
+    // Typing indicators (TODO-012)
+    UserTyping = 87,
+    UserTypingEvent = 88,
+
+    // File transfer (TODO-017/018)
+    FileTransfer = 89,
+    FileTransferResponse = 90,
+    FileTransferChunk = 91
 }
 
 /// <summary>

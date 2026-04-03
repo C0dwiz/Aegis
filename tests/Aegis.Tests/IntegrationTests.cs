@@ -15,6 +15,9 @@ using Xunit;
 using Microsoft.EntityFrameworkCore.InMemory;
 using System.Net.Sockets;
 using Moq;
+using Microsoft.Extensions.Configuration;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Aegis.Tests;
 
@@ -41,6 +44,7 @@ public class IntegrationTests : IDisposable
         services.AddScoped<Aegis.Data.Utils.FastIdGenerator>(_ => new Aegis.Data.Utils.FastIdGenerator(1));
         services.AddScoped<IUserRegistrationService, UserRegistrationService>();
         services.AddScoped<IUserAuthenticationService, UserAuthenticationService>();
+        services.AddScoped<IUserTwoFactorService, UserTwoFactorService>();
         services.AddScoped<IUserSearchService, UserSearchService>();
 
         // Add logging
@@ -49,15 +53,24 @@ public class IntegrationTests : IDisposable
         // Add crypto provider mock
         var mockCryptoProvider = new Moq.Mock<Aegis.Common.ICryptoProvider>();
         mockCryptoProvider.Setup(x => x.HashPasswordAsync(Moq.It.IsAny<string>()))
-            .ReturnsAsync("hashed_password");
+            .ReturnsAsync((string password) => $"hash:{password}");
         mockCryptoProvider.Setup(x => x.VerifyPasswordAsync(Moq.It.IsAny<string>(), Moq.It.IsAny<string>()))
-            .ReturnsAsync(true);
+            .ReturnsAsync((string password, string hash) => hash == $"hash:{password}");
         mockCryptoProvider.Setup(x => x.GenerateSessionKeyAsync())
             .ReturnsAsync(new byte[] { 1, 2, 3, 4 });
         mockCryptoProvider.Setup(x => x.HashAsync(Moq.It.IsAny<string>()))
             .ReturnsAsync("hashed_session_key");
 
         services.AddSingleton(mockCryptoProvider.Object);
+
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Security:TotpEncryptionKey"] = Convert.ToBase64String(Enumerable.Repeat((byte)11, 32).ToArray())
+            })
+            .Build();
+
+        services.AddSingleton<IConfiguration>(configuration);
 
         _serviceProvider = services.BuildServiceProvider();
         _context = _serviceProvider.GetRequiredService<AegisDbContext>();
@@ -321,6 +334,118 @@ public class IntegrationTests : IDisposable
 
         var validateResult = await authService.ValidateSessionAsync(session1.SessionToken);
         Assert.False(validateResult);
+    }
+
+    [Fact]
+    public async Task AuthHardeningFlow_With2FaAndRecovery_ShouldWorkEndToEnd()
+    {
+        var registrationService = _serviceProvider.GetRequiredService<IUserRegistrationService>();
+        var authService = _serviceProvider.GetRequiredService<IUserAuthenticationService>();
+        var twoFactorService = _serviceProvider.GetRequiredService<IUserTwoFactorService>();
+        var userRepository = _serviceProvider.GetRequiredService<IUserRepository>();
+
+        var user = await registrationService.RegisterUserAsync(
+            "hardflow",
+            "hardflow@example.com",
+            "password123",
+            "public_key",
+            isEmailVerified: false);
+
+        var beforeVerify = await authService.AuthenticateUserWithStatusAsync("hardflow", "password123", "itest", "127.0.0.1");
+        Assert.False(beforeVerify.Success);
+        Assert.Equal(AuthFailureReason.EmailNotVerified, beforeVerify.FailureReason);
+
+        user.IsEmailVerified = true;
+        user.EmailVerifiedAt = DateTime.UtcNow;
+        user.UpdatedAt = DateTime.UtcNow;
+        await userRepository.UpdateAsync(user);
+
+        var setup = await twoFactorService.BeginSetupAsync(user.Id, "Twospace");
+        var code = ComputeCurrentTotp(setup.Secret);
+        var enabled = await twoFactorService.EnableAsync(user.Id, code);
+        Assert.True(enabled);
+
+        var no2fa = await authService.AuthenticateUserWithStatusAsync("hardflow", "password123", "itest", "127.0.0.1");
+        Assert.False(no2fa.Success);
+        Assert.Equal(AuthFailureReason.TwoFactorRequired, no2fa.FailureReason);
+
+        var wrong2fa = await authService.AuthenticateUserWithStatusAsync("hardflow", "password123", "itest", "127.0.0.1", twoFactorCode: "000000");
+        Assert.False(wrong2fa.Success);
+        Assert.Equal(AuthFailureReason.TwoFactorInvalid, wrong2fa.FailureReason);
+
+        var ok2fa = await authService.AuthenticateUserWithStatusAsync("hardflow", "password123", "itest", "127.0.0.1", twoFactorCode: ComputeCurrentTotp(setup.Secret));
+        Assert.True(ok2fa.Success);
+
+        var byRecovery = await authService.AuthenticateUserWithStatusAsync("hardflow", "password123", "itest", "127.0.0.1", recoveryPhrase: setup.RecoveryPhrase);
+        Assert.True(byRecovery.Success);
+
+        var refreshedUser = await userRepository.GetByIdAsync(user.Id);
+        Assert.NotNull(refreshedUser);
+        Assert.False(refreshedUser!.TwoFactorEnabled);
+        Assert.Null(refreshedUser.TotpSecret);
+        Assert.Null(refreshedUser.RecoveryPhraseHash);
+
+        var setPassword = await authService.SetPasswordAsync(user.Id, "newpassword123");
+        Assert.True(setPassword);
+
+        var oldPassword = await authService.AuthenticateUserWithStatusAsync("hardflow", "password123", "itest", "127.0.0.1");
+        Assert.False(oldPassword.Success);
+
+        var newPassword = await authService.AuthenticateUserWithStatusAsync("hardflow", "newpassword123", "itest", "127.0.0.1");
+        Assert.True(newPassword.Success);
+    }
+
+    private static string ComputeCurrentTotp(string base32Secret)
+    {
+        var secret = DecodeBase32(base32Secret);
+        var counter = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 30;
+
+        Span<byte> counterBytes = stackalloc byte[8];
+        var tmp = counter;
+        for (var i = 7; i >= 0; i--)
+        {
+            counterBytes[i] = (byte)(tmp & 0xff);
+            tmp >>= 8;
+        }
+
+        using var hmac = new HMACSHA1(secret);
+        var hash = hmac.ComputeHash(counterBytes.ToArray());
+        var offset = hash[^1] & 0x0f;
+        var binaryCode = ((hash[offset] & 0x7f) << 24)
+                         | ((hash[offset + 1] & 0xff) << 16)
+                         | ((hash[offset + 2] & 0xff) << 8)
+                         | (hash[offset + 3] & 0xff);
+        return (binaryCode % 1_000_000).ToString("D6");
+    }
+
+    private static byte[] DecodeBase32(string input)
+    {
+        const string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+        var cleaned = (input ?? string.Empty).Trim().TrimEnd('=').ToUpperInvariant();
+        var result = new List<byte>((cleaned.Length * 5) / 8);
+
+        var buffer = 0;
+        var bitsLeft = 0;
+
+        foreach (var ch in cleaned)
+        {
+            var val = alphabet.IndexOf(ch);
+            if (val < 0)
+            {
+                throw new ArgumentException("Invalid Base32 input", nameof(input));
+            }
+
+            buffer = (buffer << 5) | val;
+            bitsLeft += 5;
+
+            if (bitsLeft >= 8)
+            {
+                bitsLeft -= 8;
+                result.Add((byte)((buffer >> bitsLeft) & 0xff));
+            }
+        }
+
+        return result.ToArray();
     }
 
     public void Dispose()

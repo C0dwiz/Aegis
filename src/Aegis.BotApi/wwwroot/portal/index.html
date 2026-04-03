@@ -124,6 +124,7 @@
                 if (res.ok) {
                     const data = await res.json();
                     localStorage.setItem('aegis_session_token', data.sessionToken);
+                    localStorage.setItem('aegis_csrf_token', data.csrfToken || '');
                     localStorage.setItem('aegis_user_id', String(data.userId));
                     localStorage.setItem('aegis_username', data.username);
                     window.location.replace('dashboard.html');
@@ -169,6 +170,7 @@
 
                 if (res.ok || res.status === 201) {
                     localStorage.setItem('aegis_session_token', data.sessionToken);
+                    localStorage.setItem('aegis_csrf_token', data.csrfToken || '');
                     localStorage.setItem('aegis_user_id', String(data.userId));
                     localStorage.setItem('aegis_username', data.username);
                     window.location.replace('dashboard.html');

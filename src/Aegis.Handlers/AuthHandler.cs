@@ -13,6 +13,8 @@ public class AuthRequest
     public string Password { get; set; } = string.Empty;
     public string Token { get; set; } = string.Empty;
     public string ClientInfo { get; set; } = string.Empty;
+    public string TwoFactorCode { get; set; } = string.Empty;
+    public string RecoveryPhrase { get; set; } = string.Empty;
 }
 
 public class AuthResponse
@@ -160,25 +162,35 @@ public class AuthHandler : IMessageHandler
 
             // Username/password authentication
             var ipAddress = context.Socket.RemoteEndPoint?.ToString();
-            var result = await _authService.AuthenticateUserAsync(
+            var result = await _authService.AuthenticateUserWithStatusAsync(
                 authRequest.Username,
                 authRequest.Password,
                 authRequest.ClientInfo,
-                ipAddress);
+                ipAddress,
+                authRequest.TwoFactorCode,
+                authRequest.RecoveryPhrase);
 
-            if (result == null)
+            if (!result.Success || result.User == null || result.Session == null)
             {
                 _logger.LogWarning("Authentication failed for user {Username} from connection {ConnectionId}",
                     authRequest.Username, context.ConnectionId);
+                var error = result.FailureReason switch
+                {
+                    AuthFailureReason.EmailNotVerified => "Email is not verified",
+                    AuthFailureReason.TwoFactorRequired => "Two-factor code required",
+                    AuthFailureReason.TwoFactorInvalid => "Invalid two-factor code",
+                    _ => "Authentication failed"
+                };
                 await SendAuthResponseAsync(context, message.SequenceId, new AuthResponse
                 {
                     Success = false,
-                    Error = "Authentication failed"
+                    Error = error
                 });
                 return;
             }
 
-            var (user, dbSession) = result.Value;
+            var user = result.User;
+            var dbSession = result.Session;
 
             // Associate the TCP connection with the authenticated user
             if (!_sessionManager.AuthenticateSession(context.ConnectionId, user.Id, user.Username))

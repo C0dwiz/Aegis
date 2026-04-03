@@ -24,6 +24,13 @@ public class User
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastSeenAt { get; set; }
 
+    // Auth hardening fields
+    public bool IsEmailVerified { get; set; } = true;
+    public DateTime? EmailVerifiedAt { get; set; }
+    public bool TwoFactorEnabled { get; set; } = false;
+    public string? TotpSecret { get; set; }
+    public string? RecoveryPhraseHash { get; set; }
+
     // Navigation properties
     public ICollection<Session> Sessions { get; set; } = new List<Session>();
     public ICollection<Message> SentMessages { get; set; } = new List<Message>();
@@ -117,6 +124,52 @@ public class Session
 
     // Navigation properties
     public User? User { get; set; }
+}
+
+/// <summary>
+/// Replay window persistence for handshake nonces.
+/// Allows cross-instance deduplication and forensic tracing.
+/// </summary>
+public class HandshakeReplayEntry
+{
+    public ulong Id { get; set; }
+    public int AppId { get; set; }
+    public string NonceHash { get; set; } = string.Empty;
+    public DateTime FirstSeenAt { get; set; } = DateTime.UtcNow;
+    public DateTime ExpiresAt { get; set; }
+    public string? SourceIp { get; set; }
+}
+
+/// <summary>
+/// Tracks active and previous salts for a session to support safe rotation.
+/// </summary>
+public class SessionSaltState
+{
+    public ulong Id { get; set; }
+    public ulong SessionId { get; set; }
+    public long CurrentSalt { get; set; }
+    public long? PreviousSalt { get; set; }
+    public DateTime RotatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? PreviousSaltValidUntil { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+/// <summary>
+/// Persisted Double Ratchet chain state per user-peer direction.
+/// </summary>
+public class SignalChainState
+{
+    public ulong Id { get; set; }
+    public ulong OwnerUserId { get; set; }
+    public ulong PeerUserId { get; set; }
+    public string RootKeyBase64 { get; set; } = string.Empty;
+    public string SendingChainKeyBase64 { get; set; } = string.Empty;
+    public string ReceivingChainKeyBase64 { get; set; } = string.Empty;
+    public uint NextSendingMessageNumber { get; set; }
+    public uint NextReceivingMessageNumber { get; set; }
+    public string? LastMessageKeyHash { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
 /// <summary>

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Aegis.Data.Entities;
+using System.Security.Cryptography;
 
 namespace Aegis.Data.Repositories;
 
@@ -537,6 +538,7 @@ public interface IMessageRepository : IRepository<Message>
     Task<IEnumerable<Message>> GetConversationAsync(ulong userId1, ulong userId2, int limit = 50);
     Task<IEnumerable<Message>> GetConversationBeforeAsync(ulong userId1, ulong userId2, ulong? beforeMessageId, int limit = 50);
     Task<IEnumerable<Message>> GetUndeliveredMessagesAsync(ulong userId);
+    Task<int> TrimUndeliveredMessagesAsync(ulong userId, int maxQueueSize);
     Task<IEnumerable<Message>> GetUnreadMessagesAsync(ulong userId);
     Task<IDictionary<ulong, int>> GetUnreadCountsBySenderAsync(ulong userId);
     Task MarkMessagesDeliveredAsync(IEnumerable<ulong> messageIds, ulong recipientUserId);
@@ -590,6 +592,49 @@ public class MessageRepository : Repository<Message>, IMessageRepository
             .AsNoTracking()
             .Where(m => m.ToUserId == userId && !m.IsDelivered && !m.IsDeleted)
             .ToListAsync();
+    }
+
+    public async Task<int> TrimUndeliveredMessagesAsync(ulong userId, int maxQueueSize)
+    {
+        if (maxQueueSize <= 0)
+        {
+            return 0;
+        }
+
+        var count = await _context.Messages
+            .Where(m => m.ToUserId == userId && !m.IsDelivered && !m.IsDeleted)
+            .CountAsync();
+
+        if (count <= maxQueueSize)
+        {
+            return 0;
+        }
+
+        var toRemoveCount = count - maxQueueSize;
+        var idsToRemove = await _context.Messages
+            .Where(m => m.ToUserId == userId && !m.IsDelivered && !m.IsDeleted)
+            .OrderBy(m => m.CreatedAt)
+            .Select(m => m.Id)
+            .Take(toRemoveCount)
+            .ToListAsync();
+
+        if (idsToRemove.Count == 0)
+        {
+            return 0;
+        }
+
+        var messages = await _context.Messages
+            .Where(m => idsToRemove.Contains(m.Id))
+            .ToListAsync();
+
+        foreach (var message in messages)
+        {
+            message.IsDeleted = true;
+            message.DeletedAt = DateTime.UtcNow;
+        }
+
+        await _context.SaveChangesAsync();
+        return messages.Count;
     }
 
     public async Task<IEnumerable<Message>> GetUnreadMessagesAsync(ulong userId)
@@ -1283,5 +1328,58 @@ public class ReactionRepository : IReactionRepository
                         && r.UserId == userId && r.Emoji == emoji)
             .ExecuteDeleteAsync();
         return rows > 0;
+    }
+}
+
+// ===================== SIGNAL CHAIN STATE REPOSITORY =====================
+
+public interface ISignalChainStateRepository
+{
+    Task<SignalChainState> GetOrCreateAsync(ulong ownerUserId, ulong peerUserId);
+    Task<SignalChainState> UpdateAsync(SignalChainState state);
+}
+
+public class SignalChainStateRepository : ISignalChainStateRepository
+{
+    private readonly AegisDbContext _context;
+
+    public SignalChainStateRepository(AegisDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<SignalChainState> GetOrCreateAsync(ulong ownerUserId, ulong peerUserId)
+    {
+        var existing = await _context.SignalChainStates
+            .FirstOrDefaultAsync(s => s.OwnerUserId == ownerUserId && s.PeerUserId == peerUserId);
+        if (existing != null)
+        {
+            return existing;
+        }
+
+        var state = new SignalChainState
+        {
+            OwnerUserId = ownerUserId,
+            PeerUserId = peerUserId,
+            RootKeyBase64 = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+            SendingChainKeyBase64 = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+            ReceivingChainKeyBase64 = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+            NextSendingMessageNumber = 0,
+            NextReceivingMessageNumber = 0,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        _context.SignalChainStates.Add(state);
+        await _context.SaveChangesAsync();
+        return state;
+    }
+
+    public async Task<SignalChainState> UpdateAsync(SignalChainState state)
+    {
+        state.UpdatedAt = DateTime.UtcNow;
+        _context.SignalChainStates.Update(state);
+        await _context.SaveChangesAsync();
+        return state;
     }
 }

@@ -6,6 +6,7 @@ using Aegis.Data.Repositories;
 using Aegis.Common;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Group = Aegis.Data.Entities.Group;
 
 namespace Aegis.Data.Services;
@@ -14,7 +15,7 @@ namespace Aegis.Data.Services;
 
 public interface IUserRegistrationService
 {
-    Task<User> RegisterUserAsync(string username, string email, string password, string publicKey);
+    Task<User> RegisterUserAsync(string username, string email, string password, string publicKey, bool isEmailVerified = true);
     Task<bool> IsUsernameAvailableAsync(string username);
     Task<bool> IsEmailAvailableAsync(string email);
 }
@@ -45,7 +46,7 @@ public class UserRegistrationService : IUserRegistrationService
 
     internal static readonly Regex UsernameRegex = new(@"^[a-zA-Z0-9][a-zA-Z0-9_.-]{2,31}$", RegexOptions.Compiled);
 
-    public async Task<User> RegisterUserAsync(string username, string email, string password, string publicKey)
+    public async Task<User> RegisterUserAsync(string username, string email, string password, string publicKey, bool isEmailVerified = true)
     {
         username = username?.Trim() ?? string.Empty;
         email = NormalizeEmail(email);
@@ -62,8 +63,8 @@ public class UserRegistrationService : IUserRegistrationService
         if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
             throw new ArgumentException("Invalid email format", nameof(email));
 
-        if (string.IsNullOrWhiteSpace(password) || password.Length < 6)
-            throw new ArgumentException("Password must be at least 6 characters long", nameof(password));
+        if (string.IsNullOrWhiteSpace(password) || password.Length < 8)
+            throw new ArgumentException("Password must be at least 8 characters long", nameof(password));
 
         if (!await IsUsernameAvailableAsync(username))
             throw new InvalidOperationException("Username is already taken");
@@ -80,6 +81,8 @@ public class UserRegistrationService : IUserRegistrationService
             Email = email,
             PasswordHash = passwordHash,
             PublicKey = publicKey,
+            IsEmailVerified = isEmailVerified,
+            EmailVerifiedAt = isEmailVerified ? DateTime.UtcNow : null,
             IsActive = true,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
@@ -131,41 +134,119 @@ public class UserRegistrationService : IUserRegistrationService
 public interface IUserAuthenticationService
 {
     Task<(User User, Session Session)?> AuthenticateUserAsync(string username, string password, string clientInfo, string? ipAddress = null);
+    Task<AuthAttemptResult> AuthenticateUserWithStatusAsync(
+        string username,
+        string password,
+        string clientInfo,
+        string? ipAddress = null,
+        string? twoFactorCode = null,
+        string? recoveryPhrase = null);
     Task<Session?> AuthenticateUserByTokenAsync(string token);
     Task<bool> ValidateSessionAsync(string token);
     Task<bool> LogoutAsync(string token);
+    Task<(User User, Session Session)> CreateSessionAsync(User user, string clientInfo, string? ipAddress = null);
+    Task<bool> SetPasswordAsync(ulong userId, string newPassword);
 }
+
+public enum AuthFailureReason
+{
+    None = 0,
+    InvalidCredentials = 1,
+    EmailNotVerified = 2,
+    TwoFactorRequired = 3,
+    TwoFactorInvalid = 4
+}
+
+public sealed record AuthAttemptResult(
+    bool Success,
+    AuthFailureReason FailureReason,
+    User? User,
+    Session? Session);
 
 public class UserAuthenticationService : IUserAuthenticationService
 {
     private readonly IUserRepository _userRepository;
     private readonly ISessionRepository _sessionRepository;
     private readonly ICryptoProvider _cryptoProvider;
+    private readonly IUserTwoFactorService _twoFactorService;
 
     public UserAuthenticationService(
         IUserRepository userRepository,
         ISessionRepository sessionRepository,
-        ICryptoProvider cryptoProvider)
+        ICryptoProvider cryptoProvider,
+        IUserTwoFactorService twoFactorService)
     {
         _userRepository = userRepository;
         _sessionRepository = sessionRepository;
         _cryptoProvider = cryptoProvider;
+        _twoFactorService = twoFactorService;
     }
 
     public async Task<(User User, Session Session)?> AuthenticateUserAsync(string username, string password, string clientInfo, string? ipAddress = null)
+    {
+        var result = await AuthenticateUserWithStatusAsync(username, password, clientInfo, ipAddress);
+        if (!result.Success || result.User == null || result.Session == null)
+        {
+            return null;
+        }
+
+        return (result.User, result.Session);
+    }
+
+    public async Task<AuthAttemptResult> AuthenticateUserWithStatusAsync(
+        string username,
+        string password,
+        string clientInfo,
+        string? ipAddress = null,
+        string? twoFactorCode = null,
+        string? recoveryPhrase = null)
     {
         var normalized = (username ?? string.Empty).Trim();
         var user = await _userRepository.GetByUsernameAsync(normalized);
         if (user == null || !user.IsActive)
         {
             // Constant-time: prevent username enumeration via timing side-channel
-            await _cryptoProvider.VerifyPasswordAsync(password, "$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-            return null;
+            await _cryptoProvider.VerifyPasswordAsync(password, "$2a$12$C6UzMDM.H6dfI/f/IKcEe.OY4R2k1h5ywQJ7M4U6v0RvrRZtGJPDK");
+            return new AuthAttemptResult(false, AuthFailureReason.InvalidCredentials, null, null);
         }
 
         var isValidPassword = await _cryptoProvider.VerifyPasswordAsync(password, user.PasswordHash);
         if (!isValidPassword)
-            return null;
+        {
+            return new AuthAttemptResult(false, AuthFailureReason.InvalidCredentials, null, null);
+        }
+
+        if (!user.IsEmailVerified)
+        {
+            return new AuthAttemptResult(false, AuthFailureReason.EmailNotVerified, user, null);
+        }
+
+        if (user.TwoFactorEnabled)
+        {
+            var hasSecondFactorInput = !string.IsNullOrWhiteSpace(twoFactorCode) || !string.IsNullOrWhiteSpace(recoveryPhrase);
+            if (!hasSecondFactorInput)
+            {
+                return new AuthAttemptResult(false, AuthFailureReason.TwoFactorRequired, user, null);
+            }
+
+            var secondFactorOk = await _twoFactorService.ValidateAsync(user, twoFactorCode, recoveryPhrase);
+            if (!secondFactorOk)
+            {
+                return new AuthAttemptResult(false, AuthFailureReason.TwoFactorInvalid, user, null);
+            }
+        }
+
+        var (_, session) = await CreateSessionAsync(user, clientInfo, ipAddress);
+
+        return new AuthAttemptResult(true, AuthFailureReason.None, user, session);
+    }
+
+    public async Task<(User User, Session Session)> CreateSessionAsync(User user, string clientInfo, string? ipAddress = null)
+    {
+        if (user == null)
+        {
+            throw new ArgumentNullException(nameof(user));
+        }
 
         var sessionToken = GenerateSessionToken();
         var sessionKey = await _cryptoProvider.GenerateSessionKeyAsync();
@@ -217,6 +298,25 @@ public class UserAuthenticationService : IUserAuthenticationService
 
         session.IsActive = false;
         await _sessionRepository.UpdateAsync(session);
+        return true;
+    }
+
+    public async Task<bool> SetPasswordAsync(ulong userId, string newPassword)
+    {
+        if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 8)
+        {
+            return false;
+        }
+
+        var user = await _userRepository.GetByIdAsync(userId);
+        if (user == null || !user.IsActive)
+        {
+            return false;
+        }
+
+        user.PasswordHash = await _cryptoProvider.HashPasswordAsync(newPassword);
+        user.UpdatedAt = DateTime.UtcNow;
+        await _userRepository.UpdateAsync(user);
         return true;
     }
 
@@ -887,13 +987,28 @@ public record MemberPermissions(
 
 public class ChannelService : IChannelService
 {
+    public sealed class ChannelLinkOptions
+    {
+        public const string SectionName = "Links";
+
+        public string DeepLinkScheme { get; set; } = "ts";
+        public string InvitePath { get; set; } = "join";
+        public string PublicChannelPath { get; set; } = "c";
+        public string? PublicBaseUrl { get; set; } = "https://twospace.ru";
+    }
+
     private readonly IChannelRepository _channelRepository;
     private readonly Utils.FastIdGenerator _idGenerator;
+    private readonly ChannelLinkOptions _linkOptions;
 
-    public ChannelService(IChannelRepository channelRepository, Utils.FastIdGenerator idGenerator)
+    public ChannelService(
+        IChannelRepository channelRepository,
+        Utils.FastIdGenerator idGenerator,
+        IOptions<ChannelLinkOptions>? linkOptions = null)
     {
         _channelRepository = channelRepository;
         _idGenerator = idGenerator; // Now injected via DI configuration
+        _linkOptions = linkOptions?.Value ?? new ChannelLinkOptions();
     }
 
     public async Task<Channel> CreateChannelAsync(ulong creatorUserId, string name, string? description, ChannelType type)
@@ -1060,7 +1175,19 @@ public class ChannelService : IChannelService
             channel = await _channelRepository.UpdateAsync(channel);
         }
 
-        return $"aegis://join/{channel.InviteCode}";
+        var deepLinkScheme = (_linkOptions.DeepLinkScheme ?? "ts").Trim();
+        if (string.IsNullOrWhiteSpace(deepLinkScheme))
+        {
+            deepLinkScheme = "ts";
+        }
+
+        var invitePath = (_linkOptions.InvitePath ?? "join").Trim().Trim('/');
+        if (string.IsNullOrWhiteSpace(invitePath))
+        {
+            invitePath = "join";
+        }
+
+        return $"{deepLinkScheme}://{invitePath}/{channel.InviteCode}";
     }
 
     public async Task<string?> GetPublicLinkAsync(ulong channelId)
@@ -1073,7 +1200,19 @@ public class ChannelService : IChannelService
             return null;
         }
 
-        return $"@{channel.PublicAlias}";
+        var baseUrl = (_linkOptions.PublicBaseUrl ?? string.Empty).Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            return $"@{channel.PublicAlias}";
+        }
+
+        var channelPath = (_linkOptions.PublicChannelPath ?? "c").Trim().Trim('/');
+        if (string.IsNullOrWhiteSpace(channelPath))
+        {
+            channelPath = "c";
+        }
+
+        return $"{baseUrl}/{channelPath}/{channel.PublicAlias}";
     }
 
     public async Task<Channel?> ResolveByLinkAsync(string linkOrAlias)
@@ -1084,10 +1223,57 @@ public class ChannelService : IChannelService
             return null;
         }
 
+        var deepLinkScheme = (_linkOptions.DeepLinkScheme ?? "ts").Trim();
+        if (string.IsNullOrWhiteSpace(deepLinkScheme))
+        {
+            deepLinkScheme = "ts";
+        }
+
+        var invitePath = (_linkOptions.InvitePath ?? "join").Trim().Trim('/');
+        if (string.IsNullOrWhiteSpace(invitePath))
+        {
+            invitePath = "join";
+        }
+
+        var deepLinkPrefix = $"{deepLinkScheme}://{invitePath}/";
+        if (value.StartsWith(deepLinkPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var inviteCode = value[deepLinkPrefix.Length..].Trim();
+            return await _channelRepository.GetByInviteCodeAsync(inviteCode);
+        }
+
         if (value.StartsWith("aegis://join/", StringComparison.OrdinalIgnoreCase))
         {
-            var inviteCode = value["aegis://join/".Length..].Trim();
-            return await _channelRepository.GetByInviteCodeAsync(inviteCode);
+            var legacyInviteCode = value["aegis://join/".Length..].Trim();
+            return await _channelRepository.GetByInviteCodeAsync(legacyInviteCode);
+        }
+
+        if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
+        {
+            var segments = uri.AbsolutePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length >= 2)
+            {
+                var configuredInvitePath = invitePath;
+                var configuredPublicPath = (_linkOptions.PublicChannelPath ?? "c").Trim().Trim('/');
+                if (string.IsNullOrWhiteSpace(configuredPublicPath))
+                {
+                    configuredPublicPath = "c";
+                }
+
+                if (segments[0].Equals(configuredInvitePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return await _channelRepository.GetByInviteCodeAsync(segments[1]);
+                }
+
+                if (segments[0].Equals(configuredPublicPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    var byPublicPathAlias = await _channelRepository.GetByPublicAliasAsync(NormalizeAlias(segments[1]));
+                    if (byPublicPathAlias != null)
+                    {
+                        return byPublicPathAlias;
+                    }
+                }
+            }
         }
 
         var alias = NormalizeAlias(value);
@@ -1486,8 +1672,17 @@ public class GroupService : IGroupService
         var group = await _groupRepository.GetByIdAsync(groupId);
         if (group != null)
         {
-            group.MemberCount = Math.Max(0, group.MemberCount - 1);
+            var activeMembers = await _groupRepository.GetGroupMembersAsync(groupId);
+            var activeCount = activeMembers.Count(m => m.IsActive);
+
+            group.MemberCount = Math.Max(0, activeCount);
             group.UpdatedAt = DateTime.UtcNow;
+
+            if (activeCount == 0)
+            {
+                group.IsActive = false;
+            }
+
             await _groupRepository.UpdateAsync(group);
         }
 

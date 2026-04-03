@@ -139,6 +139,9 @@ void main() {
       expect(MessageType.fromValue(1), equals(MessageType.auth));
       expect(MessageType.fromValue(2), equals(MessageType.ping));
       expect(MessageType.fromValue(3), equals(MessageType.message));
+      expect(MessageType.fromValue(88), equals(MessageType.userTypingEvent));
+      expect(
+          MessageType.fromValue(90), equals(MessageType.fileTransferResponse));
       expect(MessageType.fromValue(999), equals(MessageType.unknown));
     });
   });
@@ -330,6 +333,64 @@ void main() {
       expect(response.success, isTrue);
       expect(response.messageId, equals(9001));
       expect(response.messageText, equals('Message sent'));
+    });
+
+    test('should decode private event with SignalV3 metadata and CreatedAtUtc',
+        () {
+      final bytes = msgpack.serialize({
+        'MessageId': 7001,
+        'FromUserId': 17,
+        'ToUserId': 18,
+        'Content': 'ciphertext',
+        'ContentType': 0,
+        'CreatedAtUtc': '2026-04-03T12:30:00Z',
+        'SignalV3': {
+          'MessageNumber': 5,
+          'MessageKeyId': 'ABCD1234EFGH5678',
+          'RatchetUpdatedAtUtc': '2026-04-03T12:30:00Z',
+        }
+      });
+
+      final event = PrivateChatMessageEvent.fromBytes(bytes);
+
+      expect(event.id, equals(7001));
+      expect(event.signalV3, isNotNull);
+      expect(event.signalV3!.messageNumber, equals(5));
+      expect(event.signalV3!.messageKeyId, equals('ABCD1234EFGH5678'));
+      expect(event.createdAt, equals(DateTime.utc(2026, 4, 3, 12, 30)));
+    });
+
+    test('should decode typing event payload from MessagePack', () {
+      final bytes = msgpack.serialize({
+        'Scope': 'private',
+        'TargetId': 42,
+        'UserId': 7,
+        'IsTyping': true,
+        'TimestampUtc': '2026-04-03T12:40:00Z',
+      });
+
+      final event = UserTypingEventPayload.fromBytes(bytes);
+      expect(event.chatScope, equals(ChatScope.privateChat));
+      expect(event.targetId, equals(42));
+      expect(event.userId, equals(7));
+      expect(event.isTyping, isTrue);
+    });
+
+    test('should decode file transfer response payload from MessagePack', () {
+      final bytes = msgpack.serialize({
+        'Success': true,
+        'FileId': 'file_123',
+        'TotalChunks': 3,
+        'ChunkIndex': 1,
+        'ChunkDataBase64': 'AQI=',
+      });
+
+      final response = FileTransferResponsePayload.fromBytes(bytes);
+      expect(response.success, isTrue);
+      expect(response.fileId, equals('file_123'));
+      expect(response.totalChunks, equals(3));
+      expect(response.chunkIndex, equals(1));
+      expect(response.chunkDataBase64, equals('AQI='));
     });
 
     test('should decode profile avatar list from MessagePack', () {

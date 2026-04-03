@@ -124,6 +124,45 @@ public class ZoneTreeMessageRepository : IMessageRepository, IDisposable
         return Task.FromResult<IEnumerable<Message>>(result);
     }
 
+    public Task<int> TrimUndeliveredMessagesAsync(ulong userId, int maxQueueSize)
+    {
+        if (maxQueueSize <= 0)
+        {
+            return Task.FromResult(0);
+        }
+
+        var undelivered = new List<Message>();
+        using var iterator = _zoneTree.CreateIterator();
+        while (iterator.Next())
+        {
+            var m = iterator.CurrentValue;
+            if (m.ToUserId == userId && !m.IsDelivered && !m.IsDeleted)
+            {
+                undelivered.Add(m);
+            }
+        }
+
+        if (undelivered.Count <= maxQueueSize)
+        {
+            return Task.FromResult(0);
+        }
+
+        var toRemove = undelivered
+            .OrderBy(m => m.CreatedAt)
+            .Take(undelivered.Count - maxQueueSize)
+            .ToList();
+
+        var now = DateTime.UtcNow;
+        foreach (var message in toRemove)
+        {
+            message.IsDeleted = true;
+            message.DeletedAt = now;
+            _zoneTree.Upsert(message.Id, message);
+        }
+
+        return Task.FromResult(toRemove.Count);
+    }
+
     public Task<IEnumerable<Message>> GetUnreadMessagesAsync(ulong userId)
     {
         var result = new List<Message>();

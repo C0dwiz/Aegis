@@ -16,8 +16,13 @@ internal static class StartupValidation
         var requireEncryptedAfterHandshake = configuration.GetValue<bool>($"{ProtocolSecurityOptions.SectionName}:RequireEncryptedPayloadAfterHandshake");
         var requireSignedHandshakeResponses = configuration.GetValue<bool>($"{ProtocolSecurityOptions.SectionName}:RequireSignedHandshakeResponses");
         var handshakeSigningPrivateKey = configuration[$"{ProtocolSecurityOptions.SectionName}:HandshakeSigningPrivateKeyBase64"] ?? string.Empty;
+        var enableV2Handshake = configuration.GetValue<bool>($"{ProtocolSecurityOptions.SectionName}:EnableV2Handshake");
+        var v2ClockSkew = configuration.GetValue<long>($"{ProtocolSecurityOptions.SectionName}:V2HandshakeClockSkewMs");
+        var v2CookieTtl = configuration.GetValue<long>($"{ProtocolSecurityOptions.SectionName}:V2HandshakeCookieTtlMs");
+        var v2ReplayWindow = configuration.GetValue<int>($"{ProtocolSecurityOptions.SectionName}:V2ReplayWindowSeconds");
         var enableTransportMasking = configuration.GetValue<bool>($"{ServerOptions.SectionName}:EnableTransportMasking");
         var transportMaskingKey = configuration[$"{ServerOptions.SectionName}:TransportMaskingKey"] ?? string.Empty;
+        var totpEncryptionKey = configuration["Security:TotpEncryptionKey"] ?? string.Empty;
 
         if (string.IsNullOrWhiteSpace(dbConnectionString))
         {
@@ -45,11 +50,31 @@ internal static class StartupValidation
             {
                 throw new InvalidOperationException("Default database password is not allowed in production.");
             }
+
+            ValidateTotpEncryptionKey(totpEncryptionKey, "Security:TotpEncryptionKey");
         }
 
         if (requireSignedHandshakeResponses && string.IsNullOrWhiteSpace(handshakeSigningPrivateKey))
         {
             throw new InvalidOperationException("ProtocolSecurity:HandshakeSigningPrivateKeyBase64 is required when signed handshake responses are enabled.");
+        }
+
+        if (enableV2Handshake)
+        {
+            if (v2ClockSkew <= 0 || v2ClockSkew > 300_000)
+            {
+                throw new InvalidOperationException("ProtocolSecurity:V2HandshakeClockSkewMs must be in range 1..300000.");
+            }
+
+            if (v2CookieTtl < 5_000 || v2CookieTtl > 300_000)
+            {
+                throw new InvalidOperationException("ProtocolSecurity:V2HandshakeCookieTtlMs must be in range 5000..300000.");
+            }
+
+            if (v2ReplayWindow < 30 || v2ReplayWindow > 3600)
+            {
+                throw new InvalidOperationException("ProtocolSecurity:V2ReplayWindowSeconds must be in range 30..3600.");
+            }
         }
 
         ValidateServerDependencies(configuration);
@@ -204,5 +229,28 @@ internal static class StartupValidation
         }
 
         throw new InvalidOperationException($"Invalid dependency endpoint format: {endpoint}");
+    }
+
+    private static void ValidateTotpEncryptionKey(string keyValue, string settingName)
+    {
+        if (string.IsNullOrWhiteSpace(keyValue))
+        {
+            throw new InvalidOperationException($"{settingName} must be configured in production.");
+        }
+
+        byte[] raw;
+        try
+        {
+            raw = Convert.FromBase64String(keyValue);
+        }
+        catch (FormatException ex)
+        {
+            throw new InvalidOperationException($"{settingName} must be Base64-encoded.", ex);
+        }
+
+        if (raw.Length != 32)
+        {
+            throw new InvalidOperationException($"{settingName} must decode to exactly 32 bytes.");
+        }
     }
 }

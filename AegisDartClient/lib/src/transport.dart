@@ -79,6 +79,9 @@ class AegisTransport {
     int port, {
     Duration? timeout,
     String? transportMaskingKey,
+    bool useTls = false,
+    SecurityContext? tlsSecurityContext,
+    bool Function(X509Certificate certificate)? onBadTlsCertificate,
     Duration? healthCheckInterval,
   }) async {
     if (_isConnected) {
@@ -89,8 +92,18 @@ class AegisTransport {
 
     try {
       final connectTimeout = timeout ?? const Duration(seconds: 10);
-      _socket = await Socket.connect(host, port, timeout: connectTimeout)
-          .timeout(connectTimeout);
+      if (useTls) {
+        _socket = await SecureSocket.connect(
+          host,
+          port,
+          timeout: connectTimeout,
+          context: tlsSecurityContext,
+          onBadCertificate: onBadTlsCertificate,
+        ).timeout(connectTimeout);
+      } else {
+        _socket = await Socket.connect(host, port, timeout: connectTimeout)
+            .timeout(connectTimeout);
+      }
 
       _isConnected = true;
       _nextSequenceId = 1;

@@ -1,5 +1,7 @@
 using Aegis.Data.Entities;
 using Aegis.Data.Services;
+using Aegis.BotApi.Infrastructure.Auth;
+using System.Security.Cryptography;
 
 namespace Aegis.BotApi.Endpoints;
 
@@ -33,6 +35,10 @@ public static class DevPortalEndpoints
             .WithName("RevokeApp")
             .WithSummary("Revoke an application credential.");
 
+        group.MapPost("/{appId:int}/reveal", RevealAppHash)
+            .WithName("RevealAppHash")
+            .WithSummary("Reveal full api_hash for a specific application.");
+
         return app;
     }
 
@@ -56,55 +62,69 @@ public static class DevPortalEndpoints
         bool IsActive,
         DateTime CreatedAt,
         DateTime? LastUsedAt,
-        DateTime? RevokedAt);
+        DateTime? RevokedAt,
+        string? ServerHandshakeSigningPublicKeyBase64 = null);
 
     // ── Handlers ─────────────────────────────────────────────────────────────
 
     private static async Task<IResult> ListApps(
         HttpContext http,
         IAppCredentialService svc,
-        IUserAuthenticationService authSvc)
+        IUserAuthenticationService authSvc,
+        IConfiguration configuration)
     {
-        var userId = await ResolveUserId(http, authSvc);
-        if (userId == null) return Results.Unauthorized();
+        var authContext = await ResolveAuthContext(http, authSvc);
+        if (authContext == null) return Results.Unauthorized();
 
-        var apps = await svc.GetUserAppsAsync(userId.Value);
-        return Results.Ok(apps.Select(ToDto));
+        var signingPublicKey = ResolveServerHandshakeSigningPublicKeyBase64(configuration);
+        var apps = await svc.GetUserAppsAsync(authContext.UserId);
+        return Results.Ok(apps.Select(a => ToDto(a, includeFullHash: false, signingPublicKey)));
     }
 
     private static async Task<IResult> GetApp(
         int appId,
         HttpContext http,
         IAppCredentialService svc,
-        IUserAuthenticationService authSvc)
+        IUserAuthenticationService authSvc,
+        IConfiguration configuration)
     {
-        var userId = await ResolveUserId(http, authSvc);
-        if (userId == null) return Results.Unauthorized();
+        var authContext = await ResolveAuthContext(http, authSvc);
+        if (authContext == null) return Results.Unauthorized();
 
-        var app = await svc.GetAppAsync(appId, userId.Value);
-        return app == null ? Results.NotFound() : Results.Ok(ToDto(app));
+        var app = await svc.GetAppAsync(appId, authContext.UserId);
+        return app == null
+            ? Results.NotFound()
+            : Results.Ok(ToDto(app, includeFullHash: false, ResolveServerHandshakeSigningPublicKeyBase64(configuration)));
     }
 
     private static async Task<IResult> CreateApp(
         CreateAppRequest req,
         HttpContext http,
         IAppCredentialService svc,
-        IUserAuthenticationService authSvc)
+        IUserAuthenticationService authSvc,
+        ICsrfProtectionService csrfSvc,
+        IConfiguration configuration)
     {
-        var userId = await ResolveUserId(http, authSvc);
-        if (userId == null) return Results.Unauthorized();
+        var authContext = await ResolveAuthContext(http, authSvc);
+        if (authContext == null) return Results.Unauthorized();
+        if (!ValidateCsrf(http, csrfSvc, authContext.SessionToken)) return Results.Unauthorized();
 
         try
         {
             var created = await svc.CreateAppAsync(
-                userId.Value,
+                authContext.UserId,
                 req.AppTitle,
                 req.ShortName,
                 req.Description,
                 req.Website,
                 req.Platform);
 
-            return Results.Created($"/api/apps/{created.AppId}", ToDto(created));
+            return Results.Created(
+                $"/api/apps/{created.AppId}",
+                ToDto(
+                    created,
+                    includeFullHash: true,
+                    ResolveServerHandshakeSigningPublicKeyBase64(configuration)));
         }
         catch (ArgumentException ex)
         {
@@ -120,13 +140,41 @@ public static class DevPortalEndpoints
         int appId,
         HttpContext http,
         IAppCredentialService svc,
-        IUserAuthenticationService authSvc)
+        IUserAuthenticationService authSvc,
+        ICsrfProtectionService csrfSvc)
     {
-        var userId = await ResolveUserId(http, authSvc);
-        if (userId == null) return Results.Unauthorized();
+        var authContext = await ResolveAuthContext(http, authSvc);
+        if (authContext == null) return Results.Unauthorized();
+        if (!ValidateCsrf(http, csrfSvc, authContext.SessionToken)) return Results.Unauthorized();
 
-        var revoked = await svc.RevokeAppAsync(appId, userId.Value);
+        var revoked = await svc.RevokeAppAsync(appId, authContext.UserId);
         return revoked ? Results.Ok(new { ok = true }) : Results.NotFound();
+    }
+
+    private static async Task<IResult> RevealAppHash(
+        int appId,
+        HttpContext http,
+        IAppCredentialService svc,
+        IUserAuthenticationService authSvc,
+        ICsrfProtectionService csrfSvc,
+        IConfiguration configuration)
+    {
+        var authContext = await ResolveAuthContext(http, authSvc);
+        if (authContext == null) return Results.Unauthorized();
+        if (!ValidateCsrf(http, csrfSvc, authContext.SessionToken)) return Results.Unauthorized();
+
+        var app = await svc.GetAppAsync(appId, authContext.UserId);
+        if (app == null)
+        {
+            return Results.NotFound();
+        }
+
+        return Results.Ok(new
+        {
+            appId = app.AppId,
+            appHash = app.AppHash,
+            serverHandshakeSigningPublicKeyBase64 = ResolveServerHandshakeSigningPublicKeyBase64(configuration)
+        });
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -135,20 +183,43 @@ public static class DevPortalEndpoints
     /// Resolves the authenticated user id from the X-Session-Token header.
     /// Returns null when the token is missing or invalid.
     /// </summary>
-    private static async Task<ulong?> ResolveUserId(HttpContext http, IUserAuthenticationService authSvc)
+    private static async Task<AuthContext?> ResolveAuthContext(HttpContext http, IUserAuthenticationService authSvc)
     {
         var token = http.Request.Headers["X-Session-Token"].FirstOrDefault();
         if (string.IsNullOrWhiteSpace(token))
             return null;
 
         var session = await authSvc.AuthenticateUserByTokenAsync(token);
-        return session?.UserId;
+        if (session == null)
+        {
+            return null;
+        }
+
+        return new AuthContext(session.UserId, token);
     }
 
-    private static AppResponse ToDto(AppCredential a) => new(
+    private static bool ValidateCsrf(HttpContext http, ICsrfProtectionService csrfSvc, string sessionToken)
+    {
+        var csrf = http.Request.Headers["X-CSRF-Token"].FirstOrDefault();
+        return !string.IsNullOrWhiteSpace(csrf) && csrfSvc.ValidateToken(sessionToken, csrf);
+    }
+
+    private static string MaskHash(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        return value.Length <= 8 ? value : $"{value[..8]}...";
+    }
+
+    private static AppResponse ToDto(
+        AppCredential a,
+        bool includeFullHash,
+        string? serverHandshakeSigningPublicKeyBase64) => new(
         a.AppId,
-        // Only return the hash to the owner on creation; subsequent GETs mask it
-        a.IsActive ? a.AppHash : string.Empty,
+        a.IsActive ? (includeFullHash ? a.AppHash : MaskHash(a.AppHash)) : string.Empty,
         a.AppTitle,
         a.ShortName,
         a.Description,
@@ -157,5 +228,36 @@ public static class DevPortalEndpoints
         a.IsActive,
         a.CreatedAt,
         a.LastUsedAt,
-        a.RevokedAt);
+        a.RevokedAt,
+        serverHandshakeSigningPublicKeyBase64);
+
+    private static string? ResolveServerHandshakeSigningPublicKeyBase64(IConfiguration configuration)
+    {
+        var explicitPublicKey = configuration["BotApi:ServerHandshakeSigningPublicKeyBase64"];
+        if (!string.IsNullOrWhiteSpace(explicitPublicKey))
+        {
+            return explicitPublicKey;
+        }
+
+        var signingPrivateKeyBase64 = configuration["ProtocolSecurity:HandshakeSigningPrivateKeyBase64"];
+        if (string.IsNullOrWhiteSpace(signingPrivateKeyBase64))
+        {
+            return null;
+        }
+
+        try
+        {
+            var privateKey = Convert.FromBase64String(signingPrivateKeyBase64);
+            using var ecdsa = ECDsa.Create();
+            ecdsa.ImportPkcs8PrivateKey(privateKey, out _);
+            var publicKey = ecdsa.ExportSubjectPublicKeyInfo();
+            return Convert.ToBase64String(publicKey);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private sealed record AuthContext(ulong UserId, string SessionToken);
 }

@@ -97,6 +97,13 @@ public class SessionManager
         return true;
     }
 
+    public IReadOnlyList<ulong> GetOnlineUserIds()
+    {
+        return _userConnections.Keys
+            .Where(userId => _userPresenceState.TryGetValue(userId, out var online) ? online : true)
+            .ToArray();
+    }
+
     public bool SetUserPresence(ulong connectionId, bool isOnline)
     {
         if (!_sessions.TryGetValue(connectionId, out var session) || !session.IsAuthenticated)

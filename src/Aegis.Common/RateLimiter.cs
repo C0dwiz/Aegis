@@ -190,7 +190,7 @@ public class RateLimiter : IRateLimiter
 internal class ConnectionRateLimit
 {
     public object Sync { get; } = new();
-    public int ConnectionCount { get; set; } = 1;
+    public int ConnectionCount { get; set; } = 0;
     public DateTime LastReset { get; set; } = DateTime.UtcNow;
 }
 

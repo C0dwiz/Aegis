@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:msgpack_dart/msgpack_dart.dart' as msgpack;
 import 'message.dart';
@@ -61,6 +63,13 @@ class AegisClient {
   late final AegisGroupFacade groups;
   late final AegisDirectFacade direct;
   final AegisApiCredentials? _apiCredentials;
+  StreamSubscription<void>? _disconnectSubscription;
+  ReconnectPolicy? _reconnectPolicy;
+  _ReconnectState? _reconnectState;
+  bool _manualDisconnect = false;
+  bool _reconnectInProgress = false;
+  int _reconnectAttempts = 0;
+  String? _sessionToken;
 
   // Per-client sequence-ID counter so responses can be matched unambiguously.
   int _nextSeqId = 1;
@@ -93,6 +102,13 @@ class AegisClient {
 
   /// Typed stream of incoming message pin events.
   Stream<MessagePinEvent> get messagePinEvents => events.messagePinEvents;
+
+  /// Typed stream of incoming typing indicator events.
+  Stream<UserTypingEventPayload> get typingEvents => events.typingEvents;
+
+  /// Typed stream of incoming file download chunks.
+  Stream<FileTransferResponsePayload> get fileTransferChunkEvents =>
+      events.fileTransferChunks;
 
   /// Stream of disconnect events
   Stream<void> get disconnects => _transport.disconnects;
@@ -155,9 +171,33 @@ class AegisClient {
     Duration? timeout,
     String? transportMaskingKey,
     bool enableMaskingAutoFallback = true,
+    bool allowLegacyHandshakeFallback = false,
     String? trustedServerHandshakeSigningPublicKeyBase64,
-    bool requireSignedHandshake = false,
+    bool? requireSignedHandshake,
+    bool useTls = false,
+    SecurityContext? tlsSecurityContext,
+    bool Function(X509Certificate certificate)? onBadTlsCertificate,
   }) async {
+    final effectiveRequireSignedHandshake = requireSignedHandshake ??
+        (_isOfficialClient() &&
+            (trustedServerHandshakeSigningPublicKeyBase64?.isNotEmpty ??
+                false));
+
+    _reconnectState = _ReconnectState(
+      host: host,
+      port: port,
+      timeout: timeout,
+      transportMaskingKey: transportMaskingKey,
+      enableMaskingAutoFallback: enableMaskingAutoFallback,
+      allowLegacyHandshakeFallback: allowLegacyHandshakeFallback,
+      trustedServerHandshakeSigningPublicKeyBase64:
+          trustedServerHandshakeSigningPublicKeyBase64,
+      requireSignedHandshake: effectiveRequireSignedHandshake,
+      useTls: useTls,
+      tlsSecurityContext: tlsSecurityContext,
+      onBadTlsCertificate: onBadTlsCertificate,
+    );
+
     final hasMaskingKey =
         transportMaskingKey != null && transportMaskingKey.trim().isNotEmpty;
 
@@ -167,11 +207,15 @@ class AegisClient {
         port,
         timeout: timeout,
         transportMaskingKey: transportMaskingKey,
+        useTls: useTls,
+        tlsSecurityContext: tlsSecurityContext,
+        onBadTlsCertificate: onBadTlsCertificate,
       );
       await _performHandshake(
+        allowLegacyHandshakeFallback: allowLegacyHandshakeFallback,
         trustedServerHandshakeSigningPublicKeyBase64:
             trustedServerHandshakeSigningPublicKeyBase64,
-        requireSignedHandshake: requireSignedHandshake,
+        requireSignedHandshake: effectiveRequireSignedHandshake,
       );
       return;
     }
@@ -182,11 +226,15 @@ class AegisClient {
         port,
         timeout: timeout,
         transportMaskingKey: transportMaskingKey,
+        useTls: useTls,
+        tlsSecurityContext: tlsSecurityContext,
+        onBadTlsCertificate: onBadTlsCertificate,
       );
       await _performHandshake(
+        allowLegacyHandshakeFallback: allowLegacyHandshakeFallback,
         trustedServerHandshakeSigningPublicKeyBase64:
             trustedServerHandshakeSigningPublicKeyBase64,
-        requireSignedHandshake: requireSignedHandshake,
+        requireSignedHandshake: effectiveRequireSignedHandshake,
       );
     } catch (firstError) {
       await _transport.disconnect();
@@ -196,11 +244,15 @@ class AegisClient {
           host,
           port,
           timeout: timeout,
+          useTls: useTls,
+          tlsSecurityContext: tlsSecurityContext,
+          onBadTlsCertificate: onBadTlsCertificate,
         );
         await _performHandshake(
+          allowLegacyHandshakeFallback: allowLegacyHandshakeFallback,
           trustedServerHandshakeSigningPublicKeyBase64:
               trustedServerHandshakeSigningPublicKeyBase64,
-          requireSignedHandshake: requireSignedHandshake,
+          requireSignedHandshake: effectiveRequireSignedHandshake,
         );
       } catch (secondError) {
         throw Exception(
@@ -212,6 +264,7 @@ class AegisClient {
 
   /// Disconnect from the server.
   Future<void> disconnect() async {
+    _manualDisconnect = true;
     if (_transport.isConnected && _isAuthenticated) {
       await _publishPresence(isOnline: false);
     }
@@ -220,12 +273,39 @@ class AegisClient {
     _isAuthenticated = false;
     _userId = null;
     _username = null;
+    _manualDisconnect = false;
   }
 
   /// Release all resources.
   void dispose() {
+    _disconnectSubscription?.cancel();
+    _disconnectSubscription = null;
     events.dispose().ignore();
     _transport.dispose();
+  }
+
+  /// Enables automatic reconnect with exponential backoff and token restore.
+  ///
+  /// On reconnect, the client repeats connect + handshake, then tries
+  /// `loginWithToken` using the last successful `SessionToken`.
+  void enableAutoReconnect(
+    ReconnectPolicy policy, {
+    Future<void> Function(AegisClient client)? onSessionRestored,
+  }) {
+    _reconnectPolicy = policy;
+    _disconnectSubscription?.cancel();
+    _disconnectSubscription = disconnects.listen((_) async {
+      if (_manualDisconnect || !_shouldReconnect()) {
+        return;
+      }
+      await _runReconnectLoop(onSessionRestored: onSessionRestored);
+    });
+  }
+
+  void disableAutoReconnect() {
+    _reconnectPolicy = null;
+    _disconnectSubscription?.cancel();
+    _disconnectSubscription = null;
   }
 
   // ─── Authentication ─────────────────────────────────────────────────────────
@@ -234,13 +314,20 @@ class AegisClient {
   ///
   /// Throws [NotConnectedException] if not connected.
   /// Throws an [Exception] if authentication fails.
-  Future<void> login(String username, String password,
-      {String clientInfo = 'aegis-dart-client'}) async {
+  Future<void> login(
+    String username,
+    String password, {
+    String clientInfo = 'aegis-dart-client',
+    String? twoFactorCode,
+    String? recoveryPhrase,
+  }) async {
     _requireConnected();
     final payload = msgpack.serialize({
       'Username': username,
       'Password': password,
       'ClientInfo': clientInfo,
+      if (twoFactorCode != null) 'TwoFactorCode': twoFactorCode,
+      if (recoveryPhrase != null) 'RecoveryPhrase': recoveryPhrase,
     });
     await _doAuthenticate(payload);
   }
@@ -281,14 +368,90 @@ class AegisClient {
 
     final decoded = msgpack.deserialize(response.payload);
     if (decoded == null || decoded['Success'] != true) {
-      throw Exception('Authentication failed');
+      final error = decoded is Map ? decoded['Error'] : null;
+      throw Exception(
+          'Authentication failed${error is String && error.isNotEmpty ? ': $error' : ''}');
     }
 
     _isAuthenticated = true;
     _userId = decoded['UserId'] as int?;
     _username = decoded['Username'] as String?;
+    _sessionToken = decoded['SessionToken'] as String?;
 
     await _publishPresence(isOnline: true);
+  }
+
+  bool _isOfficialClient() {
+    final creds = _apiCredentials;
+    if (creds == null) return false;
+    return creds.appId == AegisOfficialApiCredentials.credentials.appId &&
+        creds.appHash == AegisOfficialApiCredentials.credentials.appHash;
+  }
+
+  bool _shouldReconnect() {
+    final policy = _reconnectPolicy;
+    if (policy == null) return false;
+    final maxAttempts = policy.maxAttempts;
+    return maxAttempts == null || _reconnectAttempts < maxAttempts;
+  }
+
+  Future<void> _runReconnectLoop({
+    Future<void> Function(AegisClient client)? onSessionRestored,
+  }) async {
+    if (_reconnectInProgress) {
+      return;
+    }
+    final policy = _reconnectPolicy;
+    final state = _reconnectState;
+    if (policy == null || state == null) {
+      return;
+    }
+
+    _reconnectInProgress = true;
+    try {
+      while (_shouldReconnect()) {
+        _reconnectAttempts += 1;
+        final waitDuration = policy.backoffForAttempt(_reconnectAttempts);
+        await Future<void>.delayed(waitDuration);
+
+        try {
+          await connect(
+            state.host,
+            state.port,
+            timeout: state.timeout,
+            transportMaskingKey: state.transportMaskingKey,
+            enableMaskingAutoFallback: state.enableMaskingAutoFallback,
+            allowLegacyHandshakeFallback: state.allowLegacyHandshakeFallback,
+            trustedServerHandshakeSigningPublicKeyBase64:
+                state.trustedServerHandshakeSigningPublicKeyBase64,
+            requireSignedHandshake: state.requireSignedHandshake,
+            useTls: state.useTls,
+            tlsSecurityContext: state.tlsSecurityContext,
+            onBadTlsCertificate: state.onBadTlsCertificate,
+          );
+
+          final token = _sessionToken;
+          if (token != null && token.isNotEmpty) {
+            await loginWithToken(token);
+          }
+
+          if (policy.reloadChatListOnReconnect && isAuthenticated) {
+            await getChatList();
+          }
+
+          if (onSessionRestored != null && isAuthenticated) {
+            await onSessionRestored(this);
+          }
+
+          _reconnectAttempts = 0;
+          return;
+        } catch (_) {
+          // Continue backoff loop until max attempts is reached.
+        }
+      }
+    } finally {
+      _reconnectInProgress = false;
+    }
   }
 
   // ─── Registration ───────────────────────────────────────────────────────────
@@ -383,6 +546,7 @@ class AegisClient {
     String content, {
     MessageContentType contentType = MessageContentType.text,
     ParseMode? parseMode,
+    SignalV3EnvelopePayload? signalV3,
   }) async {
     _requireAuthenticated();
 
@@ -391,6 +555,7 @@ class AegisClient {
       content: content,
       contentType: contentType,
       parseMode: parseMode?.value,
+      signalV3: signalV3,
     );
 
     final msg =
@@ -562,6 +727,18 @@ class AegisClient {
     return messagePinEvents.listen(handler);
   }
 
+  StreamSubscription<UserTypingEventPayload> onTypingEvent(
+    void Function(UserTypingEventPayload event) handler,
+  ) {
+    return typingEvents.listen(handler);
+  }
+
+  StreamSubscription<FileTransferResponsePayload> onFileTransferChunk(
+    void Function(FileTransferResponsePayload chunk) handler,
+  ) {
+    return fileTransferChunkEvents.listen(handler);
+  }
+
   // ─── Channels ───────────────────────────────────────────────────────────────
 
   /// Send a message to a channel.
@@ -722,6 +899,7 @@ class AegisClient {
     ParseMode? parseMode,
     int? replyToMessageId,
     MessageContentType? forcedContentType,
+    SignalV3EnvelopePayload? signalV3,
   }) async {
     _requireAuthenticated();
 
@@ -745,6 +923,7 @@ class AegisClient {
           attachment: attachments.first,
           attachments: attachments,
           parseMode: parseMode?.value,
+          signalV3: signalV3,
         );
         final msg = Message.withType(
           MessageType.privateChatMessage,
@@ -1384,10 +1563,185 @@ class AegisClient {
 
   /// Send the initial handshake after connect.
   Future<void> _performHandshake({
+    required bool allowLegacyHandshakeFallback,
     String? trustedServerHandshakeSigningPublicKeyBase64,
     required bool requireSignedHandshake,
   }) async {
     final handshake = await AegisHandshakeContext.create();
+    final v2Completed = await _tryPerformV2Handshake(
+      handshake: handshake,
+      trustedServerHandshakeSigningPublicKeyBase64:
+          trustedServerHandshakeSigningPublicKeyBase64,
+      requireSignedHandshake: requireSignedHandshake,
+    );
+
+    if (v2Completed) {
+      return;
+    }
+
+    if (!allowLegacyHandshakeFallback) {
+      throw Exception(
+        'Server did not return a V2 handshake stage. '
+        'Use allowLegacyHandshakeFallback=true only for migration.',
+      );
+    }
+
+    await _performLegacyHandshake(
+      handshake: handshake,
+      trustedServerHandshakeSigningPublicKeyBase64:
+          trustedServerHandshakeSigningPublicKeyBase64,
+      requireSignedHandshake: requireSignedHandshake,
+    );
+  }
+
+  Future<bool> _tryPerformV2Handshake({
+    required AegisHandshakeContext handshake,
+    String? trustedServerHandshakeSigningPublicKeyBase64,
+    required bool requireSignedHandshake,
+  }) async {
+    final apiCredentials = _apiCredentials;
+    final clientNonce = AegisSecureProtocolV2.secureRandomBytes(32);
+    final clientHello = <String, Object>{
+      'ApiId': apiCredentials?.appId ?? 0,
+      'AppHash': apiCredentials?.appHash ?? '',
+      'ClientEphemeralPublicKey': handshake.publicKey,
+      'ClientNonce': clientNonce,
+      'ClientUnixTimeMs': DateTime.now().toUtc().millisecondsSinceEpoch,
+      'TransportHint': 'obfs+tls',
+    };
+
+    final helloEnvelope = <String, Object>{
+      'Stage': 'client_hello_v2',
+      'ClientHello': clientHello,
+    };
+    final helloPayload = msgpack.serialize(helloEnvelope);
+    final helloMsg = Message.withType(MessageType.handshake, helloPayload);
+    final helloResponse = await _sendAndWaitResponse(
+      helloMsg,
+      expectedTypes: {MessageType.handshake},
+    );
+
+    final decodedHello = msgpack.deserialize(helloResponse.payload);
+    if (decodedHello is! Map) {
+      throw Exception('Invalid V2 handshake response payload');
+    }
+
+    final stage = decodedHello['Stage']?.toString();
+    if (stage == null || stage.isEmpty) {
+      return false;
+    }
+
+    final isSuccess = decodedHello['Success'] == true;
+    if (!isSuccess) {
+      final error =
+          decodedHello['Message']?.toString() ?? 'Handshake V2 failed';
+      throw Exception(error);
+    }
+
+    if (stage != 'server_hello_v2') {
+      throw Exception('Unexpected V2 handshake stage: $stage');
+    }
+
+    final serverHelloMap = decodedHello['ServerHello'];
+    if (serverHelloMap is! Map) {
+      throw Exception('V2 handshake response is missing ServerHello');
+    }
+
+    final serverPublicKey = _readBytesField(
+      serverHelloMap,
+      'ServerEphemeralPublicKey',
+      'ServerHello.ServerEphemeralPublicKey',
+    );
+    final serverNonce = _readBytesField(
+      serverHelloMap,
+      'ServerNonce',
+      'ServerHello.ServerNonce',
+    );
+    final cookie = _readBytesField(
+      serverHelloMap,
+      'Cookie',
+      'ServerHello.Cookie',
+    );
+    final signature = _readOptionalBytesField(serverHelloMap, 'Signature');
+
+    if (requireSignedHandshake) {
+      if (trustedServerHandshakeSigningPublicKeyBase64 == null ||
+          trustedServerHandshakeSigningPublicKeyBase64.isEmpty) {
+        throw Exception('Trusted handshake signing public key is required');
+      }
+
+      if (signature == null || signature.isEmpty) {
+        throw Exception('Handshake response signature is missing');
+      }
+
+      final signatureOk =
+          await AegisHandshakeVerifier.verifyServerHandshakeSignature(
+        trustedSigningPublicKey: Uint8List.fromList(
+          base64Decode(trustedServerHandshakeSigningPublicKeyBase64),
+        ),
+        serverEphemeralPublicKey: serverPublicKey,
+        clientEphemeralPublicKey: handshake.publicKey,
+        signature: signature,
+      );
+
+      if (!signatureOk) {
+        throw Exception('Handshake signature verification failed');
+      }
+    }
+
+    final transcriptHash = await AegisSecureProtocolV2.sha256(helloPayload);
+    final sharedSecret = await handshake.deriveSharedSecret(serverPublicKey);
+    final keys = await AegisSecureProtocolV2.deriveSessionKeys(
+      sharedSecret: sharedSecret,
+      clientNonce: clientNonce,
+      serverNonce: serverNonce,
+      transcriptHash: transcriptHash,
+    );
+    final proof = await AegisSecureProtocolV2.computeClientFinishProof(
+      ackKey: keys.ackKey,
+      transcriptHash: transcriptHash,
+    );
+
+    final finishEnvelope = <String, Object>{
+      'Stage': 'client_finish_v2',
+      'ClientFinish': {
+        'Cookie': cookie,
+        'Proof': proof,
+      },
+    };
+    final finishPayload = msgpack.serialize(finishEnvelope);
+    final finishMsg = Message.withType(MessageType.handshake, finishPayload);
+    final finishResponse = await _sendAndWaitResponse(
+      finishMsg,
+      expectedTypes: {MessageType.handshake},
+    );
+
+    final decodedFinish = msgpack.deserialize(finishResponse.payload);
+    if (decodedFinish is! Map) {
+      throw Exception('Invalid V2 handshake finish response payload');
+    }
+
+    final finishStage = decodedFinish['Stage']?.toString();
+    final finishSuccess = decodedFinish['Success'] == true;
+    if (!finishSuccess) {
+      final error =
+          decodedFinish['Message']?.toString() ?? 'Handshake V2 finish failed';
+      throw Exception(error);
+    }
+
+    if (finishStage != 'server_finish_v2') {
+      throw Exception('Unexpected V2 handshake finish stage: $finishStage');
+    }
+
+    _transport.setSessionKey(keys.clientToServerKey);
+    return true;
+  }
+
+  Future<void> _performLegacyHandshake({
+    required AegisHandshakeContext handshake,
+    String? trustedServerHandshakeSigningPublicKeyBase64,
+    required bool requireSignedHandshake,
+  }) async {
     final handshakePayload = <String, Object>{
       'PublicKey': base64Encode(handshake.publicKey),
       'ClientVersion': ProtocolConstants.versionMajor * 1000 +
@@ -1456,6 +1810,40 @@ class AegisClient {
       Uint8List.fromList(base64Decode(serverPublicKeyBase64)),
     );
     _transport.setSessionKey(sessionKey);
+  }
+
+  Uint8List _readBytesField(Map source, String key, String fieldName) {
+    final value = source[key];
+    if (value is Uint8List) {
+      return Uint8List.fromList(value);
+    }
+
+    if (value is List) {
+      return Uint8List.fromList(value.cast<int>());
+    }
+
+    throw Exception('Invalid $fieldName in handshake payload');
+  }
+
+  Uint8List? _readOptionalBytesField(Map source, String key) {
+    if (!source.containsKey(key)) {
+      return null;
+    }
+
+    final value = source[key];
+    if (value == null) {
+      return null;
+    }
+
+    if (value is Uint8List) {
+      return Uint8List.fromList(value);
+    }
+
+    if (value is List) {
+      return Uint8List.fromList(value.cast<int>());
+    }
+
+    return null;
   }
 
   // ─── Group History and Members (SERVER-002, SERVER-003) ──────────────────
@@ -2102,6 +2490,157 @@ class AegisClient {
     );
   }
 
+  // ─── Typing Indicators (TODO-012) ────────────────────────────────────────
+
+  Future<void> sendTyping(UserTypingRequest request) async {
+    _requireAuthenticated();
+
+    final msg = Message.withType(
+      MessageType.userTyping,
+      request.toBytes(),
+    );
+    msg.sequenceId = _nextSeqId++;
+    await _transport.sendMessage(msg);
+  }
+
+  Future<void> sendPrivateTyping(int peerUserId, {required bool isTyping}) {
+    return sendTyping(
+      UserTypingRequest.privateChat(peerUserId: peerUserId, isTyping: isTyping),
+    );
+  }
+
+  Future<void> sendChannelTyping(int channelId, {required bool isTyping}) {
+    return sendTyping(
+      UserTypingRequest.channel(channelId: channelId, isTyping: isTyping),
+    );
+  }
+
+  Future<void> sendGroupTyping(int groupId, {required bool isTyping}) {
+    return sendTyping(
+      UserTypingRequest.group(groupId: groupId, isTyping: isTyping),
+    );
+  }
+
+  // ─── File Transfer (TODO-017/018) ───────────────────────────────────────
+
+  Future<FileTransferResponsePayload> initializeFileUpload({
+    required String fileName,
+    required String mimeType,
+    required int totalSize,
+    required int totalChunks,
+    List<int>? allowedUserIds,
+  }) {
+    final request = FileTransferRequest(
+      action: 'init',
+      fileName: fileName,
+      mimeType: mimeType,
+      totalSize: totalSize,
+      totalChunks: totalChunks,
+      allowedUserIds: allowedUserIds,
+    );
+
+    return _sendFileTransferRequest(request);
+  }
+
+  Future<FileTransferResponsePayload> uploadFileChunk({
+    required String transferId,
+    required int chunkIndex,
+    required List<int> chunkBytes,
+  }) {
+    final request = FileTransferRequest(
+      action: 'chunk',
+      transferId: transferId,
+      chunkIndex: chunkIndex,
+      chunkDataBase64: base64Encode(chunkBytes),
+    );
+
+    return _sendFileTransferRequest(request);
+  }
+
+  Future<FileTransferResponsePayload> completeFileUpload(String transferId) {
+    final request = FileTransferRequest(
+      action: 'complete',
+      transferId: transferId,
+    );
+
+    return _sendFileTransferRequest(request);
+  }
+
+  Future<FileTransferResponsePayload> startFileDownload(String fileId) {
+    final request = FileTransferRequest(
+      action: 'download',
+      fileId: fileId,
+    );
+
+    return _sendFileTransferRequest(request);
+  }
+
+  Future<List<int>> downloadFileBytes(
+    String fileId, {
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    _requireAuthenticated();
+
+    final chunks = <int, List<int>>{};
+    int expectedChunks = 0;
+    final completer = Completer<List<int>>();
+
+    late final StreamSubscription<FileTransferResponsePayload> subscription;
+    subscription = fileTransferChunkEvents.listen((chunk) {
+      if (chunk.fileId != fileId) {
+        return;
+      }
+
+      final chunkIndex = chunk.chunkIndex;
+      final chunkData = chunk.chunkDataBase64;
+      if (chunkIndex == null || chunkData == null) {
+        return;
+      }
+
+      chunks[chunkIndex] = base64Decode(chunkData);
+
+      if (expectedChunks > 0 && chunks.length >= expectedChunks) {
+        final merged = <int>[];
+        final sortedIndexes = chunks.keys.toList()..sort();
+        for (final idx in sortedIndexes) {
+          merged.addAll(chunks[idx]!);
+        }
+
+        if (!completer.isCompleted) {
+          completer.complete(merged);
+        }
+      }
+    });
+
+    try {
+      final started = await startFileDownload(fileId);
+      expectedChunks = started.totalChunks ?? 0;
+      if (expectedChunks <= 0) {
+        return <int>[];
+      }
+
+      return await completer.future.timeout(timeout);
+    } finally {
+      await subscription.cancel();
+    }
+  }
+
+  Future<FileTransferResponsePayload> _sendFileTransferRequest(
+    FileTransferRequest request,
+  ) async {
+    _requireAuthenticated();
+
+    final msg = Message.withType(
+      MessageType.fileTransfer,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(
+      msg,
+      expectedTypes: {MessageType.fileTransferResponse},
+    );
+    return FileTransferResponsePayload.fromBytes(response.payload);
+  }
+
   Future<void> _publishPresence({required bool isOnline}) async {
     try {
       final request = UserPresenceUpdateRequest(
@@ -2129,6 +2668,64 @@ class AegisClient {
     final bytes = ByteData(8)..setUint64(0, value, Endian.big);
     return bytes.buffer.asUint8List().toList();
   }
+}
+
+class ReconnectPolicy {
+  final Duration initialDelay;
+  final Duration maxDelay;
+  final double backoffMultiplier;
+  final int? maxAttempts;
+  final bool reloadChatListOnReconnect;
+
+  const ReconnectPolicy({
+    this.initialDelay = const Duration(seconds: 1),
+    this.maxDelay = const Duration(seconds: 30),
+    this.backoffMultiplier = 2.0,
+    this.maxAttempts,
+    this.reloadChatListOnReconnect = true,
+  });
+
+  Duration backoffForAttempt(int attempt) {
+    if (attempt <= 1) {
+      return initialDelay;
+    }
+    final factor = backoffMultiplier <= 1 ? 1.0 : backoffMultiplier;
+    final calculatedMs =
+        initialDelay.inMilliseconds * math.pow(factor, attempt - 1);
+    final boundedMs = calculatedMs.clamp(
+      initialDelay.inMilliseconds,
+      maxDelay.inMilliseconds,
+    );
+    return Duration(milliseconds: boundedMs.toInt());
+  }
+}
+
+class _ReconnectState {
+  final String host;
+  final int port;
+  final Duration? timeout;
+  final String? transportMaskingKey;
+  final bool enableMaskingAutoFallback;
+  final bool allowLegacyHandshakeFallback;
+  final String? trustedServerHandshakeSigningPublicKeyBase64;
+  final bool requireSignedHandshake;
+  final bool useTls;
+  final SecurityContext? tlsSecurityContext;
+  final bool Function(X509Certificate certificate)? onBadTlsCertificate;
+
+  const _ReconnectState({
+    required this.host,
+    required this.port,
+    required this.timeout,
+    required this.transportMaskingKey,
+    required this.enableMaskingAutoFallback,
+    required this.allowLegacyHandshakeFallback,
+    required this.trustedServerHandshakeSigningPublicKeyBase64,
+    required this.requireSignedHandshake,
+    required this.useTls,
+    required this.tlsSecurityContext,
+    required this.onBadTlsCertificate,
+  });
 }
 
 class AegisChannelFacade {
@@ -2219,6 +2816,9 @@ class AegisChannelFacade {
         joinRule: joinRule,
         historyVisibility: historyVisibility,
       );
+
+  Future<void> sendTyping(int channelId, {required bool isTyping}) =>
+      _client.sendChannelTyping(channelId, isTyping: isTyping);
 }
 
 class AegisGroupFacade {
@@ -2301,6 +2901,9 @@ class AegisGroupFacade {
         joinRule: joinRule,
         historyVisibility: historyVisibility,
       );
+
+  Future<void> sendTyping(int groupId, {required bool isTyping}) =>
+      _client.sendGroupTyping(groupId, isTyping: isTyping);
 }
 
 class AegisDirectFacade {
@@ -2313,13 +2916,18 @@ class AegisDirectFacade {
     String content, {
     MessageContentType contentType = MessageContentType.text,
     ParseMode? parseMode,
+    SignalV3EnvelopePayload? signalV3,
   }) =>
       _client.sendPrivateMessage(
         toUserId,
         content,
         contentType: contentType,
         parseMode: parseMode,
+        signalV3: signalV3,
       );
+
+  Future<void> sendTyping(int peerUserId, {required bool isTyping}) =>
+      _client.sendPrivateTyping(peerUserId, isTyping: isTyping);
 
   Future<PrivateChatHistoryResponse> history(
     int peerUserId, {

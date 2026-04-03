@@ -13,6 +13,7 @@ using System.Text.Json;
 using Xunit;
 using Microsoft.EntityFrameworkCore.InMemory;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Configuration;
 using Aegis.Data.Utils;
 
 namespace Aegis.Tests;
@@ -26,6 +27,7 @@ public class UserServicesTests : IDisposable
     private readonly UserRegistrationService _registrationService;
     private readonly UserAuthenticationService _authService;
     private readonly UserSearchService _searchService;
+    private readonly UserTwoFactorService _twoFactorService;
 
     public UserServicesTests()
     {
@@ -55,7 +57,15 @@ public class UserServicesTests : IDisposable
         NullLogger<UserRegistrationService>.Instance,
         idGenerator);
 
-        _authService = new UserAuthenticationService(_userRepository, _sessionRepository, _mockCryptoProvider.Object);
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Security:TotpEncryptionKey"] = Convert.ToBase64String(Enumerable.Repeat((byte)7, 32).ToArray())
+            })
+            .Build();
+
+        _twoFactorService = new UserTwoFactorService(_userRepository, _mockCryptoProvider.Object, _context, configuration);
+        _authService = new UserAuthenticationService(_userRepository, _sessionRepository, _mockCryptoProvider.Object, _twoFactorService);
         _searchService = new UserSearchService(_userRepository, null, NullLogger<UserSearchService>.Instance);
     }
     [Fact]
@@ -227,6 +237,18 @@ public class UserServicesTests : IDisposable
 
         // Assert
         Assert.Equal(3, users.Count());
+    }
+
+    [Fact]
+    public async Task UserTwoFactorService_BeginSetupAsync_ShouldGenerateRecoveryPhraseWith20Words()
+    {
+        var user = await _registrationService.RegisterUserAsync("totpuser", "totp@example.com", "password123", "public_key");
+
+        var setup = await _twoFactorService.BeginSetupAsync(user.Id, "Twospace");
+
+        Assert.False(string.IsNullOrWhiteSpace(setup.Secret));
+        Assert.False(string.IsNullOrWhiteSpace(setup.OtpauthUri));
+        Assert.Equal(20, setup.RecoveryPhrase.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length);
     }
 
     public void Dispose()

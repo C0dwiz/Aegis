@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <Compile Include="ProtocolSafety.fs" />
+    <Compile Include="ProtocolStateMachine.fs" />
     <Compile Include="DomainRules.fs" />
   </ItemGroup>
 </Project>

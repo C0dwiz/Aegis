@@ -118,7 +118,16 @@ enum MessageType {
   roomSettingsGet(83),
   roomSettingsGetResponse(84),
   roomSettingsUpdate(85),
-  roomSettingsUpdateResponse(86);
+  roomSettingsUpdateResponse(86),
+
+  // Typing indicators (TODO-012)
+  userTyping(87),
+  userTypingEvent(88),
+
+  // File transfer (TODO-017/018)
+  fileTransfer(89),
+  fileTransferResponse(90),
+  fileTransferChunk(91);
 
   const MessageType(this.value);
   final int value;

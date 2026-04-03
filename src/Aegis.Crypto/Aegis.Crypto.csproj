@@ -10,4 +10,8 @@
     <ProjectReference Include="..\Aegis.Common\Aegis.Common.csproj" />
     <ProjectReference Include="..\Aegis.Protocol\Aegis.Protocol.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
+  </ItemGroup>
 </Project>

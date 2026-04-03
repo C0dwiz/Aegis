@@ -17,6 +17,7 @@ Dart клиентская библиотека для протокола Aegis M
 - ✅ MessagePack-сериализация для protocol payloads и JSON только для вложенного rich/media content
 - ✅ Поддержка обязательных `api_id` / `api_hash` в handshake
 - ✅ Верификация подписанного server handshake через доверенный public key
+- ✅ V2-first staged handshake (`client_hello_v2` -> `server_hello_v2` -> `client_finish_v2`)
 
 ## Установка
 
@@ -26,6 +27,9 @@ Dart клиентская библиотека для протокола Aegis M
 dependencies:
   aegis_client: ^1.0.0
 ```
+
+Практический гайд по V2-подключению и коду интеграции: `V2_USAGE.md`.
+Миграция на актуальный SDK: `MIGRATION.md`.
 
 ## Быстрый старт
 
@@ -38,6 +42,10 @@ void main() async {
   try {
     // Подключение к серверу
     await client.connect('localhost', 8888);
+
+    // Начиная с текущей версии клиент работает в strict V2 режиме по умолчанию.
+    // Если сервер еще не обновлен, можно временно включить legacy fallback:
+    // await client.connect('localhost', 8888, allowLegacyHandshakeFallback: true);
 
     // Если на сервере включен Server:EnableTransportMasking
     // await client.connect('localhost', 8888, transportMaskingKey: 'your-shared-mask-key');
@@ -158,6 +166,55 @@ await client.connect(
 - дополнительно требует `Signature` в handshake response;
 - проверяет эту подпись через `trustedServerHandshakeSigningPublicKeyBase64` до вывода session key.
 
+## V2 Handshake Usage
+
+### 1) Recommended production setup (strict V2 + signed handshake)
+
+```dart
+final client = AegisClient.withApiCredentials(
+  const AegisApiCredentials(appId: 50001, appHash: 'issued-app-hash'),
+);
+
+await client.connect(
+  'your-host',
+  8888,
+  requireSignedHandshake: true,
+  trustedServerHandshakeSigningPublicKeyBase64: '<server-signing-public-key-base64>',
+  // optional, default false:
+  allowLegacyHandshakeFallback: false,
+);
+```
+
+### 2) Migration mode (temporary)
+
+Use only while some environments still return legacy handshake payloads:
+
+```dart
+await client.connect(
+  'your-host',
+  8888,
+  allowLegacyHandshakeFallback: true,
+);
+```
+
+### 3) What happens under the hood
+
+- Клиент отправляет `client_hello_v2` с `ApiId`, `AppHash`, `ClientNonce`, `ClientEphemeralPublicKey`.
+- Получает `server_hello_v2` (`ServerNonce`, `Cookie`, `ServerEphemeralPublicKey`).
+- Вычисляет ключи через HKDF (`aegis-v2/hs` + transcript hash labels `0x01/0x02/0x03`).
+- Формирует `Proof` как `HMAC-SHA256(ackKey, transcriptHash || "finish")`.
+- Отправляет `client_finish_v2`, после `server_finish_v2` включает transport encryption.
+- Если `requireSignedHandshake=true`, подпись server hello проверяется до установки session key.
+
+## Migration Guide
+
+Для быстрого апгрейда с предыдущих версий смотрите `MIGRATION.md`:
+
+- что поменялось в handshake (strict V2 по умолчанию);
+- как включать временный legacy fallback;
+- новые API для typing / file transfer;
+- совместимость payload-полей (`Id`/`MessageId`, `CreatedAt`/`CreatedAtUtc`, `SignalV3`).
+
 ## Основные компоненты
 
 ### AegisClient
@@ -165,7 +222,7 @@ await client.connect(
 Основной класс клиента с методами:
 
 #### Базовые методы:
-- `connect(host, port, {timeout, transportMaskingKey, enableMaskingAutoFallback})` - подключение к серверу
+- `connect(host, port, {timeout, transportMaskingKey, enableMaskingAutoFallback, allowLegacyHandshakeFallback, requireSignedHandshake, trustedServerHandshakeSigningPublicKeyBase64})` - подключение к серверу
 - `login(username, password)` / `loginWithToken(token)` - аутентификация
 - `authenticate(rawPayloadOrToken)` - low-level совместимый auth helper
 - `sendMessage(text, toUserId)` - отправка сообщения (legacy)

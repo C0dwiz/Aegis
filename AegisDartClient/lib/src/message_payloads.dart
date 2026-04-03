@@ -232,6 +232,49 @@ DateTime? _parseNullableDateTimeValue(dynamic value) {
   return _parseDateTimeValue(value);
 }
 
+/// Optional Signal v3 envelope sent with private message requests.
+class SignalV3EnvelopePayload {
+  final String? ciphertextBase64;
+  final int? messageNumber;
+
+  SignalV3EnvelopePayload({
+    this.ciphertextBase64,
+    this.messageNumber,
+  });
+
+  Map<String, dynamic> toJson() => {
+        if (ciphertextBase64 != null) 'CiphertextBase64': ciphertextBase64,
+        if (messageNumber != null) 'MessageNumber': messageNumber,
+      };
+
+  factory SignalV3EnvelopePayload.fromJson(Map<String, dynamic> json) =>
+      SignalV3EnvelopePayload(
+        ciphertextBase64: json['CiphertextBase64'] as String?,
+        messageNumber: (json['MessageNumber'] as num?)?.toInt(),
+      );
+}
+
+/// Signal v3 delivery metadata included in direct-message server payloads.
+class SignalV3DeliveryInfo {
+  final int messageNumber;
+  final String messageKeyId;
+  final DateTime? ratchetUpdatedAtUtc;
+
+  SignalV3DeliveryInfo({
+    required this.messageNumber,
+    required this.messageKeyId,
+    this.ratchetUpdatedAtUtc,
+  });
+
+  factory SignalV3DeliveryInfo.fromJson(Map<String, dynamic> json) =>
+      SignalV3DeliveryInfo(
+        messageNumber: (json['MessageNumber'] as num?)?.toInt() ?? 0,
+        messageKeyId: json['MessageKeyId'] as String? ?? '',
+        ratchetUpdatedAtUtc:
+            _parseNullableDateTimeValue(json['RatchetUpdatedAtUtc']),
+      );
+}
+
 /// Normalized response for unified media sending API.
 class MediaSendResponse {
   final bool success;
@@ -973,6 +1016,7 @@ class PrivateChatMessageRequest {
   final MediaAttachmentPayload? attachment;
   final List<MediaAttachmentPayload>? attachments;
   final String? parseMode;
+  final SignalV3EnvelopePayload? signalV3;
 
   PrivateChatMessageRequest({
     required this.toUserId,
@@ -981,6 +1025,7 @@ class PrivateChatMessageRequest {
     this.attachment,
     this.attachments,
     this.parseMode,
+    this.signalV3,
   });
 
   Map<String, dynamic> toJson() => {
@@ -991,6 +1036,7 @@ class PrivateChatMessageRequest {
         if (attachments != null)
           'Attachments': attachments!.map((item) => item.toJson()).toList(),
         if (parseMode != null) 'ParseMode': parseMode,
+        if (signalV3 != null) 'SignalV3': signalV3!.toJson(),
       };
 
   factory PrivateChatMessageRequest.fromJson(Map<String, dynamic> json) =>
@@ -1008,6 +1054,10 @@ class PrivateChatMessageRequest {
                 MediaAttachmentPayload.fromJson(item as Map<String, dynamic>))
             .toList(),
         parseMode: json['ParseMode'] as String?,
+        signalV3: json['SignalV3'] != null
+            ? SignalV3EnvelopePayload.fromJson(
+                json['SignalV3'] as Map<String, dynamic>)
+            : null,
       );
 
   List<int> toBytes() => msgpack.serialize(toJson());
@@ -1018,24 +1068,38 @@ class PrivateChatMessageResponse {
   final bool success;
   final int messageId;
   final String? messageText;
+  final SignalV3DeliveryInfo? signalV3;
 
   PrivateChatMessageResponse({
     required this.success,
     this.messageId = 0,
     this.messageText,
+    this.signalV3,
   });
 
   Map<String, dynamic> toJson() => {
         'Success': success,
         'MessageId': messageId,
         if (messageText != null) 'MessageText': messageText,
+        if (signalV3 != null)
+          'SignalV3': {
+            'MessageNumber': signalV3!.messageNumber,
+            'MessageKeyId': signalV3!.messageKeyId,
+            if (signalV3!.ratchetUpdatedAtUtc != null)
+              'RatchetUpdatedAtUtc':
+                  signalV3!.ratchetUpdatedAtUtc!.toUtc().toIso8601String(),
+          },
       };
 
   factory PrivateChatMessageResponse.fromJson(Map<String, dynamic> json) =>
       PrivateChatMessageResponse(
         success: json['Success'] as bool,
-        messageId: json['MessageId'] as int? ?? 0,
+        messageId: (json['MessageId'] as num?)?.toInt() ?? 0,
         messageText: json['MessageText'] as String?,
+        signalV3: json['SignalV3'] != null
+            ? SignalV3DeliveryInfo.fromJson(
+                json['SignalV3'] as Map<String, dynamic>)
+            : null,
       );
 
   factory PrivateChatMessageResponse.fromBytes(List<int> bytes) {
@@ -1453,6 +1517,7 @@ class PrivateChatMessageEvent {
   final String? parseMode;
   final String? fromUsername;
   final String? username;
+  final SignalV3DeliveryInfo? signalV3;
 
   PrivateChatMessageEvent({
     required this.id,
@@ -1466,18 +1531,21 @@ class PrivateChatMessageEvent {
     this.parseMode,
     this.fromUsername,
     this.username,
+    this.signalV3,
   });
 
   factory PrivateChatMessageEvent.fromJson(Map<String, dynamic> json) {
     final parsed = parseRichTextContent(json['Content'] as String);
+    final idValue = (json['Id'] ?? json['MessageId']) as num?;
+    final createdAtRaw = json['CreatedAt'] ?? json['CreatedAtUtc'];
     return PrivateChatMessageEvent(
-      id: json['Id'] as int,
-      fromUserId: json['FromUserId'] as int,
-      toUserId: json['ToUserId'] as int,
+      id: idValue?.toInt() ?? 0,
+      fromUserId: (json['FromUserId'] as num?)?.toInt() ?? 0,
+      toUserId: (json['ToUserId'] as num?)?.toInt() ?? 0,
       content: parsed.text,
       contentType:
           MessageContentType.fromValue(json['ContentType'] as int? ?? 0),
-      createdAt: _parseDateTimeValue(json['CreatedAt']),
+      createdAt: _parseDateTimeValue(createdAtRaw),
       deliveredTo: (json['DeliveredTo'] as List<dynamic>? ?? const <dynamic>[])
           .map((item) => (item as num).toInt())
           .toList(),
@@ -1487,6 +1555,10 @@ class PrivateChatMessageEvent {
       parseMode: parsed.parseMode,
       fromUsername: json['FromUsername'] as String?,
       username: json['Username'] as String?,
+      signalV3: json['SignalV3'] != null
+          ? SignalV3DeliveryInfo.fromJson(
+              json['SignalV3'] as Map<String, dynamic>)
+          : null,
     );
   }
 
@@ -3259,4 +3331,176 @@ class MemberPermissionUpdateResponse {
 
   factory MemberPermissionUpdateResponse.fromBytes(List<int> bytes) =>
       MemberPermissionUpdateResponse.fromJson(_decodePayloadMap(bytes));
+}
+
+/// Typing indicator request payload.
+class UserTypingRequest {
+  final String scope;
+  final int targetId;
+  final bool isTyping;
+  final int? toUserId;
+
+  UserTypingRequest({
+    required this.scope,
+    required this.targetId,
+    required this.isTyping,
+    this.toUserId,
+  });
+
+  factory UserTypingRequest.privateChat({
+    required int peerUserId,
+    required bool isTyping,
+  }) =>
+      UserTypingRequest(
+        scope: ChatScope.privateChat.value,
+        targetId: peerUserId,
+        isTyping: isTyping,
+        toUserId: peerUserId,
+      );
+
+  factory UserTypingRequest.channel({
+    required int channelId,
+    required bool isTyping,
+  }) =>
+      UserTypingRequest(
+        scope: ChatScope.channel.value,
+        targetId: channelId,
+        isTyping: isTyping,
+      );
+
+  factory UserTypingRequest.group({
+    required int groupId,
+    required bool isTyping,
+  }) =>
+      UserTypingRequest(
+        scope: ChatScope.group.value,
+        targetId: groupId,
+        isTyping: isTyping,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'Scope': scope,
+        'TargetId': targetId,
+        'IsTyping': isTyping,
+        if (toUserId != null) 'ToUserId': toUserId,
+      };
+
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+/// Typing indicator event payload (server -> client).
+class UserTypingEventPayload {
+  final String scope;
+  final int targetId;
+  final int userId;
+  final bool isTyping;
+  final DateTime timestampUtc;
+
+  UserTypingEventPayload({
+    required this.scope,
+    required this.targetId,
+    required this.userId,
+    required this.isTyping,
+    required this.timestampUtc,
+  });
+
+  ChatScope get chatScope => ChatScope.fromValue(scope);
+
+  factory UserTypingEventPayload.fromJson(Map<String, dynamic> json) =>
+      UserTypingEventPayload(
+        scope: json['Scope'] as String? ?? ChatScope.privateChat.value,
+        targetId: (json['TargetId'] as num?)?.toInt() ?? 0,
+        userId: (json['UserId'] as num?)?.toInt() ?? 0,
+        isTyping: json['IsTyping'] as bool? ?? false,
+        timestampUtc: _parseDateTimeValue(json['TimestampUtc']),
+      );
+
+  factory UserTypingEventPayload.fromBytes(List<int> bytes) =>
+      UserTypingEventPayload.fromJson(_decodePayloadMap(bytes));
+}
+
+/// Generic file transfer request payload.
+class FileTransferRequest {
+  final String action;
+  final String? transferId;
+  final String? fileId;
+  final String? fileName;
+  final String? mimeType;
+  final int? totalSize;
+  final int? totalChunks;
+  final int? chunkIndex;
+  final String? chunkDataBase64;
+  final List<int>? allowedUserIds;
+
+  FileTransferRequest({
+    required this.action,
+    this.transferId,
+    this.fileId,
+    this.fileName,
+    this.mimeType,
+    this.totalSize,
+    this.totalChunks,
+    this.chunkIndex,
+    this.chunkDataBase64,
+    this.allowedUserIds,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'Action': action,
+        if (transferId != null) 'TransferId': transferId,
+        if (fileId != null) 'FileId': fileId,
+        if (fileName != null) 'FileName': fileName,
+        if (mimeType != null) 'MimeType': mimeType,
+        if (totalSize != null) 'TotalSize': totalSize,
+        if (totalChunks != null) 'TotalChunks': totalChunks,
+        if (chunkIndex != null) 'ChunkIndex': chunkIndex,
+        if (chunkDataBase64 != null) 'ChunkDataBase64': chunkDataBase64,
+        if (allowedUserIds != null) 'AllowedUserIds': allowedUserIds,
+      };
+
+  List<int> toBytes() => msgpack.serialize(toJson());
+}
+
+/// File transfer response payload used for acks and metadata.
+class FileTransferResponsePayload {
+  final bool success;
+  final String? message;
+  final String? transferId;
+  final String? fileId;
+  final int? chunkIndex;
+  final int? totalChunks;
+  final String? chunkDataBase64;
+  final String? fileName;
+  final String? mimeType;
+  final int? totalSize;
+
+  FileTransferResponsePayload({
+    required this.success,
+    this.message,
+    this.transferId,
+    this.fileId,
+    this.chunkIndex,
+    this.totalChunks,
+    this.chunkDataBase64,
+    this.fileName,
+    this.mimeType,
+    this.totalSize,
+  });
+
+  factory FileTransferResponsePayload.fromJson(Map<String, dynamic> json) =>
+      FileTransferResponsePayload(
+        success: json['Success'] as bool? ?? false,
+        message: json['Message'] as String?,
+        transferId: json['TransferId'] as String?,
+        fileId: json['FileId'] as String?,
+        chunkIndex: (json['ChunkIndex'] as num?)?.toInt(),
+        totalChunks: (json['TotalChunks'] as num?)?.toInt(),
+        chunkDataBase64: json['ChunkDataBase64'] as String?,
+        fileName: json['FileName'] as String?,
+        mimeType: json['MimeType'] as String?,
+        totalSize: (json['TotalSize'] as num?)?.toInt(),
+      );
+
+  factory FileTransferResponsePayload.fromBytes(List<int> bytes) =>
+      FileTransferResponsePayload.fromJson(_decodePayloadMap(bytes));
 }

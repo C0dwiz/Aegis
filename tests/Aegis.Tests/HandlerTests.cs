@@ -16,6 +16,9 @@ using MessagePack;
 using MessagePack.Resolvers;
 using System.Text.Json;
 using System.Text;
+using System.Buffers.Binary;
+using System.Security.Cryptography;
+using Microsoft.Extensions.Options;
 
 namespace Aegis.Tests;
 
@@ -194,6 +197,385 @@ public class HandlerTests
     }
 
     [Fact]
+    public async Task HandshakeHandler_StrictV2Only_ShouldRejectLegacyHandshakePayload()
+    {
+        var protocolOptions = Options.Create(new Aegis.Common.Configuration.ProtocolSecurityOptions
+        {
+            EnableV2Handshake = true,
+            AllowLegacyHandshakeFallback = false,
+            RequireAppCredentials = false,
+        });
+
+        var handler = new HandshakeHandler(
+            _sessionManager,
+            _messageSender,
+            _cryptoProvider,
+            protocolOptions,
+            new Mock<ILogger<HandshakeHandler>>().Object,
+            null,
+            null);
+
+        var context = new TestConnectionContext(777001ul);
+        _sessionManager.CreateSession(context.ConnectionId);
+
+        using var clientKey = EcdhKeyExchange.GenerateKeyPair();
+        var legacyPayload = SerializePayload(new HandshakeRequestPayload(
+            PublicKey: Convert.ToBase64String(clientKey.PublicKeyRaw),
+            ClientVersion: 1000));
+
+        var message = new Aegis.Protocol.Message
+        {
+            Type = MessageType.Handshake,
+            SequenceId = 7001,
+            Payload = legacyPayload,
+            PayloadLength = (uint)legacyPayload.Length,
+        };
+
+        await handler.HandleAsync(context, message);
+
+        Assert.NotEmpty(_messageSender.SentMessages);
+        var wire = MessageEncoder.Decode(_messageSender.SentMessages[^1]);
+        var response = MessagePackSerializer.Deserialize<HandshakeResponsePayload>(wire.Payload, MsgPackOptions);
+
+        Assert.False(response.Success);
+        Assert.Equal("V2 handshake required", response.Message);
+        Assert.False(_sessionManager.GetSession(context.ConnectionId)?.HandshakeEstablished ?? true);
+    }
+
+    [Fact]
+    public async Task HandshakeHandler_V2Flow_ShouldEstablishSessionWhenProofIsValid()
+    {
+        var protocolOptions = Options.Create(new Aegis.Common.Configuration.ProtocolSecurityOptions
+        {
+            EnableV2Handshake = true,
+            AllowLegacyHandshakeFallback = false,
+            RequireAppCredentials = false,
+            V2HandshakeClockSkewMs = 90_000,
+            V2HandshakeCookieTtlMs = 60_000,
+            V2ReplayWindowSeconds = 120,
+        });
+
+        var handler = new HandshakeHandler(
+            _sessionManager,
+            _messageSender,
+            _cryptoProvider,
+            protocolOptions,
+            new Mock<ILogger<HandshakeHandler>>().Object,
+            null,
+            null);
+
+        var context = new TestConnectionContext(777002ul);
+        _sessionManager.CreateSession(context.ConnectionId);
+
+        using var clientKey = EcdhKeyExchange.GenerateKeyPair();
+        var clientNonce = new byte[32];
+        RandomNumberGenerator.Fill(clientNonce);
+
+        var helloEnvelope = new HandshakeV2Envelope(
+            Stage: "client_hello_v2",
+            ClientHello: new ClientHelloV2(
+                ApiId: 0,
+                AppHash: string.Empty,
+                ClientEphemeralPublicKey: clientKey.PublicKeyRaw,
+                ClientNonce: clientNonce,
+                ClientUnixTimeMs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                TransportHint: "obfs+tls"));
+
+        var helloPayload = SerializePayload(helloEnvelope);
+        var helloMessage = new Aegis.Protocol.Message
+        {
+            Type = MessageType.Handshake,
+            SequenceId = 7002,
+            Payload = helloPayload,
+            PayloadLength = (uint)helloPayload.Length,
+        };
+
+        await handler.HandleAsync(context, helloMessage);
+
+        Assert.NotEmpty(_messageSender.SentMessages);
+        var serverHelloWire = MessageEncoder.Decode(_messageSender.SentMessages[^1]);
+        var serverHelloEnvelope = MessagePackSerializer.Deserialize<HandshakeV2ResponseEnvelope>(serverHelloWire.Payload, MsgPackOptions);
+
+        Assert.True(serverHelloEnvelope.Success);
+        Assert.Equal("server_hello_v2", serverHelloEnvelope.Stage);
+        Assert.NotNull(serverHelloEnvelope.ServerHello);
+
+        var serverHello = serverHelloEnvelope.ServerHello!;
+        var sharedSecret = clientKey.ComputeSharedSecret(serverHello.ServerEphemeralPublicKey);
+        var transcriptHash = SHA256.HashData(helloPayload);
+        var keys = V2KeySchedule.DeriveSessionKeys(sharedSecret, clientNonce, serverHello.ServerNonce, transcriptHash);
+        var proof = V2KeySchedule.ComputeClientFinishProof(keys.AckKey, transcriptHash);
+
+        var finishEnvelope = new HandshakeV2Envelope(
+            Stage: "client_finish_v2",
+            ClientFinish: new ClientFinishV2(serverHello.Cookie, proof));
+        var finishPayload = SerializePayload(finishEnvelope);
+        var finishMessage = new Aegis.Protocol.Message
+        {
+            Type = MessageType.Handshake,
+            SequenceId = 7003,
+            Payload = finishPayload,
+            PayloadLength = (uint)finishPayload.Length,
+        };
+
+        await handler.HandleAsync(context, finishMessage);
+
+        Assert.True(_messageSender.SentMessages.Count >= 2);
+        var finishWire = MessageEncoder.Decode(_messageSender.SentMessages[^1]);
+        var finishResponse = MessagePackSerializer.Deserialize<HandshakeV2ResponseEnvelope>(finishWire.Payload, MsgPackOptions);
+
+        Assert.True(finishResponse.Success);
+        Assert.Equal("server_finish_v2", finishResponse.Stage);
+        Assert.True(_sessionManager.GetSession(context.ConnectionId)?.HandshakeEstablished ?? false);
+    }
+
+    [Fact]
+    public async Task HandshakeHandler_V2Flow_ShouldRejectInvalidFinishProof()
+    {
+        var protocolOptions = Options.Create(new Aegis.Common.Configuration.ProtocolSecurityOptions
+        {
+            EnableV2Handshake = true,
+            AllowLegacyHandshakeFallback = false,
+            RequireAppCredentials = false,
+            V2HandshakeClockSkewMs = 90_000,
+            V2HandshakeCookieTtlMs = 60_000,
+            V2ReplayWindowSeconds = 120,
+        });
+
+        var handler = new HandshakeHandler(
+            _sessionManager,
+            _messageSender,
+            _cryptoProvider,
+            protocolOptions,
+            new Mock<ILogger<HandshakeHandler>>().Object,
+            null,
+            null);
+
+        var context = new TestConnectionContext(777003ul);
+        _sessionManager.CreateSession(context.ConnectionId);
+
+        using var clientKey = EcdhKeyExchange.GenerateKeyPair();
+        var clientNonce = new byte[32];
+        RandomNumberGenerator.Fill(clientNonce);
+
+        var helloEnvelope = new HandshakeV2Envelope(
+            Stage: "client_hello_v2",
+            ClientHello: new ClientHelloV2(
+                ApiId: 0,
+                AppHash: string.Empty,
+                ClientEphemeralPublicKey: clientKey.PublicKeyRaw,
+                ClientNonce: clientNonce,
+                ClientUnixTimeMs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                TransportHint: "obfs+tls"));
+
+        var helloPayload = SerializePayload(helloEnvelope);
+        var helloMessage = new Aegis.Protocol.Message
+        {
+            Type = MessageType.Handshake,
+            SequenceId = 7004,
+            Payload = helloPayload,
+            PayloadLength = (uint)helloPayload.Length,
+        };
+
+        await handler.HandleAsync(context, helloMessage);
+
+        var serverHelloWire = MessageEncoder.Decode(_messageSender.SentMessages[^1]);
+        var serverHelloEnvelope = MessagePackSerializer.Deserialize<HandshakeV2ResponseEnvelope>(serverHelloWire.Payload, MsgPackOptions);
+
+        Assert.True(serverHelloEnvelope.Success);
+        Assert.Equal("server_hello_v2", serverHelloEnvelope.Stage);
+        Assert.NotNull(serverHelloEnvelope.ServerHello);
+
+        var serverHello = serverHelloEnvelope.ServerHello!;
+        var sharedSecret = clientKey.ComputeSharedSecret(serverHello.ServerEphemeralPublicKey);
+        var transcriptHash = SHA256.HashData(helloPayload);
+        var keys = V2KeySchedule.DeriveSessionKeys(sharedSecret, clientNonce, serverHello.ServerNonce, transcriptHash);
+        var proof = V2KeySchedule.ComputeClientFinishProof(keys.AckKey, transcriptHash);
+        proof[0] ^= 0x01;
+
+        var finishEnvelope = new HandshakeV2Envelope(
+            Stage: "client_finish_v2",
+            ClientFinish: new ClientFinishV2(serverHello.Cookie, proof));
+        var finishPayload = SerializePayload(finishEnvelope);
+        var finishMessage = new Aegis.Protocol.Message
+        {
+            Type = MessageType.Handshake,
+            SequenceId = 7005,
+            Payload = finishPayload,
+            PayloadLength = (uint)finishPayload.Length,
+        };
+
+        await handler.HandleAsync(context, finishMessage);
+
+        var finishWire = MessageEncoder.Decode(_messageSender.SentMessages[^1]);
+        var finishResponse = MessagePackSerializer.Deserialize<HandshakeV2ResponseEnvelope>(finishWire.Payload, MsgPackOptions);
+
+        Assert.False(finishResponse.Success);
+        Assert.Equal("server_error_v2", finishResponse.Stage);
+        Assert.Equal("Invalid handshake proof", finishResponse.Message);
+        Assert.False(_sessionManager.GetSession(context.ConnectionId)?.HandshakeEstablished ?? true);
+    }
+
+    [Fact]
+    public async Task HandshakeHandler_V2Flow_ShouldRejectReplayedClientNonce()
+    {
+        var protocolOptions = Options.Create(new Aegis.Common.Configuration.ProtocolSecurityOptions
+        {
+            EnableV2Handshake = true,
+            AllowLegacyHandshakeFallback = false,
+            RequireAppCredentials = false,
+            V2HandshakeClockSkewMs = 90_000,
+            V2HandshakeCookieTtlMs = 60_000,
+            V2ReplayWindowSeconds = 120,
+        });
+
+        var handler = new HandshakeHandler(
+            _sessionManager,
+            _messageSender,
+            _cryptoProvider,
+            protocolOptions,
+            new Mock<ILogger<HandshakeHandler>>().Object,
+            null,
+            null);
+
+        var context = new TestConnectionContext(777004ul);
+        _sessionManager.CreateSession(context.ConnectionId);
+
+        using var clientKey = EcdhKeyExchange.GenerateKeyPair();
+        var replayedNonce = new byte[32];
+        RandomNumberGenerator.Fill(replayedNonce);
+
+        var helloEnvelope = new HandshakeV2Envelope(
+            Stage: "client_hello_v2",
+            ClientHello: new ClientHelloV2(
+                ApiId: 0,
+                AppHash: string.Empty,
+                ClientEphemeralPublicKey: clientKey.PublicKeyRaw,
+                ClientNonce: replayedNonce,
+                ClientUnixTimeMs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                TransportHint: "obfs+tls"));
+
+        var firstHelloPayload = SerializePayload(helloEnvelope);
+        var firstHelloMessage = new Aegis.Protocol.Message
+        {
+            Type = MessageType.Handshake,
+            SequenceId = 7006,
+            Payload = firstHelloPayload,
+            PayloadLength = (uint)firstHelloPayload.Length,
+        };
+
+        await handler.HandleAsync(context, firstHelloMessage);
+        var firstWire = MessageEncoder.Decode(_messageSender.SentMessages[^1]);
+        var firstResponse = MessagePackSerializer.Deserialize<HandshakeV2ResponseEnvelope>(firstWire.Payload, MsgPackOptions);
+
+        Assert.True(firstResponse.Success);
+        Assert.Equal("server_hello_v2", firstResponse.Stage);
+
+        var secondHelloPayload = SerializePayload(helloEnvelope);
+        var secondHelloMessage = new Aegis.Protocol.Message
+        {
+            Type = MessageType.Handshake,
+            SequenceId = 7007,
+            Payload = secondHelloPayload,
+            PayloadLength = (uint)secondHelloPayload.Length,
+        };
+
+        await handler.HandleAsync(context, secondHelloMessage);
+
+        var secondWire = MessageEncoder.Decode(_messageSender.SentMessages[^1]);
+        var secondResponse = MessagePackSerializer.Deserialize<HandshakeV2ResponseEnvelope>(secondWire.Payload, MsgPackOptions);
+
+        Assert.False(secondResponse.Success);
+        Assert.Equal("server_error_v2", secondResponse.Stage);
+        Assert.Equal("Replay detected", secondResponse.Message);
+    }
+
+    [Fact]
+    public async Task HandshakeHandler_V2Flow_ShouldRejectExpiredCookie()
+    {
+        var protocolOptions = Options.Create(new Aegis.Common.Configuration.ProtocolSecurityOptions
+        {
+            EnableV2Handshake = true,
+            AllowLegacyHandshakeFallback = false,
+            RequireAppCredentials = false,
+            V2HandshakeClockSkewMs = 90_000,
+            V2HandshakeCookieTtlMs = -1,
+            V2ReplayWindowSeconds = 120,
+        });
+
+        var handler = new HandshakeHandler(
+            _sessionManager,
+            _messageSender,
+            _cryptoProvider,
+            protocolOptions,
+            new Mock<ILogger<HandshakeHandler>>().Object,
+            null,
+            null);
+
+        var context = new TestConnectionContext(777005ul);
+        _sessionManager.CreateSession(context.ConnectionId);
+
+        using var clientKey = EcdhKeyExchange.GenerateKeyPair();
+        var clientNonce = new byte[32];
+        RandomNumberGenerator.Fill(clientNonce);
+
+        var helloEnvelope = new HandshakeV2Envelope(
+            Stage: "client_hello_v2",
+            ClientHello: new ClientHelloV2(
+                ApiId: 0,
+                AppHash: string.Empty,
+                ClientEphemeralPublicKey: clientKey.PublicKeyRaw,
+                ClientNonce: clientNonce,
+                ClientUnixTimeMs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                TransportHint: "obfs+tls"));
+
+        var helloPayload = SerializePayload(helloEnvelope);
+        var helloMessage = new Aegis.Protocol.Message
+        {
+            Type = MessageType.Handshake,
+            SequenceId = 7008,
+            Payload = helloPayload,
+            PayloadLength = (uint)helloPayload.Length,
+        };
+
+        await handler.HandleAsync(context, helloMessage);
+
+        var serverHelloWire = MessageEncoder.Decode(_messageSender.SentMessages[^1]);
+        var serverHelloEnvelope = MessagePackSerializer.Deserialize<HandshakeV2ResponseEnvelope>(serverHelloWire.Payload, MsgPackOptions);
+        Assert.True(serverHelloEnvelope.Success);
+        Assert.Equal("server_hello_v2", serverHelloEnvelope.Stage);
+        Assert.NotNull(serverHelloEnvelope.ServerHello);
+
+        var serverHello = serverHelloEnvelope.ServerHello!;
+        var sharedSecret = clientKey.ComputeSharedSecret(serverHello.ServerEphemeralPublicKey);
+        var transcriptHash = SHA256.HashData(helloPayload);
+        var keys = V2KeySchedule.DeriveSessionKeys(sharedSecret, clientNonce, serverHello.ServerNonce, transcriptHash);
+        var proof = V2KeySchedule.ComputeClientFinishProof(keys.AckKey, transcriptHash);
+
+        var finishEnvelope = new HandshakeV2Envelope(
+            Stage: "client_finish_v2",
+            ClientFinish: new ClientFinishV2(serverHello.Cookie, proof));
+        var finishPayload = SerializePayload(finishEnvelope);
+        var finishMessage = new Aegis.Protocol.Message
+        {
+            Type = MessageType.Handshake,
+            SequenceId = 7009,
+            Payload = finishPayload,
+            PayloadLength = (uint)finishPayload.Length,
+        };
+
+        await handler.HandleAsync(context, finishMessage);
+
+        var finishWire = MessageEncoder.Decode(_messageSender.SentMessages[^1]);
+        var finishResponse = MessagePackSerializer.Deserialize<HandshakeV2ResponseEnvelope>(finishWire.Payload, MsgPackOptions);
+
+        Assert.False(finishResponse.Success);
+        Assert.Equal("server_error_v2", finishResponse.Stage);
+        Assert.Equal("Handshake cookie expired", finishResponse.Message);
+        Assert.False(_sessionManager.GetSession(context.ConnectionId)?.HandshakeEstablished ?? true);
+    }
+
+    [Fact]
     public async Task UserPresenceHandler_ShouldAcceptIsoTimestampPayloadFromDart()
     {
         var userRepository = new Mock<IUserRepository>();
@@ -366,6 +748,67 @@ public class HandlerTests
         Assert.Contains("rejected by anti-spam", handler.ErrorMessage);
     }
 
+    [Fact]
+    public void TypingIndicatorStore_ShouldThrottleRapidTypingBursts()
+    {
+        using var store = new TypingIndicatorStore();
+
+        var first = store.ShouldBroadcast(11, "private", 42, isTyping: true);
+        var second = store.ShouldBroadcast(11, "private", 42, isTyping: true);
+        var stop = store.ShouldBroadcast(11, "private", 42, isTyping: false);
+
+        Assert.True(first);
+        Assert.False(second);
+        Assert.True(stop);
+    }
+
+    [Fact]
+    public async Task MessageHandler_ShouldPersistAndAdvanceSignalChainState()
+    {
+        var chainRepo = new InMemorySignalChainStateRepository();
+        var handler = new MessageHandler(_antiSpam, _messageServiceMock.Object, _messageSender, _sessionManager, _logger, chainRepo);
+        var context = new TestConnectionContext(8881ul);
+        var recipientContext = new TestConnectionContext(8882ul);
+
+        _sessionManager.CreateSession(context.ConnectionId);
+        _sessionManager.EstablishHandshake(context.ConnectionId, new byte[32]);
+        _sessionManager.AuthenticateSession(context.ConnectionId, 71, "sender");
+
+        _sessionManager.CreateSession(recipientContext.ConnectionId);
+        _sessionManager.EstablishHandshake(recipientContext.ConnectionId, new byte[32]);
+        _sessionManager.AuthenticateSession(recipientContext.ConnectionId, 72, "recipient");
+
+        var payload = BuildLegacyDirectPayload(72, "signal message");
+        var message = new Aegis.Protocol.Message
+        {
+            Type = MessageType.Message,
+            SequenceId = 301,
+            Payload = payload,
+            PayloadLength = (uint)payload.Length,
+        };
+
+        _antiSpam.AllowNextMessage = true;
+
+        await handler.HandleAsync(context, message);
+
+        var state = await chainRepo.GetOrCreateAsync(71, 72);
+        Assert.Equal(1u, state.NextSendingMessageNumber);
+        Assert.False(string.IsNullOrWhiteSpace(state.LastMessageKeyHash));
+    }
+
+    [Fact]
+    public async Task FileDownloadRateLimiter_ShouldDelayWhenWindowExceeded()
+    {
+        var limiter = new FileDownloadRateLimiter(bytesPerSecond: 1024);
+        await limiter.WaitForBudgetAsync(91, 50 * 1024);
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await limiter.WaitForBudgetAsync(91, 50 * 1024);
+        sw.Stop();
+
+        Assert.True(sw.ElapsedMilliseconds >= 600, $"Expected limiter delay, got {sw.ElapsedMilliseconds}ms");
+    }
+
     private class TestConnectionContext : ConnectionContext
     {
         private DateTime _lastActivity = DateTime.UtcNow;
@@ -416,6 +859,51 @@ public class HandlerTests
             await Task.CompletedTask;
             return AllowNextMessage;
         }
+    }
+
+    private sealed class InMemorySignalChainStateRepository : ISignalChainStateRepository
+    {
+        private readonly Dictionary<(ulong Owner, ulong Peer), SignalChainState> _states = new();
+
+        public Task<SignalChainState> GetOrCreateAsync(ulong ownerUserId, ulong peerUserId)
+        {
+            if (_states.TryGetValue((ownerUserId, peerUserId), out var existing))
+            {
+                return Task.FromResult(existing);
+            }
+
+            var state = new SignalChainState
+            {
+                OwnerUserId = ownerUserId,
+                PeerUserId = peerUserId,
+                RootKeyBase64 = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+                SendingChainKeyBase64 = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+                ReceivingChainKeyBase64 = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+                NextSendingMessageNumber = 0,
+                NextReceivingMessageNumber = 0,
+                UpdatedAt = DateTime.UtcNow,
+                CreatedAt = DateTime.UtcNow,
+            };
+
+            _states[(ownerUserId, peerUserId)] = state;
+            return Task.FromResult(state);
+        }
+
+        public Task<SignalChainState> UpdateAsync(SignalChainState state)
+        {
+            state.UpdatedAt = DateTime.UtcNow;
+            _states[(state.OwnerUserId, state.PeerUserId)] = state;
+            return Task.FromResult(state);
+        }
+    }
+
+    private static byte[] BuildLegacyDirectPayload(ulong recipientId, string content)
+    {
+        var contentBytes = Encoding.UTF8.GetBytes(content);
+        var payload = new byte[20 + contentBytes.Length];
+        BinaryPrimitives.WriteUInt64BigEndian(payload.AsSpan(8, 8), recipientId);
+        contentBytes.CopyTo(payload.AsSpan(20));
+        return payload;
     }
 
     private class TestLogger : Aegis.Common.Logging.ILogger

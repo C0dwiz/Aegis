@@ -139,6 +139,7 @@ public record ChannelLeaveRequest(ulong ChannelId);
 public record ChannelLeaveResponse(bool Success, string? Message = null);
 public record GroupLeaveRequest(ulong GroupId);
 public record GroupLeaveResponse(bool Success, string? Message = null);
+public record GroupLeaveEventPayload(ulong GroupId, ulong UserId, DateTime LeftAtUtc);
 
 // SERVER-005: reaction payloads
 public record MessageReactRequest(
@@ -994,17 +995,20 @@ public class GroupLeaveHandler : IMessageHandler
     private readonly SessionManager _sessionManager;
     private readonly IMessageSender _messageSender;
     private readonly IGroupService _groupService;
+    private readonly IGroupRepository _groupRepository;
     private readonly ILogger<GroupLeaveHandler> _logger;
 
     public GroupLeaveHandler(
         SessionManager sessionManager,
         IMessageSender messageSender,
         IGroupService groupService,
+        IGroupRepository groupRepository,
         ILogger<GroupLeaveHandler> logger)
     {
         _sessionManager = sessionManager;
         _messageSender = messageSender;
         _groupService = groupService;
+        _groupRepository = groupRepository;
         _logger = logger;
     }
 
@@ -1034,6 +1038,28 @@ public class GroupLeaveHandler : IMessageHandler
             }
 
             await SendResponseAsync(context, message.SequenceId, new GroupLeaveResponse(true));
+
+            var eventPayload = PayloadSerializer.Serialize(new GroupLeaveEventPayload(
+                request.GroupId,
+                session.UserId,
+                DateTime.UtcNow));
+
+            var activeMembers = await _groupRepository.GetGroupMembersAsync(request.GroupId);
+            foreach (var member in activeMembers.Where(m => m.IsActive && m.UserId != session.UserId))
+            {
+                if (!_sessionManager.TryGetConnectionIdByUserId(member.UserId, out var targetConnectionId))
+                {
+                    continue;
+                }
+
+                await _messageSender.SendProtocolMessageAsync(
+                    targetConnectionId,
+                    (ushort)MessageType.GroupLeave,
+                    0,
+                    eventPayload,
+                    allowUnsigned: false);
+            }
+
             _logger.LogInformation("User {UserId} left group {GroupId}", session.UserId, request.GroupId);
         }
         catch (InvalidOperationException ex)
