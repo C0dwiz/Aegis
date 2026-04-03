@@ -275,7 +275,7 @@ public class AuthHandler : IMessageHandler
             var responseJson = PayloadSerializer.Serialize(response);
             await _messageSender.SendProtocolMessageAsync(
                 context.ConnectionId,
-                (ushort)MessageType.Ack,
+                (ushort)MessageType.Auth,
                 sequenceId,
                 responseJson);
         }
