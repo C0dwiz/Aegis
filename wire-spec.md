@@ -2,13 +2,24 @@
 
 Aegis Protocol — бинарный, сессионный, криптографически защищённый и событийно-ориентированный протокол мессенджера. Работает поверх TCP (опционально с TLS), использует big-endian порядок байтов, MessagePack для сериализации payload и ECDH + AES-GCM для шифрования сессии.
 
+## Актуализация (2026-04)
+
+Этот документ остаётся полной спецификацией, но в коде уже действуют следующие уточнения:
+
+- В продакшене и стейдже сервер форсирует V2 handshake (`EnableV2Handshake=true`, `AllowLegacyHandshakeFallback=false`).
+- V2 handshake staged: `client_hello_v2` -> `server_hello_v2` -> `client_finish_v2`.
+- Legacy handshake остаётся для обратной совместимости в non-production или при явном разрешении fallback.
+- Диапазон MessageType расширен до `86` (есть SERVER-002/003/005/006 типы: history, members, reactions, pins, room settings).
+
+Если есть расхождение между примерами в этом файле и фактическим `src/Aegis.Protocol/MessageType.cs`, источником истины считается код.
+
 ---
 
 ## Архитектура: 3 слоя
 
 ```
 ┌─────────────────────────────────────┐
-│  App layer  — типы сообщений (#0–69)│
+│  App layer  — типы сообщений (#0–86)│
 │  (auth, чат, каналы, профили, ...)  │
 ├─────────────────────────────────────┤
 │  Session layer — handshake, ключи,  │

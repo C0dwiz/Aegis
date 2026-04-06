@@ -20,6 +20,9 @@ Future<void> main() async {
   try {
     print('Step 1: connect');
     print('Using api_id=${client.apiCredentials?.appId ?? 'none'}');
+
+    // Strict V2 handshake is default. Enable legacy fallback only for migration:
+    // allowLegacyHandshakeFallback: true
     await client.connect('localhost', 8888);
 
     print('Step 2: register');

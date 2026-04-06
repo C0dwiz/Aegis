@@ -65,6 +65,9 @@ public class MessageRouter
         // SERVER-006
         [Aegis.Protocol.MessageType.RoomSettingsGet] = sp => sp.GetRequiredService<RoomSettingsGetHandler>(),
         [Aegis.Protocol.MessageType.RoomSettingsUpdate] = sp => sp.GetRequiredService<RoomSettingsUpdateHandler>(),
+        // TODO-012/017/018
+        [Aegis.Protocol.MessageType.UserTyping] = sp => sp.GetRequiredService<UserTypingHandler>(),
+        [Aegis.Protocol.MessageType.FileTransfer] = sp => sp.GetRequiredService<FileTransferHandler>(),
     };
 
     private readonly IServiceProvider? _serviceProvider;

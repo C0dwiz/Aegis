@@ -3,6 +3,9 @@ using Aegis.Transport;
 using Aegis.Common.Logging;
 using Aegis.Common;
 using Aegis.Data.Services;
+using Aegis.Data.Repositories;
+using Aegis.Crypto;
+using System.Security.Cryptography;
 using System.Buffers.Binary;
 using System.Text;
 
@@ -14,6 +17,7 @@ public class MessageHandler : IMessageHandler
     private readonly IMessageService _messageService;
     private readonly IMessageSender _messageSender;
     private readonly SessionManager _sessionManager;
+    private readonly ISignalChainStateRepository? _signalChainStateRepository;
     private readonly ILogger _logger;
     private bool _ackSent = false;
     private ulong _ackSequenceId = 0;
@@ -26,12 +30,14 @@ public class MessageHandler : IMessageHandler
         IMessageService messageService,
         IMessageSender messageSender,
         SessionManager sessionManager,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        ISignalChainStateRepository? signalChainStateRepository = null)
     {
         _antiSpam = antiSpam;
         _messageService = messageService;
         _messageSender = messageSender;
         _sessionManager = sessionManager;
+        _signalChainStateRepository = signalChainStateRepository;
         _logger = logger ?? new Aegis.Transport.NullLogger();
     }
 
@@ -74,6 +80,8 @@ public class MessageHandler : IMessageHandler
                 return false;
             }
 
+            var signalInfo = await AdvanceSignalChainAsync(senderSession.UserId, request.RecipientId);
+
             var normalizedContent = MediaPayloadBuilder.BuildMessageContent(
                 request.Content,
                 attachment: null,
@@ -93,7 +101,8 @@ public class MessageHandler : IMessageHandler
                     senderSession.UserId,
                     senderSession.Username,
                     saved.Content,
-                    saved.CreatedAt));
+                    saved.CreatedAt,
+                    signalInfo));
 
                 await _messageSender.SendProtocolMessageAsync(
                     recipientConnectionId,
@@ -227,12 +236,56 @@ public class MessageHandler : IMessageHandler
         public ulong RecipientId { get; set; }
         public string Content { get; set; } = string.Empty;
         public string? ParseMode { get; set; }
+        public SignalV3Envelope? SignalV3 { get; set; }
     }
+
+    private async Task<SignalV3DeliveryInfo?> AdvanceSignalChainAsync(ulong senderUserId, ulong recipientUserId)
+    {
+        if (_signalChainStateRepository == null)
+        {
+            return null;
+        }
+
+        var state = await _signalChainStateRepository.GetOrCreateAsync(senderUserId, recipientUserId);
+
+        var ratchet = new DoubleRatchetAlgorithm();
+        ratchet.Initialize(
+            Convert.FromBase64String(state.RootKeyBase64),
+            Convert.FromBase64String(state.SendingChainKeyBase64),
+            Convert.FromBase64String(state.ReceivingChainKeyBase64),
+            state.NextSendingMessageNumber,
+            state.NextReceivingMessageNumber);
+
+        var (messageNumber, messageKey) = ratchet.NextSendingMessageKey();
+        var snapshot = ratchet.ExportState();
+
+        state.RootKeyBase64 = Convert.ToBase64String(snapshot.RootKey);
+        state.SendingChainKeyBase64 = Convert.ToBase64String(snapshot.SendingChainKey);
+        state.ReceivingChainKeyBase64 = Convert.ToBase64String(snapshot.ReceivingChainKey);
+        state.NextSendingMessageNumber = snapshot.NextSendingMessageNumber;
+        state.NextReceivingMessageNumber = snapshot.NextReceivingMessageNumber;
+        state.LastMessageKeyHash = Convert.ToHexString(SHA256.HashData(messageKey));
+
+        await _signalChainStateRepository.UpdateAsync(state);
+
+        return new SignalV3DeliveryInfo(
+            messageNumber,
+            state.LastMessageKeyHash[..16],
+            state.UpdatedAt);
+    }
+
+    private sealed record SignalV3Envelope(string? CiphertextBase64, uint? MessageNumber = null);
+
+    private sealed record SignalV3DeliveryInfo(
+        uint MessageNumber,
+        string MessageKeyId,
+        DateTime RatchetUpdatedAtUtc);
 
     private sealed record IncomingDirectMessage(
         ulong MessageId,
         ulong FromUserId,
         string FromUsername,
         string Content,
-        DateTime CreatedAtUtc);
+        DateTime CreatedAtUtc,
+        SignalV3DeliveryInfo? SignalV3 = null);
 }

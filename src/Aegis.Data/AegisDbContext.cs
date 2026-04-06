@@ -39,6 +39,9 @@ public class AegisDbContext : DbContext
     public DbSet<BotConversationState> BotConversationStates { get; set; }
     public DbSet<AppCredential> AppCredentials { get; set; }
     public DbSet<MessageReaction> MessageReactions { get; set; }
+    public DbSet<HandshakeReplayEntry> HandshakeReplayEntries { get; set; }
+    public DbSet<SessionSaltState> SessionSaltStates { get; set; }
+    public DbSet<SignalChainState> SignalChainStates { get; set; }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
@@ -59,6 +62,10 @@ public class AegisDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.Username).IsUnique();
             entity.HasIndex(e => e.Email).IsUnique();
+            entity.Property(e => e.IsEmailVerified).HasDefaultValue(true);
+            entity.Property(e => e.TwoFactorEnabled).HasDefaultValue(false);
+            entity.Property(e => e.TotpSecret).HasMaxLength(256);
+            entity.Property(e => e.RecoveryPhraseHash).HasMaxLength(256);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
@@ -218,6 +225,7 @@ public class AegisDbContext : DbContext
         modelBuilder.Entity<PrivateChat>(entity =>
         {
             entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.LastMessageId);
             entity.HasIndex(e => new { e.User1Id, e.User2Id }).IsUnique();
             entity.HasIndex(e => new { e.User1Id, e.IsActive, e.LastActivityAt });
             entity.HasIndex(e => new { e.User2Id, e.IsActive, e.LastActivityAt });
@@ -225,9 +233,16 @@ public class AegisDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(e => e.User2).WithMany(u => u.PrivateChats2).HasForeignKey(e => e.User2Id)
                 .OnDelete(DeleteBehavior.Cascade);
-            entity.HasOne(e => e.LastMessage).WithMany().HasForeignKey(e => e.LastMessageId)
-                .OnDelete(DeleteBehavior.SetNull);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
+        });
+
+        modelBuilder.Entity<SignalChainState>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.OwnerUserId, e.PeerUserId }).IsUnique();
+            entity.HasIndex(e => e.UpdatedAt);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
 
         // Bot configuration
@@ -259,6 +274,32 @@ public class AegisDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql(DefaultTimestampSql);
         });
+
+        modelBuilder.Entity<HandshakeReplayEntry>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.NonceHash).IsUnique();
+            entity.HasIndex(e => new { e.AppId, e.ExpiresAt });
+            entity.Property(e => e.FirstSeenAt).HasDefaultValueSql(DefaultTimestampSql);
+        });
+
+        modelBuilder.Entity<SessionSaltState>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.SessionId, e.IsActive });
+            entity.HasIndex(e => e.RotatedAt);
+            entity.Property(e => e.RotatedAt).HasDefaultValueSql(DefaultTimestampSql);
+        });
+
+        modelBuilder.Entity<SignalChainState>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.OwnerUserId, e.PeerUserId }).IsUnique();
+            entity.HasIndex(e => e.UpdatedAt);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql(DefaultTimestampSql);
+        });
+
         // AppCredential configuration
         modelBuilder.Entity<AppCredential>(entity =>
         {

@@ -3,6 +3,7 @@ using Aegis.BotApi.Application.Abstractions;
 using Aegis.BotApi.Application.UseCases;
 using Aegis.BotApi.Endpoints;
 using Aegis.BotApi.Infrastructure.Auth;
+using Aegis.BotApi.Infrastructure.Mail;
 using Aegis.BotApi.Mappers;
 using Aegis.BotApi.Services;
 using Aegis.Crypto;
@@ -19,6 +20,7 @@ BotApiStartupValidation.Validate(builder.Configuration, builder.Environment);
 
 builder.Services.Configure<BotApiOptions>(builder.Configuration.GetSection(BotApiOptions.SectionName));
 builder.Services.Configure<ElasticsearchOptions>(builder.Configuration.GetSection(ElasticsearchOptions.SectionName));
+builder.Services.Configure<MailOptions>(builder.Configuration.GetSection(MailOptions.SectionName));
 builder.Services.Configure<Aegis.Common.Configuration.IdGeneratorOptions>(
     builder.Configuration.GetSection(Aegis.Common.Configuration.IdGeneratorOptions.SectionName));
 
@@ -82,8 +84,12 @@ builder.Services.AddScoped<IMessageService, MessageService>();
 builder.Services.AddScoped<IBotManagementService, BotManagementService>();
 builder.Services.AddScoped<IUserAuthenticationService, UserAuthenticationService>();
 builder.Services.AddScoped<IAppCredentialService, AppCredentialService>();
+builder.Services.AddScoped<IEmailChallengeService, EmailChallengeService>();
+builder.Services.AddScoped<IUserTwoFactorService, UserTwoFactorService>();
+builder.Services.AddScoped<IEmailSender, SmtpMailService>();
 
 builder.Services.AddScoped<IBotAuthenticator, BotAuthenticator>();
+builder.Services.AddSingleton<ICsrfProtectionService, CsrfProtectionService>();
 
 builder.Services.AddScoped<IBotMessageUseCase, BotMessageUseCase>();
 builder.Services.AddScoped<BotRequestMapper>();
@@ -95,6 +101,16 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
+
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["Referrer-Policy"] = "no-referrer";
+    context.Response.Headers["Content-Security-Policy"] =
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
+    await next();
+});
 
 var avatarBaseDirectory = builder.Configuration["AvatarStorage:BaseDirectory"] ?? "/tmp/aegis-media/avatars";
 Directory.CreateDirectory(avatarBaseDirectory);

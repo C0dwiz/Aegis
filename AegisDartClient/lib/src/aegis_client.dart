@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:msgpack_dart/msgpack_dart.dart' as msgpack;
 import 'message.dart';
@@ -57,7 +59,17 @@ class AegisClient {
   int? _userId;
   String? _username;
   late final AegisEventDispatcher events;
+  late final AegisChannelFacade channels;
+  late final AegisGroupFacade groups;
+  late final AegisDirectFacade direct;
   final AegisApiCredentials? _apiCredentials;
+  StreamSubscription<void>? _disconnectSubscription;
+  ReconnectPolicy? _reconnectPolicy;
+  _ReconnectState? _reconnectState;
+  bool _manualDisconnect = false;
+  bool _reconnectInProgress = false;
+  int _reconnectAttempts = 0;
+  String? _sessionToken;
 
   // Per-client sequence-ID counter so responses can be matched unambiguously.
   int _nextSeqId = 1;
@@ -90,6 +102,13 @@ class AegisClient {
 
   /// Typed stream of incoming message pin events.
   Stream<MessagePinEvent> get messagePinEvents => events.messagePinEvents;
+
+  /// Typed stream of incoming typing indicator events.
+  Stream<UserTypingEventPayload> get typingEvents => events.typingEvents;
+
+  /// Typed stream of incoming file download chunks.
+  Stream<FileTransferResponsePayload> get fileTransferChunkEvents =>
+      events.fileTransferChunks;
 
   /// Stream of disconnect events
   Stream<void> get disconnects => _transport.disconnects;
@@ -126,6 +145,9 @@ class AegisClient {
                 : null) {
     _transport = AegisTransport();
     events = AegisEventDispatcher(_transport.messages);
+    channels = AegisChannelFacade._(this);
+    groups = AegisGroupFacade._(this);
+    direct = AegisDirectFacade._(this);
   }
 
   /// Create a client that explicitly uses the built-in official credentials.
@@ -149,9 +171,33 @@ class AegisClient {
     Duration? timeout,
     String? transportMaskingKey,
     bool enableMaskingAutoFallback = true,
+    bool allowLegacyHandshakeFallback = false,
     String? trustedServerHandshakeSigningPublicKeyBase64,
-    bool requireSignedHandshake = false,
+    bool? requireSignedHandshake,
+    bool useTls = false,
+    SecurityContext? tlsSecurityContext,
+    bool Function(X509Certificate certificate)? onBadTlsCertificate,
   }) async {
+    final effectiveRequireSignedHandshake = requireSignedHandshake ??
+        (_isOfficialClient() &&
+            (trustedServerHandshakeSigningPublicKeyBase64?.isNotEmpty ??
+                false));
+
+    _reconnectState = _ReconnectState(
+      host: host,
+      port: port,
+      timeout: timeout,
+      transportMaskingKey: transportMaskingKey,
+      enableMaskingAutoFallback: enableMaskingAutoFallback,
+      allowLegacyHandshakeFallback: allowLegacyHandshakeFallback,
+      trustedServerHandshakeSigningPublicKeyBase64:
+          trustedServerHandshakeSigningPublicKeyBase64,
+      requireSignedHandshake: effectiveRequireSignedHandshake,
+      useTls: useTls,
+      tlsSecurityContext: tlsSecurityContext,
+      onBadTlsCertificate: onBadTlsCertificate,
+    );
+
     final hasMaskingKey =
         transportMaskingKey != null && transportMaskingKey.trim().isNotEmpty;
 
@@ -161,11 +207,15 @@ class AegisClient {
         port,
         timeout: timeout,
         transportMaskingKey: transportMaskingKey,
+        useTls: useTls,
+        tlsSecurityContext: tlsSecurityContext,
+        onBadTlsCertificate: onBadTlsCertificate,
       );
       await _performHandshake(
+        allowLegacyHandshakeFallback: allowLegacyHandshakeFallback,
         trustedServerHandshakeSigningPublicKeyBase64:
             trustedServerHandshakeSigningPublicKeyBase64,
-        requireSignedHandshake: requireSignedHandshake,
+        requireSignedHandshake: effectiveRequireSignedHandshake,
       );
       return;
     }
@@ -176,11 +226,15 @@ class AegisClient {
         port,
         timeout: timeout,
         transportMaskingKey: transportMaskingKey,
+        useTls: useTls,
+        tlsSecurityContext: tlsSecurityContext,
+        onBadTlsCertificate: onBadTlsCertificate,
       );
       await _performHandshake(
+        allowLegacyHandshakeFallback: allowLegacyHandshakeFallback,
         trustedServerHandshakeSigningPublicKeyBase64:
             trustedServerHandshakeSigningPublicKeyBase64,
-        requireSignedHandshake: requireSignedHandshake,
+        requireSignedHandshake: effectiveRequireSignedHandshake,
       );
     } catch (firstError) {
       await _transport.disconnect();
@@ -190,11 +244,15 @@ class AegisClient {
           host,
           port,
           timeout: timeout,
+          useTls: useTls,
+          tlsSecurityContext: tlsSecurityContext,
+          onBadTlsCertificate: onBadTlsCertificate,
         );
         await _performHandshake(
+          allowLegacyHandshakeFallback: allowLegacyHandshakeFallback,
           trustedServerHandshakeSigningPublicKeyBase64:
               trustedServerHandshakeSigningPublicKeyBase64,
-          requireSignedHandshake: requireSignedHandshake,
+          requireSignedHandshake: effectiveRequireSignedHandshake,
         );
       } catch (secondError) {
         throw Exception(
@@ -206,6 +264,7 @@ class AegisClient {
 
   /// Disconnect from the server.
   Future<void> disconnect() async {
+    _manualDisconnect = true;
     if (_transport.isConnected && _isAuthenticated) {
       await _publishPresence(isOnline: false);
     }
@@ -214,12 +273,39 @@ class AegisClient {
     _isAuthenticated = false;
     _userId = null;
     _username = null;
+    _manualDisconnect = false;
   }
 
   /// Release all resources.
   void dispose() {
+    _disconnectSubscription?.cancel();
+    _disconnectSubscription = null;
     events.dispose().ignore();
     _transport.dispose();
+  }
+
+  /// Enables automatic reconnect with exponential backoff and token restore.
+  ///
+  /// On reconnect, the client repeats connect + handshake, then tries
+  /// `loginWithToken` using the last successful `SessionToken`.
+  void enableAutoReconnect(
+    ReconnectPolicy policy, {
+    Future<void> Function(AegisClient client)? onSessionRestored,
+  }) {
+    _reconnectPolicy = policy;
+    _disconnectSubscription?.cancel();
+    _disconnectSubscription = disconnects.listen((_) async {
+      if (_manualDisconnect || !_shouldReconnect()) {
+        return;
+      }
+      await _runReconnectLoop(onSessionRestored: onSessionRestored);
+    });
+  }
+
+  void disableAutoReconnect() {
+    _reconnectPolicy = null;
+    _disconnectSubscription?.cancel();
+    _disconnectSubscription = null;
   }
 
   // ─── Authentication ─────────────────────────────────────────────────────────
@@ -228,13 +314,20 @@ class AegisClient {
   ///
   /// Throws [NotConnectedException] if not connected.
   /// Throws an [Exception] if authentication fails.
-  Future<void> login(String username, String password,
-      {String clientInfo = 'aegis-dart-client'}) async {
+  Future<void> login(
+    String username,
+    String password, {
+    String clientInfo = 'aegis-dart-client',
+    String? twoFactorCode,
+    String? recoveryPhrase,
+  }) async {
     _requireConnected();
     final payload = msgpack.serialize({
       'Username': username,
       'Password': password,
       'ClientInfo': clientInfo,
+      if (twoFactorCode != null) 'TwoFactorCode': twoFactorCode,
+      if (recoveryPhrase != null) 'RecoveryPhrase': recoveryPhrase,
     });
     await _doAuthenticate(payload);
   }
@@ -275,14 +368,90 @@ class AegisClient {
 
     final decoded = msgpack.deserialize(response.payload);
     if (decoded == null || decoded['Success'] != true) {
-      throw Exception('Authentication failed');
+      final error = decoded is Map ? decoded['Error'] : null;
+      throw Exception(
+          'Authentication failed${error is String && error.isNotEmpty ? ': $error' : ''}');
     }
 
     _isAuthenticated = true;
     _userId = decoded['UserId'] as int?;
     _username = decoded['Username'] as String?;
+    _sessionToken = decoded['SessionToken'] as String?;
 
     await _publishPresence(isOnline: true);
+  }
+
+  bool _isOfficialClient() {
+    final creds = _apiCredentials;
+    if (creds == null) return false;
+    return creds.appId == AegisOfficialApiCredentials.credentials.appId &&
+        creds.appHash == AegisOfficialApiCredentials.credentials.appHash;
+  }
+
+  bool _shouldReconnect() {
+    final policy = _reconnectPolicy;
+    if (policy == null) return false;
+    final maxAttempts = policy.maxAttempts;
+    return maxAttempts == null || _reconnectAttempts < maxAttempts;
+  }
+
+  Future<void> _runReconnectLoop({
+    Future<void> Function(AegisClient client)? onSessionRestored,
+  }) async {
+    if (_reconnectInProgress) {
+      return;
+    }
+    final policy = _reconnectPolicy;
+    final state = _reconnectState;
+    if (policy == null || state == null) {
+      return;
+    }
+
+    _reconnectInProgress = true;
+    try {
+      while (_shouldReconnect()) {
+        _reconnectAttempts += 1;
+        final waitDuration = policy.backoffForAttempt(_reconnectAttempts);
+        await Future<void>.delayed(waitDuration);
+
+        try {
+          await connect(
+            state.host,
+            state.port,
+            timeout: state.timeout,
+            transportMaskingKey: state.transportMaskingKey,
+            enableMaskingAutoFallback: state.enableMaskingAutoFallback,
+            allowLegacyHandshakeFallback: state.allowLegacyHandshakeFallback,
+            trustedServerHandshakeSigningPublicKeyBase64:
+                state.trustedServerHandshakeSigningPublicKeyBase64,
+            requireSignedHandshake: state.requireSignedHandshake,
+            useTls: state.useTls,
+            tlsSecurityContext: state.tlsSecurityContext,
+            onBadTlsCertificate: state.onBadTlsCertificate,
+          );
+
+          final token = _sessionToken;
+          if (token != null && token.isNotEmpty) {
+            await loginWithToken(token);
+          }
+
+          if (policy.reloadChatListOnReconnect && isAuthenticated) {
+            await getChatList();
+          }
+
+          if (onSessionRestored != null && isAuthenticated) {
+            await onSessionRestored(this);
+          }
+
+          _reconnectAttempts = 0;
+          return;
+        } catch (_) {
+          // Continue backoff loop until max attempts is reached.
+        }
+      }
+    } finally {
+      _reconnectInProgress = false;
+    }
   }
 
   // ─── Registration ───────────────────────────────────────────────────────────
@@ -350,7 +519,7 @@ class AegisClient {
     );
     final response = await _sendAndWaitResponse(
       msg,
-      expectedTypes: {MessageType.groupMessageResponse, MessageType.ack},
+      expectedTypes: {MessageType.groupMessageResponse},
     );
     return GroupMessageSendResponse.fromBytes(response.payload)
         .toMediaSendResponse();
@@ -377,6 +546,7 @@ class AegisClient {
     String content, {
     MessageContentType contentType = MessageContentType.text,
     ParseMode? parseMode,
+    SignalV3EnvelopePayload? signalV3,
   }) async {
     _requireAuthenticated();
 
@@ -385,12 +555,13 @@ class AegisClient {
       content: content,
       contentType: contentType,
       parseMode: parseMode?.value,
+      signalV3: signalV3,
     );
 
     final msg =
         Message.withType(MessageType.privateChatMessage, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
-        expectedTypes: {MessageType.privateChatMessage, MessageType.ack});
+        expectedTypes: {MessageType.privateChatMessage});
     return PrivateChatMessageResponse.fromBytes(response.payload);
   }
 
@@ -556,6 +727,18 @@ class AegisClient {
     return messagePinEvents.listen(handler);
   }
 
+  StreamSubscription<UserTypingEventPayload> onTypingEvent(
+    void Function(UserTypingEventPayload event) handler,
+  ) {
+    return typingEvents.listen(handler);
+  }
+
+  StreamSubscription<FileTransferResponsePayload> onFileTransferChunk(
+    void Function(FileTransferResponsePayload chunk) handler,
+  ) {
+    return fileTransferChunkEvents.listen(handler);
+  }
+
   // ─── Channels ───────────────────────────────────────────────────────────────
 
   /// Send a message to a channel.
@@ -578,7 +761,7 @@ class AegisClient {
 
     final msg = Message.withType(MessageType.channelMessage, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
-        expectedTypes: {MessageType.channelMessage, MessageType.ack});
+        expectedTypes: {MessageType.channelMessage});
     return ChannelMessageResponse.fromBytes(response.payload);
   }
 
@@ -716,6 +899,7 @@ class AegisClient {
     ParseMode? parseMode,
     int? replyToMessageId,
     MessageContentType? forcedContentType,
+    SignalV3EnvelopePayload? signalV3,
   }) async {
     _requireAuthenticated();
 
@@ -739,6 +923,7 @@ class AegisClient {
           attachment: attachments.first,
           attachments: attachments,
           parseMode: parseMode?.value,
+          signalV3: signalV3,
         );
         final msg = Message.withType(
           MessageType.privateChatMessage,
@@ -746,7 +931,7 @@ class AegisClient {
         );
         final response = await _sendAndWaitResponse(
           msg,
-          expectedTypes: {MessageType.privateChatMessage, MessageType.ack},
+          expectedTypes: {MessageType.privateChatMessage},
         );
         return PrivateChatMessageResponse.fromBytes(response.payload)
             .toMediaSendResponse();
@@ -767,7 +952,7 @@ class AegisClient {
         );
         final response = await _sendAndWaitResponse(
           msg,
-          expectedTypes: {MessageType.channelMessage, MessageType.ack},
+          expectedTypes: {MessageType.channelMessage},
         );
         return ChannelMessageResponse.fromBytes(response.payload)
             .toMediaSendResponse();
@@ -788,7 +973,7 @@ class AegisClient {
         );
         final response = await _sendAndWaitResponse(
           msg,
-          expectedTypes: {MessageType.groupMessageResponse, MessageType.ack},
+          expectedTypes: {MessageType.groupMessageResponse},
         );
         return GroupMessageSendResponse.fromBytes(response.payload)
             .toMediaSendResponse();
@@ -908,7 +1093,7 @@ class AegisClient {
 
     final msg = Message.withType(MessageType.channelCreate, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
-        expectedTypes: {MessageType.channelCreate, MessageType.ack});
+        expectedTypes: {MessageType.channelCreate});
     return ChannelCreateResponse.fromBytes(response.payload);
   }
 
@@ -919,7 +1104,7 @@ class AegisClient {
     final request = ChannelJoinRequest(channelId: channelId);
     final msg = Message.withType(MessageType.channelJoin, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
-        expectedTypes: {MessageType.channelJoin, MessageType.ack});
+        expectedTypes: {MessageType.channelJoin});
     return ChannelJoinResponse.fromBytes(response.payload);
   }
 
@@ -941,7 +1126,7 @@ class AegisClient {
 
     final msg = Message.withType(MessageType.channelEdit, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
-        expectedTypes: {MessageType.channelEditResponse, MessageType.ack});
+        expectedTypes: {MessageType.channelEditResponse});
     return ChannelEditResponse.fromBytes(response.payload);
   }
 
@@ -959,6 +1144,24 @@ class AegisClient {
   }
 
   // ─── Groups (group chats) ─────────────────────────────────────────────────────
+
+  /// Create a new group chat.
+  Future<GroupCreateResponse> createGroup(
+    String name, {
+    String? description,
+  }) async {
+    _requireAuthenticated();
+
+    final request = GroupCreateRequest(
+      name: name,
+      description: description,
+    );
+
+    final msg = Message.withType(MessageType.groupCreate, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.groupCreateResponse});
+    return GroupCreateResponse.fromBytes(response.payload);
+  }
 
   /// Edit group chat properties (name, description, avatar URL).
   Future<GroupEditResponse> updateGroup(
@@ -978,7 +1181,7 @@ class AegisClient {
 
     final msg = Message.withType(MessageType.groupEdit, request.toBytes());
     final response = await _sendAndWaitResponse(msg,
-        expectedTypes: {MessageType.groupEditResponse, MessageType.ack});
+        expectedTypes: {MessageType.groupEditResponse});
     return GroupEditResponse.fromBytes(response.payload);
   }
 
@@ -1076,7 +1279,7 @@ class AegisClient {
     _requireAuthenticated();
     final msg = Message.withType(
       MessageType.profileAvatarList,
-      utf8.encode('{}'),
+      msgpack.serialize(<String, Object?>{}),
     );
     final response = await _sendAndWaitResponse(msg,
         expectedTypes: {MessageType.profileAvatarListResponse});
@@ -1192,35 +1395,353 @@ class AegisClient {
     Set<MessageType>? expectedTypes,
     Duration timeout = const Duration(seconds: 10),
   }) async {
-    // Assign sequence ID before subscribing/sending
+    if (expectedTypes == null || expectedTypes.isEmpty) {
+      throw ArgumentError('expectedTypes must not be empty');
+    }
+
     message.sequenceId = _nextSeqId++;
     message.flags |= ProtocolConstants.flagRequiresAck;
 
     final seqId = message.sequenceId;
 
-    // Subscribe first (synchronous operation on the broadcast stream)
-    final responseFuture = messages.firstWhere((msg) {
-      if (msg.sequenceId != seqId) return false;
-      if (expectedTypes != null && !expectedTypes.contains(msg.type)) {
-        return false;
+    final completer = Completer<Message>();
+    late final StreamSubscription<Message> subscription;
+    Timer? timeoutTimer;
+
+    subscription = messages.listen((msg) {
+      if (msg.sequenceId != seqId) {
+        return;
       }
-      return true;
-    }).timeout(timeout, onTimeout: () {
-      throw TimeoutException('No response for seq=$seqId', timeout);
+
+      if (msg.type == MessageType.ack) {
+        return;
+      }
+
+      if (msg.type == MessageType.error || msg.type == MessageType.nack) {
+        if (!completer.isCompleted) {
+          completer.completeError(
+            Exception(_extractProtocolErrorMessage(msg)),
+          );
+        }
+        return;
+      }
+
+      if (!expectedTypes.contains(msg.type)) {
+        return;
+      }
+
+      if (!completer.isCompleted) {
+        completer.complete(msg);
+      }
     });
 
-    // Now send
+    timeoutTimer = Timer(timeout, () {
+      if (!completer.isCompleted) {
+        completer.completeError(
+          TimeoutException('No response for seq=$seqId', timeout),
+        );
+      }
+    });
+
     await _transport.sendMessage(message);
 
-    return responseFuture;
+    try {
+      return await completer.future;
+    } finally {
+      timeoutTimer.cancel();
+      await subscription.cancel();
+    }
+  }
+
+  String _extractProtocolErrorMessage(Message message) {
+    if (message.payload.isEmpty) {
+      return 'Protocol error: ${message.type}';
+    }
+
+    try {
+      final decoded = msgpack.deserialize(message.payload);
+      if (decoded is Map) {
+        final normalized = Map<String, dynamic>.from(
+          decoded.map((key, value) => MapEntry(key.toString(), value)),
+        );
+        final messageText = normalized['Message'] ??
+            normalized['Error'] ??
+            normalized['message'] ??
+            normalized['error'];
+        if (messageText != null) {
+          return messageText.toString();
+        }
+      }
+    } catch (_) {
+      // Fall through to UTF-8/plain representation.
+    }
+
+    try {
+      return utf8.decode(message.payload);
+    } catch (_) {
+      return 'Protocol error: ${message.type}';
+    }
+  }
+
+  Future<MessageReceiptResponse> _sendReceiptAndWaitResponse(
+    MessageType requestType,
+    MessageType responseType,
+    List<int> messageIds,
+    List<int> payload, {
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    final normalizedIds = messageIds.toSet().toList(growable: false)..sort();
+    final completer = Completer<MessageReceiptResponse>();
+    late final StreamSubscription<Message> subscription;
+    Timer? timeoutTimer;
+
+    bool matchesMessageIds(List<int> candidate) {
+      if (candidate.length != normalizedIds.length) {
+        return false;
+      }
+
+      final sortedCandidate = candidate.toSet().toList(growable: false)..sort();
+      if (sortedCandidate.length != normalizedIds.length) {
+        return false;
+      }
+
+      for (var index = 0; index < normalizedIds.length; index++) {
+        if (sortedCandidate[index] != normalizedIds[index]) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+
+    subscription = messages.listen((msg) {
+      if (msg.type != responseType && msg.type != MessageType.error) {
+        return;
+      }
+
+      if (msg.type == MessageType.error) {
+        if (!completer.isCompleted) {
+          completer.completeError(Exception(_extractProtocolErrorMessage(msg)));
+        }
+        return;
+      }
+
+      try {
+        final response = MessageReceiptResponse.fromBytes(msg.payload);
+        if (!matchesMessageIds(response.messageIds)) {
+          return;
+        }
+
+        if (!completer.isCompleted) {
+          completer.complete(response);
+        }
+      } catch (_) {
+        // Ignore unrelated payloads.
+      }
+    });
+
+    timeoutTimer = Timer(timeout, () {
+      if (!completer.isCompleted) {
+        completer.completeError(
+          TimeoutException('No receipt response for $requestType', timeout),
+        );
+      }
+    });
+
+    final message = Message.withType(requestType, payload)
+      ..sequenceId = _nextSeqId++
+      ..flags |= ProtocolConstants.flagRequiresAck;
+    await _transport.sendMessage(message);
+
+    try {
+      return await completer.future;
+    } finally {
+      timeoutTimer.cancel();
+      await subscription.cancel();
+    }
   }
 
   /// Send the initial handshake after connect.
   Future<void> _performHandshake({
+    required bool allowLegacyHandshakeFallback,
     String? trustedServerHandshakeSigningPublicKeyBase64,
     required bool requireSignedHandshake,
   }) async {
     final handshake = await AegisHandshakeContext.create();
+    final v2Completed = await _tryPerformV2Handshake(
+      handshake: handshake,
+      trustedServerHandshakeSigningPublicKeyBase64:
+          trustedServerHandshakeSigningPublicKeyBase64,
+      requireSignedHandshake: requireSignedHandshake,
+    );
+
+    if (v2Completed) {
+      return;
+    }
+
+    if (!allowLegacyHandshakeFallback) {
+      throw Exception(
+        'Server did not return a V2 handshake stage. '
+        'Use allowLegacyHandshakeFallback=true only for migration.',
+      );
+    }
+
+    await _performLegacyHandshake(
+      handshake: handshake,
+      trustedServerHandshakeSigningPublicKeyBase64:
+          trustedServerHandshakeSigningPublicKeyBase64,
+      requireSignedHandshake: requireSignedHandshake,
+    );
+  }
+
+  Future<bool> _tryPerformV2Handshake({
+    required AegisHandshakeContext handshake,
+    String? trustedServerHandshakeSigningPublicKeyBase64,
+    required bool requireSignedHandshake,
+  }) async {
+    final apiCredentials = _apiCredentials;
+    final clientNonce = AegisSecureProtocolV2.secureRandomBytes(32);
+    final clientHello = <String, Object>{
+      'ApiId': apiCredentials?.appId ?? 0,
+      'AppHash': apiCredentials?.appHash ?? '',
+      'ClientEphemeralPublicKey': handshake.publicKey,
+      'ClientNonce': clientNonce,
+      'ClientUnixTimeMs': DateTime.now().toUtc().millisecondsSinceEpoch,
+      'TransportHint': 'obfs+tls',
+    };
+
+    final helloEnvelope = <String, Object>{
+      'Stage': 'client_hello_v2',
+      'ClientHello': clientHello,
+    };
+    final helloPayload = msgpack.serialize(helloEnvelope);
+    final helloMsg = Message.withType(MessageType.handshake, helloPayload);
+    final helloResponse = await _sendAndWaitResponse(
+      helloMsg,
+      expectedTypes: {MessageType.handshake},
+    );
+
+    final decodedHello = msgpack.deserialize(helloResponse.payload);
+    if (decodedHello is! Map) {
+      throw Exception('Invalid V2 handshake response payload');
+    }
+
+    final stage = decodedHello['Stage']?.toString();
+    if (stage == null || stage.isEmpty) {
+      return false;
+    }
+
+    final isSuccess = decodedHello['Success'] == true;
+    if (!isSuccess) {
+      final error =
+          decodedHello['Message']?.toString() ?? 'Handshake V2 failed';
+      throw Exception(error);
+    }
+
+    if (stage != 'server_hello_v2') {
+      throw Exception('Unexpected V2 handshake stage: $stage');
+    }
+
+    final serverHelloMap = decodedHello['ServerHello'];
+    if (serverHelloMap is! Map) {
+      throw Exception('V2 handshake response is missing ServerHello');
+    }
+
+    final serverPublicKey = _readBytesField(
+      serverHelloMap,
+      'ServerEphemeralPublicKey',
+      'ServerHello.ServerEphemeralPublicKey',
+    );
+    final serverNonce = _readBytesField(
+      serverHelloMap,
+      'ServerNonce',
+      'ServerHello.ServerNonce',
+    );
+    final cookie = _readBytesField(
+      serverHelloMap,
+      'Cookie',
+      'ServerHello.Cookie',
+    );
+    final signature = _readOptionalBytesField(serverHelloMap, 'Signature');
+
+    if (requireSignedHandshake) {
+      if (trustedServerHandshakeSigningPublicKeyBase64 == null ||
+          trustedServerHandshakeSigningPublicKeyBase64.isEmpty) {
+        throw Exception('Trusted handshake signing public key is required');
+      }
+
+      if (signature == null || signature.isEmpty) {
+        throw Exception('Handshake response signature is missing');
+      }
+
+      final signatureOk =
+          await AegisHandshakeVerifier.verifyServerHandshakeSignature(
+        trustedSigningPublicKey: Uint8List.fromList(
+          base64Decode(trustedServerHandshakeSigningPublicKeyBase64),
+        ),
+        serverEphemeralPublicKey: serverPublicKey,
+        clientEphemeralPublicKey: handshake.publicKey,
+        signature: signature,
+      );
+
+      if (!signatureOk) {
+        throw Exception('Handshake signature verification failed');
+      }
+    }
+
+    final transcriptHash = await AegisSecureProtocolV2.sha256(helloPayload);
+    final sharedSecret = await handshake.deriveSharedSecret(serverPublicKey);
+    final keys = await AegisSecureProtocolV2.deriveSessionKeys(
+      sharedSecret: sharedSecret,
+      clientNonce: clientNonce,
+      serverNonce: serverNonce,
+      transcriptHash: transcriptHash,
+    );
+    final proof = await AegisSecureProtocolV2.computeClientFinishProof(
+      ackKey: keys.ackKey,
+      transcriptHash: transcriptHash,
+    );
+
+    final finishEnvelope = <String, Object>{
+      'Stage': 'client_finish_v2',
+      'ClientFinish': {
+        'Cookie': cookie,
+        'Proof': proof,
+      },
+    };
+    final finishPayload = msgpack.serialize(finishEnvelope);
+    final finishMsg = Message.withType(MessageType.handshake, finishPayload);
+    final finishResponse = await _sendAndWaitResponse(
+      finishMsg,
+      expectedTypes: {MessageType.handshake},
+    );
+
+    final decodedFinish = msgpack.deserialize(finishResponse.payload);
+    if (decodedFinish is! Map) {
+      throw Exception('Invalid V2 handshake finish response payload');
+    }
+
+    final finishStage = decodedFinish['Stage']?.toString();
+    final finishSuccess = decodedFinish['Success'] == true;
+    if (!finishSuccess) {
+      final error =
+          decodedFinish['Message']?.toString() ?? 'Handshake V2 finish failed';
+      throw Exception(error);
+    }
+
+    if (finishStage != 'server_finish_v2') {
+      throw Exception('Unexpected V2 handshake finish stage: $finishStage');
+    }
+
+    _transport.setSessionKey(keys.clientToServerKey);
+    return true;
+  }
+
+  Future<void> _performLegacyHandshake({
+    required AegisHandshakeContext handshake,
+    String? trustedServerHandshakeSigningPublicKeyBase64,
+    required bool requireSignedHandshake,
+  }) async {
     final handshakePayload = <String, Object>{
       'PublicKey': base64Encode(handshake.publicKey),
       'ClientVersion': ProtocolConstants.versionMajor * 1000 +
@@ -1289,6 +1810,40 @@ class AegisClient {
       Uint8List.fromList(base64Decode(serverPublicKeyBase64)),
     );
     _transport.setSessionKey(sessionKey);
+  }
+
+  Uint8List _readBytesField(Map source, String key, String fieldName) {
+    final value = source[key];
+    if (value is Uint8List) {
+      return Uint8List.fromList(value);
+    }
+
+    if (value is List) {
+      return Uint8List.fromList(value.cast<int>());
+    }
+
+    throw Exception('Invalid $fieldName in handshake payload');
+  }
+
+  Uint8List? _readOptionalBytesField(Map source, String key) {
+    if (!source.containsKey(key)) {
+      return null;
+    }
+
+    final value = source[key];
+    if (value == null) {
+      return null;
+    }
+
+    if (value is Uint8List) {
+      return Uint8List.fromList(value);
+    }
+
+    if (value is List) {
+      return Uint8List.fromList(value.cast<int>());
+    }
+
+    return null;
   }
 
   // ─── Group History and Members (SERVER-002, SERVER-003) ──────────────────
@@ -1374,6 +1929,299 @@ class AegisClient {
     return GroupLeaveResponse.fromBytes(response.payload);
   }
 
+  // ─── Message edits and deletes ──────────────────────────────────────────────
+
+  Future<MessageEditResponse> editMessage(
+    int messageId,
+    String newContent, {
+    String scope = 'private',
+    int? channelId,
+    int? groupId,
+  }) async {
+    _requireAuthenticated();
+
+    final request = MessageEditRequest(
+      messageId: messageId,
+      newContent: newContent,
+      scope: scope,
+      channelId: channelId,
+      groupId: groupId,
+    );
+
+    final msg = Message.withType(MessageType.messageEdit, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.messageEditResponse});
+    return MessageEditResponse.fromBytes(response.payload);
+  }
+
+  Future<MessageEditResponse> editPrivateMessage(
+    int messageId,
+    String newContent,
+  ) {
+    return editMessage(
+      messageId,
+      newContent,
+      scope: ChatScope.privateChat.value,
+    );
+  }
+
+  Future<MessageEditResponse> editChannelMessage(
+    int channelId,
+    int messageId,
+    String newContent,
+  ) {
+    return editMessage(
+      messageId,
+      newContent,
+      scope: ChatScope.channel.value,
+      channelId: channelId,
+    );
+  }
+
+  Future<MessageEditResponse> editGroupMessage(
+    int groupId,
+    int messageId,
+    String newContent,
+  ) {
+    return editMessage(
+      messageId,
+      newContent,
+      scope: ChatScope.group.value,
+      groupId: groupId,
+    );
+  }
+
+  Future<MessageDeleteResponse> deleteMessage(
+    int messageId, {
+    String scope = 'private',
+    int? channelId,
+    int? groupId,
+  }) async {
+    _requireAuthenticated();
+
+    final request = MessageDeleteRequest(
+      messageId: messageId,
+      scope: scope,
+      channelId: channelId,
+      groupId: groupId,
+    );
+
+    final msg = Message.withType(MessageType.messageDelete, request.toBytes());
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.messageDeleteResponse});
+    return MessageDeleteResponse.fromBytes(response.payload);
+  }
+
+  Future<MessageDeleteResponse> deletePrivateMessage(int messageId) {
+    return deleteMessage(messageId, scope: ChatScope.privateChat.value);
+  }
+
+  Future<MessageDeleteResponse> deleteChannelMessage(
+    int channelId,
+    int messageId,
+  ) {
+    return deleteMessage(
+      messageId,
+      scope: ChatScope.channel.value,
+      channelId: channelId,
+    );
+  }
+
+  Future<MessageDeleteResponse> deleteGroupMessage(
+    int groupId,
+    int messageId,
+  ) {
+    return deleteMessage(
+      messageId,
+      scope: ChatScope.group.value,
+      groupId: groupId,
+    );
+  }
+
+  // ─── Membership administration ─────────────────────────────────────────────
+
+  Future<MemberRoleUpdateResponse> updateMemberRole({
+    required String scope,
+    required int targetId,
+    required int targetUserId,
+    required int newRole,
+  }) async {
+    _requireAuthenticated();
+
+    final request = MemberRoleUpdateRequest(
+      scope: scope,
+      targetId: targetId,
+      targetUserId: targetUserId,
+      newRole: newRole,
+    );
+
+    final msg = Message.withType(
+      MessageType.memberRoleUpdate,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.memberRoleUpdateResponse});
+    return MemberRoleUpdateResponse.fromBytes(response.payload);
+  }
+
+  Future<MemberRoleUpdateResponse> updateChannelMemberRole({
+    required int channelId,
+    required int targetUserId,
+    required MemberRole newRole,
+  }) {
+    return updateMemberRole(
+      scope: RoomScope.channel.value,
+      targetId: channelId,
+      targetUserId: targetUserId,
+      newRole: newRole.value,
+    );
+  }
+
+  Future<MemberRoleUpdateResponse> updateGroupMemberRole({
+    required int groupId,
+    required int targetUserId,
+    required MemberRole newRole,
+  }) {
+    return updateMemberRole(
+      scope: RoomScope.group.value,
+      targetId: groupId,
+      targetUserId: targetUserId,
+      newRole: newRole.value,
+    );
+  }
+
+  Future<MemberPermissionUpdateResponse> updateMemberPermissions({
+    required String scope,
+    required int targetId,
+    required int targetUserId,
+    bool? canSendMessages,
+    bool? canDeleteOthersMessages,
+    bool? canEditInfo,
+    bool? canInviteUsers,
+    bool? canRemoveUsers,
+    bool? canPinMessages,
+    bool? canManageRoles,
+  }) async {
+    _requireAuthenticated();
+
+    final request = MemberPermissionUpdateRequest(
+      scope: scope,
+      targetId: targetId,
+      targetUserId: targetUserId,
+      canSendMessages: canSendMessages,
+      canDeleteOthersMessages: canDeleteOthersMessages,
+      canEditInfo: canEditInfo,
+      canInviteUsers: canInviteUsers,
+      canRemoveUsers: canRemoveUsers,
+      canPinMessages: canPinMessages,
+      canManageRoles: canManageRoles,
+    );
+
+    final msg = Message.withType(
+      MessageType.memberPermissionUpdate,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(msg,
+        expectedTypes: {MessageType.memberPermissionUpdateResponse});
+    return MemberPermissionUpdateResponse.fromBytes(response.payload);
+  }
+
+  Future<MemberPermissionUpdateResponse> updateChannelMemberPermissions({
+    required int channelId,
+    required int targetUserId,
+    bool? canSendMessages,
+    bool? canDeleteOthersMessages,
+    bool? canEditInfo,
+    bool? canInviteUsers,
+    bool? canRemoveUsers,
+    bool? canPinMessages,
+    bool? canManageRoles,
+  }) {
+    return updateMemberPermissions(
+      scope: RoomScope.channel.value,
+      targetId: channelId,
+      targetUserId: targetUserId,
+      canSendMessages: canSendMessages,
+      canDeleteOthersMessages: canDeleteOthersMessages,
+      canEditInfo: canEditInfo,
+      canInviteUsers: canInviteUsers,
+      canRemoveUsers: canRemoveUsers,
+      canPinMessages: canPinMessages,
+      canManageRoles: canManageRoles,
+    );
+  }
+
+  Future<MemberPermissionUpdateResponse> updateGroupMemberPermissions({
+    required int groupId,
+    required int targetUserId,
+    bool? canSendMessages,
+    bool? canDeleteOthersMessages,
+    bool? canEditInfo,
+    bool? canInviteUsers,
+    bool? canRemoveUsers,
+    bool? canPinMessages,
+    bool? canManageRoles,
+  }) {
+    return updateMemberPermissions(
+      scope: RoomScope.group.value,
+      targetId: groupId,
+      targetUserId: targetUserId,
+      canSendMessages: canSendMessages,
+      canDeleteOthersMessages: canDeleteOthersMessages,
+      canEditInfo: canEditInfo,
+      canInviteUsers: canInviteUsers,
+      canRemoveUsers: canRemoveUsers,
+      canPinMessages: canPinMessages,
+      canManageRoles: canManageRoles,
+    );
+  }
+
+  // ─── Delivery and read receipts ────────────────────────────────────────────
+
+  Future<MessageReceiptResponse> sendDeliveryReceipt(
+    List<int> messageIds, {
+    DateTime? deliveredAt,
+    String? deviceId,
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    _requireAuthenticated();
+
+    final request = MessageDeliveryReceiptRequest(
+      messageIds: messageIds,
+      deliveredAt: deliveredAt ?? DateTime.now().toUtc(),
+      deviceId: deviceId,
+    );
+
+    return _sendReceiptAndWaitResponse(
+      MessageType.messageDeliveryReceipt,
+      MessageType.messageDeliveryReceiptResponse,
+      messageIds,
+      request.toBytes(),
+      timeout: timeout,
+    );
+  }
+
+  Future<MessageReceiptResponse> sendReadReceipt(
+    List<int> messageIds, {
+    DateTime? readAt,
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    _requireAuthenticated();
+
+    final request = MessageReadReceiptRequest(
+      messageIds: messageIds,
+      readAt: readAt ?? DateTime.now().toUtc(),
+    );
+
+    return _sendReceiptAndWaitResponse(
+      MessageType.messageReadReceipt,
+      MessageType.messageReadReceiptResponse,
+      messageIds,
+      request.toBytes(),
+      timeout: timeout,
+    );
+  }
+
   // ─── Reactions and Pins (SERVER-005) ───────────────────────────────────────
 
   /// Post a reaction to a message.
@@ -1402,6 +2250,27 @@ class AegisClient {
     return MessageReactResponse.fromBytes(response.payload);
   }
 
+  Future<MessageReactResponse> reactToPrivateMessage(
+    int messageId,
+    String emoji,
+  ) {
+    return postReaction(ChatScope.privateChat.value, messageId, emoji);
+  }
+
+  Future<MessageReactResponse> reactToChannelMessage(
+    int messageId,
+    String emoji,
+  ) {
+    return postReaction(ChatScope.channel.value, messageId, emoji);
+  }
+
+  Future<MessageReactResponse> reactToGroupMessage(
+    int messageId,
+    String emoji,
+  ) {
+    return postReaction(ChatScope.group.value, messageId, emoji);
+  }
+
   /// Remove a reaction from a message.
   ///
   /// [scope] can be "private", "channel", or "group".
@@ -1426,6 +2295,27 @@ class AegisClient {
     final response = await _sendAndWaitResponse(msg,
         expectedTypes: {MessageType.messageReactResponse});
     return MessageReactResponse.fromBytes(response.payload);
+  }
+
+  Future<MessageReactResponse> removeReactionFromPrivateMessage(
+    int messageId,
+    String emoji,
+  ) {
+    return removeReaction(ChatScope.privateChat.value, messageId, emoji);
+  }
+
+  Future<MessageReactResponse> removeReactionFromChannelMessage(
+    int messageId,
+    String emoji,
+  ) {
+    return removeReaction(ChatScope.channel.value, messageId, emoji);
+  }
+
+  Future<MessageReactResponse> removeReactionFromGroupMessage(
+    int messageId,
+    String emoji,
+  ) {
+    return removeReaction(ChatScope.group.value, messageId, emoji);
   }
 
   /// Pin a message in a channel or group.
@@ -1455,6 +2345,20 @@ class AegisClient {
     return MessagePinResponse.fromBytes(response.payload);
   }
 
+  Future<MessagePinResponse> pinChannelMessage(
+    int channelId,
+    int messageId,
+  ) {
+    return pinMessage(RoomScope.channel.value, messageId, channelId);
+  }
+
+  Future<MessagePinResponse> pinGroupMessage(
+    int groupId,
+    int messageId,
+  ) {
+    return pinMessage(RoomScope.group.value, messageId, groupId);
+  }
+
   /// Unpin a message in a channel or group.
   ///
   /// [scope] must be "channel" or "group".
@@ -1482,6 +2386,20 @@ class AegisClient {
     return MessagePinResponse.fromBytes(response.payload);
   }
 
+  Future<MessagePinResponse> unpinChannelMessage(
+    int channelId,
+    int messageId,
+  ) {
+    return unpinMessage(RoomScope.channel.value, messageId, channelId);
+  }
+
+  Future<MessagePinResponse> unpinGroupMessage(
+    int groupId,
+    int messageId,
+  ) {
+    return unpinMessage(RoomScope.group.value, messageId, groupId);
+  }
+
   // ─── Room Settings (SERVER-006) ────────────────────────────────────────────
 
   /// Get room settings for a channel or group.
@@ -1506,6 +2424,14 @@ class AegisClient {
     final response = await _sendAndWaitResponse(msg,
         expectedTypes: {MessageType.roomSettingsGetResponse});
     return RoomSettingsGetResponse.fromBytes(response.payload);
+  }
+
+  Future<RoomSettingsGetResponse> getChannelSettings(int channelId) {
+    return getRoomSettings(RoomScope.channel.value, channelId);
+  }
+
+  Future<RoomSettingsGetResponse> getGroupSettings(int groupId) {
+    return getRoomSettings(RoomScope.group.value, groupId);
   }
 
   /// Update room settings for a channel or group.
@@ -1538,6 +2464,183 @@ class AegisClient {
     return RoomSettingsUpdateResponse.fromBytes(response.payload);
   }
 
+  Future<RoomSettingsUpdateResponse> updateChannelSettings(
+    int channelId, {
+    RoomJoinRule? joinRule,
+    RoomHistoryVisibility? historyVisibility,
+  }) {
+    return updateRoomSettings(
+      RoomScope.channel.value,
+      channelId,
+      joinRule: joinRule?.value,
+      historyVisibility: historyVisibility?.value,
+    );
+  }
+
+  Future<RoomSettingsUpdateResponse> updateGroupSettings(
+    int groupId, {
+    RoomJoinRule? joinRule,
+    RoomHistoryVisibility? historyVisibility,
+  }) {
+    return updateRoomSettings(
+      RoomScope.group.value,
+      groupId,
+      joinRule: joinRule?.value,
+      historyVisibility: historyVisibility?.value,
+    );
+  }
+
+  // ─── Typing Indicators (TODO-012) ────────────────────────────────────────
+
+  Future<void> sendTyping(UserTypingRequest request) async {
+    _requireAuthenticated();
+
+    final msg = Message.withType(
+      MessageType.userTyping,
+      request.toBytes(),
+    );
+    msg.sequenceId = _nextSeqId++;
+    await _transport.sendMessage(msg);
+  }
+
+  Future<void> sendPrivateTyping(int peerUserId, {required bool isTyping}) {
+    return sendTyping(
+      UserTypingRequest.privateChat(peerUserId: peerUserId, isTyping: isTyping),
+    );
+  }
+
+  Future<void> sendChannelTyping(int channelId, {required bool isTyping}) {
+    return sendTyping(
+      UserTypingRequest.channel(channelId: channelId, isTyping: isTyping),
+    );
+  }
+
+  Future<void> sendGroupTyping(int groupId, {required bool isTyping}) {
+    return sendTyping(
+      UserTypingRequest.group(groupId: groupId, isTyping: isTyping),
+    );
+  }
+
+  // ─── File Transfer (TODO-017/018) ───────────────────────────────────────
+
+  Future<FileTransferResponsePayload> initializeFileUpload({
+    required String fileName,
+    required String mimeType,
+    required int totalSize,
+    required int totalChunks,
+    List<int>? allowedUserIds,
+  }) {
+    final request = FileTransferRequest(
+      action: 'init',
+      fileName: fileName,
+      mimeType: mimeType,
+      totalSize: totalSize,
+      totalChunks: totalChunks,
+      allowedUserIds: allowedUserIds,
+    );
+
+    return _sendFileTransferRequest(request);
+  }
+
+  Future<FileTransferResponsePayload> uploadFileChunk({
+    required String transferId,
+    required int chunkIndex,
+    required List<int> chunkBytes,
+  }) {
+    final request = FileTransferRequest(
+      action: 'chunk',
+      transferId: transferId,
+      chunkIndex: chunkIndex,
+      chunkDataBase64: base64Encode(chunkBytes),
+    );
+
+    return _sendFileTransferRequest(request);
+  }
+
+  Future<FileTransferResponsePayload> completeFileUpload(String transferId) {
+    final request = FileTransferRequest(
+      action: 'complete',
+      transferId: transferId,
+    );
+
+    return _sendFileTransferRequest(request);
+  }
+
+  Future<FileTransferResponsePayload> startFileDownload(String fileId) {
+    final request = FileTransferRequest(
+      action: 'download',
+      fileId: fileId,
+    );
+
+    return _sendFileTransferRequest(request);
+  }
+
+  Future<List<int>> downloadFileBytes(
+    String fileId, {
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    _requireAuthenticated();
+
+    final chunks = <int, List<int>>{};
+    int expectedChunks = 0;
+    final completer = Completer<List<int>>();
+
+    late final StreamSubscription<FileTransferResponsePayload> subscription;
+    subscription = fileTransferChunkEvents.listen((chunk) {
+      if (chunk.fileId != fileId) {
+        return;
+      }
+
+      final chunkIndex = chunk.chunkIndex;
+      final chunkData = chunk.chunkDataBase64;
+      if (chunkIndex == null || chunkData == null) {
+        return;
+      }
+
+      chunks[chunkIndex] = base64Decode(chunkData);
+
+      if (expectedChunks > 0 && chunks.length >= expectedChunks) {
+        final merged = <int>[];
+        final sortedIndexes = chunks.keys.toList()..sort();
+        for (final idx in sortedIndexes) {
+          merged.addAll(chunks[idx]!);
+        }
+
+        if (!completer.isCompleted) {
+          completer.complete(merged);
+        }
+      }
+    });
+
+    try {
+      final started = await startFileDownload(fileId);
+      expectedChunks = started.totalChunks ?? 0;
+      if (expectedChunks <= 0) {
+        return <int>[];
+      }
+
+      return await completer.future.timeout(timeout);
+    } finally {
+      await subscription.cancel();
+    }
+  }
+
+  Future<FileTransferResponsePayload> _sendFileTransferRequest(
+    FileTransferRequest request,
+  ) async {
+    _requireAuthenticated();
+
+    final msg = Message.withType(
+      MessageType.fileTransfer,
+      request.toBytes(),
+    );
+    final response = await _sendAndWaitResponse(
+      msg,
+      expectedTypes: {MessageType.fileTransferResponse},
+    );
+    return FileTransferResponsePayload.fromBytes(response.payload);
+  }
+
   Future<void> _publishPresence({required bool isOnline}) async {
     try {
       final request = UserPresenceUpdateRequest(
@@ -1565,4 +2668,287 @@ class AegisClient {
     final bytes = ByteData(8)..setUint64(0, value, Endian.big);
     return bytes.buffer.asUint8List().toList();
   }
+}
+
+class ReconnectPolicy {
+  final Duration initialDelay;
+  final Duration maxDelay;
+  final double backoffMultiplier;
+  final int? maxAttempts;
+  final bool reloadChatListOnReconnect;
+
+  const ReconnectPolicy({
+    this.initialDelay = const Duration(seconds: 1),
+    this.maxDelay = const Duration(seconds: 30),
+    this.backoffMultiplier = 2.0,
+    this.maxAttempts,
+    this.reloadChatListOnReconnect = true,
+  });
+
+  Duration backoffForAttempt(int attempt) {
+    if (attempt <= 1) {
+      return initialDelay;
+    }
+    final factor = backoffMultiplier <= 1 ? 1.0 : backoffMultiplier;
+    final calculatedMs =
+        initialDelay.inMilliseconds * math.pow(factor, attempt - 1);
+    final boundedMs = calculatedMs.clamp(
+      initialDelay.inMilliseconds,
+      maxDelay.inMilliseconds,
+    );
+    return Duration(milliseconds: boundedMs.toInt());
+  }
+}
+
+class _ReconnectState {
+  final String host;
+  final int port;
+  final Duration? timeout;
+  final String? transportMaskingKey;
+  final bool enableMaskingAutoFallback;
+  final bool allowLegacyHandshakeFallback;
+  final String? trustedServerHandshakeSigningPublicKeyBase64;
+  final bool requireSignedHandshake;
+  final bool useTls;
+  final SecurityContext? tlsSecurityContext;
+  final bool Function(X509Certificate certificate)? onBadTlsCertificate;
+
+  const _ReconnectState({
+    required this.host,
+    required this.port,
+    required this.timeout,
+    required this.transportMaskingKey,
+    required this.enableMaskingAutoFallback,
+    required this.allowLegacyHandshakeFallback,
+    required this.trustedServerHandshakeSigningPublicKeyBase64,
+    required this.requireSignedHandshake,
+    required this.useTls,
+    required this.tlsSecurityContext,
+    required this.onBadTlsCertificate,
+  });
+}
+
+class AegisChannelFacade {
+  final AegisClient _client;
+
+  AegisChannelFacade._(this._client);
+
+  Future<ChannelCreateResponse> create(
+    String name, {
+    String? description,
+    ChannelType type = ChannelType.public,
+  }) =>
+      _client.createChannel(name, description: description, type: type);
+
+  Future<ChannelJoinResponse> join(int channelId) =>
+      _client.joinChannel(channelId);
+
+  Future<ChannelJoinResponse> joinByLink(String linkOrAlias) =>
+      _client.joinChannelByLink(linkOrAlias);
+
+  Future<ChannelLeaveResponse> leave(int channelId) =>
+      _client.leaveChannel(channelId);
+
+  Future<ChannelMessageResponse> sendMessage(
+    int channelId,
+    String content, {
+    MessageContentType contentType = MessageContentType.text,
+    int? replyToMessageId,
+    ParseMode? parseMode,
+  }) =>
+      _client.sendChannelMessage(
+        channelId,
+        content,
+        contentType: contentType,
+        replyToMessageId: replyToMessageId,
+        parseMode: parseMode,
+      );
+
+  Future<ChannelHistoryResponse> history(
+    int channelId, {
+    int limit = 100,
+    int? beforeMessageId,
+  }) =>
+      _client.getChannelHistory(
+        channelId,
+        limit: limit,
+        beforeMessageId: beforeMessageId,
+      );
+
+  Future<ChannelMembersResponse> members(int channelId) =>
+      _client.getChannelMembers(channelId);
+
+  Future<MessagePinResponse> pinMessage(int channelId, int messageId) =>
+      _client.pinChannelMessage(channelId, messageId);
+
+  Future<MessagePinResponse> unpinMessage(int channelId, int messageId) =>
+      _client.unpinChannelMessage(channelId, messageId);
+
+  Future<MessageReactResponse> react(int messageId, String emoji) =>
+      _client.reactToChannelMessage(messageId, emoji);
+
+  Future<MessageReactResponse> removeReaction(int messageId, String emoji) =>
+      _client.removeReactionFromChannelMessage(messageId, emoji);
+
+  Future<MessageEditResponse> editMessage(
+    int channelId,
+    int messageId,
+    String newContent,
+  ) =>
+      _client.editChannelMessage(channelId, messageId, newContent);
+
+  Future<MessageDeleteResponse> deleteMessage(
+    int channelId,
+    int messageId,
+  ) =>
+      _client.deleteChannelMessage(channelId, messageId);
+
+  Future<RoomSettingsGetResponse> getSettings(int channelId) =>
+      _client.getChannelSettings(channelId);
+
+  Future<RoomSettingsUpdateResponse> updateSettings(
+    int channelId, {
+    RoomJoinRule? joinRule,
+    RoomHistoryVisibility? historyVisibility,
+  }) =>
+      _client.updateChannelSettings(
+        channelId,
+        joinRule: joinRule,
+        historyVisibility: historyVisibility,
+      );
+
+  Future<void> sendTyping(int channelId, {required bool isTyping}) =>
+      _client.sendChannelTyping(channelId, isTyping: isTyping);
+}
+
+class AegisGroupFacade {
+  final AegisClient _client;
+
+  AegisGroupFacade._(this._client);
+
+  Future<GroupCreateResponse> create(
+    String name, {
+    String? description,
+  }) =>
+      _client.createGroup(name, description: description);
+
+  Future<GroupLeaveResponse> leave(int groupId) => _client.leaveGroup(groupId);
+
+  Future<MediaSendResponse> sendMessage(
+    int groupId,
+    String content, {
+    MessageContentType contentType = MessageContentType.text,
+    int? replyToMessageId,
+    ParseMode? parseMode,
+  }) =>
+      _client.sendGroupMessage(
+        groupId,
+        content,
+        contentType: contentType,
+        replyToMessageId: replyToMessageId,
+        parseMode: parseMode,
+      );
+
+  Future<GroupHistoryResponse> history(
+    int groupId, {
+    int limit = 100,
+    int? beforeMessageId,
+  }) =>
+      _client.getGroupHistory(
+        groupId,
+        limit: limit,
+        beforeMessageId: beforeMessageId,
+      );
+
+  Future<GroupMembersResponse> members(int groupId) =>
+      _client.getGroupMembers(groupId);
+
+  Future<MessagePinResponse> pinMessage(int groupId, int messageId) =>
+      _client.pinGroupMessage(groupId, messageId);
+
+  Future<MessagePinResponse> unpinMessage(int groupId, int messageId) =>
+      _client.unpinGroupMessage(groupId, messageId);
+
+  Future<MessageReactResponse> react(int messageId, String emoji) =>
+      _client.reactToGroupMessage(messageId, emoji);
+
+  Future<MessageReactResponse> removeReaction(int messageId, String emoji) =>
+      _client.removeReactionFromGroupMessage(messageId, emoji);
+
+  Future<MessageEditResponse> editMessage(
+    int groupId,
+    int messageId,
+    String newContent,
+  ) =>
+      _client.editGroupMessage(groupId, messageId, newContent);
+
+  Future<MessageDeleteResponse> deleteMessage(
+    int groupId,
+    int messageId,
+  ) =>
+      _client.deleteGroupMessage(groupId, messageId);
+
+  Future<RoomSettingsGetResponse> getSettings(int groupId) =>
+      _client.getGroupSettings(groupId);
+
+  Future<RoomSettingsUpdateResponse> updateSettings(
+    int groupId, {
+    RoomJoinRule? joinRule,
+    RoomHistoryVisibility? historyVisibility,
+  }) =>
+      _client.updateGroupSettings(
+        groupId,
+        joinRule: joinRule,
+        historyVisibility: historyVisibility,
+      );
+
+  Future<void> sendTyping(int groupId, {required bool isTyping}) =>
+      _client.sendGroupTyping(groupId, isTyping: isTyping);
+}
+
+class AegisDirectFacade {
+  final AegisClient _client;
+
+  AegisDirectFacade._(this._client);
+
+  Future<PrivateChatMessageResponse> sendMessage(
+    int toUserId,
+    String content, {
+    MessageContentType contentType = MessageContentType.text,
+    ParseMode? parseMode,
+    SignalV3EnvelopePayload? signalV3,
+  }) =>
+      _client.sendPrivateMessage(
+        toUserId,
+        content,
+        contentType: contentType,
+        parseMode: parseMode,
+        signalV3: signalV3,
+      );
+
+  Future<void> sendTyping(int peerUserId, {required bool isTyping}) =>
+      _client.sendPrivateTyping(peerUserId, isTyping: isTyping);
+
+  Future<PrivateChatHistoryResponse> history(
+    int peerUserId, {
+    int limit = 100,
+    int? beforeMessageId,
+  }) =>
+      _client.getPrivateHistory(
+        peerUserId,
+        limit: limit,
+        beforeMessageId: beforeMessageId,
+      );
+
+  Future<MessageReactResponse> react(int messageId, String emoji) =>
+      _client.reactToPrivateMessage(messageId, emoji);
+
+  Future<MessageReactResponse> removeReaction(int messageId, String emoji) =>
+      _client.removeReactionFromPrivateMessage(messageId, emoji);
+
+  Future<MessageEditResponse> editMessage(int messageId, String newContent) =>
+      _client.editPrivateMessage(messageId, newContent);
+
+  Future<MessageDeleteResponse> deleteMessage(int messageId) =>
+      _client.deletePrivateMessage(messageId);
 }

@@ -10,36 +10,41 @@ public class AegisCryptoProvider : ICryptoProvider, ISessionCryptoProvider
     private const int EncryptionKeySize = 32; // AES-256
     private const int NonceSize = 12; // AES-GCM nonce
     private const int TagSize = 16; // AES-GCM tag (integrity built-in)
-    private const int PasswordHashIterations = 210000;
+    private const int BcryptWorkFactor = 12;
+    private const int LegacyPasswordHashIterations = 210000;
 
     // ICryptoProvider implementation
     public async Task<string> HashPasswordAsync(string password)
     {
-        using var rng = RandomNumberGenerator.Create();
-        var salt = new byte[16];
-        rng.GetBytes(salt);
-
-        var hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, PasswordHashIterations, HashAlgorithmName.SHA256, 32);
-
-        var result = new byte[salt.Length + hash.Length];
-        salt.CopyTo(result, 0);
-        hash.CopyTo(result, salt.Length);
-
-        return await Task.FromResult(Convert.ToBase64String(result));
+        var hash = BCrypt.Net.BCrypt.HashPassword(password, BcryptWorkFactor);
+        return await Task.FromResult(hash);
     }
 
     public async Task<bool> VerifyPasswordAsync(string password, string hash)
     {
+        if (string.IsNullOrWhiteSpace(hash))
+        {
+            return false;
+        }
+
         try
         {
+            // New format: BCrypt
+            if (hash.StartsWith("$2", StringComparison.Ordinal))
+            {
+                return await Task.FromResult(BCrypt.Net.BCrypt.Verify(password, hash));
+            }
+
+            // Legacy format fallback: PBKDF2(salt+hash)
             var hashBytes = Convert.FromBase64String(hash);
             if (hashBytes.Length < 16)
+            {
                 return false;
+            }
 
             var salt = hashBytes.AsSpan(0, 16);
             var expectedHash = hashBytes.AsSpan(16);
-
-            var computedHash = Rfc2898DeriveBytes.Pbkdf2(password, salt, PasswordHashIterations, HashAlgorithmName.SHA256, 32);
+            var computedHash = Rfc2898DeriveBytes.Pbkdf2(password, salt, LegacyPasswordHashIterations, HashAlgorithmName.SHA256, 32);
 
             return await Task.FromResult(CryptographicOperations.FixedTimeEquals(expectedHash, computedHash));
         }

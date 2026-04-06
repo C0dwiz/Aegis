@@ -52,6 +52,8 @@ type InboundMessageKind =
     | MessagePin
     | RoomSettingsGet
     | RoomSettingsUpdate
+    | UserTyping
+    | FileTransfer
 
 [<RequireQualifiedAccess>]
 module ProtocolSafety =
@@ -118,6 +120,8 @@ module ProtocolSafety =
         | 80 -> Some InboundMessageKind.MessagePin
         | 83 -> Some InboundMessageKind.RoomSettingsGet
         | 85 -> Some InboundMessageKind.RoomSettingsUpdate
+        | 87 -> Some InboundMessageKind.UserTyping
+        | 89 -> Some InboundMessageKind.FileTransfer
         | _ -> None
 
 type ProtocolSafetyFacade private () =

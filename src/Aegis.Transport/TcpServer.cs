@@ -25,6 +25,7 @@ public class TcpServer : IDisposable
     private readonly CancellationTokenSource _cts;
     private readonly ConcurrentDictionary<ulong, ConnectionContext> _connections;
     private readonly IRateLimiter? _rateLimiter;
+    private readonly Func<string?, bool>? _connectionAdmission;
     private readonly TimeSpan _partialFrameTimeout;
     private readonly int _maxIncompleteFrameDrops;
     private readonly byte[] _transportMaskingKey;
@@ -56,6 +57,7 @@ public class TcpServer : IDisposable
         int maxIncompleteFrameDrops = 3,
         string? transportMaskingKey = null,
         IRateLimiter? rateLimiter = null,
+        Func<string?, bool>? connectionAdmission = null,
         SslServerAuthenticationOptions? tlsOptions = null,
         ILogger? logger = null)
     {
@@ -70,6 +72,7 @@ public class TcpServer : IDisposable
             ? Array.Empty<byte>()
             : Encoding.UTF8.GetBytes(transportMaskingKey);
         _rateLimiter = rateLimiter;
+        _connectionAdmission = connectionAdmission;
         _tlsOptions = tlsOptions;
         _logger = logger ?? new NullLogger();
         _listener = CreateListener(enableIPv6);
@@ -409,12 +412,12 @@ public class TcpServer : IDisposable
     private bool CanAcceptConnection(Socket socket)
     {
         var remoteIp = GetRemoteIp(socket);
-        if (remoteIp == null)
+        if (remoteIp != null && !(_rateLimiter?.CanConnect(remoteIp) ?? true))
         {
-            return true;
+            return false;
         }
 
-        return _rateLimiter?.CanConnect(remoteIp) ?? true;
+        return _connectionAdmission?.Invoke(remoteIp) ?? true;
     }
 
     private static string? GetRemoteIp(Socket socket)

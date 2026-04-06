@@ -33,6 +33,10 @@ class AegisEventDispatcher {
       StreamController<MessageReactionEvent>.broadcast();
   final StreamController<MessagePinEvent> _pinEventController =
       StreamController<MessagePinEvent>.broadcast();
+  final StreamController<UserTypingEventPayload> _typingEventController =
+      StreamController<UserTypingEventPayload>.broadcast();
+  final StreamController<FileTransferResponsePayload> _fileChunkController =
+      StreamController<FileTransferResponsePayload>.broadcast();
 
   AegisEventDispatcher(Stream<Message> source) {
     _subscription = source.listen(_route);
@@ -85,7 +89,23 @@ class AegisEventDispatcher {
     return messagePinEvents.listen(handler);
   }
 
+  StreamSubscription<UserTypingEventPayload> onTypingEvent(
+    void Function(UserTypingEventPayload event) handler,
+  ) {
+    return typingEvents.listen(handler);
+  }
+
+  StreamSubscription<FileTransferResponsePayload> onFileTransferChunk(
+    void Function(FileTransferResponsePayload event) handler,
+  ) {
+    return fileTransferChunks.listen(handler);
+  }
+
   Stream<MessagePinEvent> get messagePinEvents => _pinEventController.stream;
+  Stream<UserTypingEventPayload> get typingEvents =>
+      _typingEventController.stream;
+  Stream<FileTransferResponsePayload> get fileTransferChunks =>
+      _fileChunkController.stream;
 
   StreamSubscription<Message> onAck(void Function(Message message) handler) {
     return ackMessages.listen(handler);
@@ -145,6 +165,8 @@ class AegisEventDispatcher {
     await _groupEventController.close();
     await _reactionEventController.close();
     await _pinEventController.close();
+    await _typingEventController.close();
+    await _fileChunkController.close();
   }
 
   void _route(Message message) {
@@ -213,6 +235,18 @@ class AegisEventDispatcher {
         _tryEmit(
           () => MessagePinEvent.fromBytes(message.payload),
           _pinEventController,
+        );
+        break;
+      case MessageType.userTypingEvent:
+        _tryEmit(
+          () => UserTypingEventPayload.fromBytes(message.payload),
+          _typingEventController,
+        );
+        break;
+      case MessageType.fileTransferChunk:
+        _tryEmit(
+          () => FileTransferResponsePayload.fromBytes(message.payload),
+          _fileChunkController,
         );
         break;
       default:

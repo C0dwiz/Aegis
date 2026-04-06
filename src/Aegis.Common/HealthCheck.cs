@@ -13,6 +13,11 @@ public class HealthCheckService
     private long _totalMessagesProcessed;
     private long _totalConnectionsAccepted;
     private int _activeConnections;
+    private long _totalProtocolCleanupRuns;
+    private long _totalReplayEntriesDeleted;
+    private long _totalSaltStatesDeleted;
+    private long _totalRedisKeysScanned;
+    private long _totalRedisKeysDeleted;
 
     public HealthCheckService(ILogger? logger = null)
     {
@@ -36,6 +41,19 @@ public class HealthCheckService
         Interlocked.Increment(ref _totalMessagesProcessed);
     }
 
+    public void RecordProtocolCleanupRun(
+        int replayEntriesDeleted,
+        int saltStatesDeleted,
+        int redisKeysScanned,
+        int redisKeysDeleted)
+    {
+        Interlocked.Increment(ref _totalProtocolCleanupRuns);
+        Interlocked.Add(ref _totalReplayEntriesDeleted, replayEntriesDeleted);
+        Interlocked.Add(ref _totalSaltStatesDeleted, saltStatesDeleted);
+        Interlocked.Add(ref _totalRedisKeysScanned, redisKeysScanned);
+        Interlocked.Add(ref _totalRedisKeysDeleted, redisKeysDeleted);
+    }
+
     public HealthStatus GetStatus()
     {
         return new HealthStatus
@@ -45,6 +63,11 @@ public class HealthCheckService
             ActiveConnections = _activeConnections,
             TotalConnections = _totalConnectionsAccepted,
             TotalMessages = _totalMessagesProcessed,
+            TotalProtocolCleanupRuns = _totalProtocolCleanupRuns,
+            TotalReplayEntriesDeleted = _totalReplayEntriesDeleted,
+            TotalSaltStatesDeleted = _totalSaltStatesDeleted,
+            TotalRedisKeysScanned = _totalRedisKeysScanned,
+            TotalRedisKeysDeleted = _totalRedisKeysDeleted,
             Timestamp = DateTime.UtcNow
         };
     }
@@ -55,7 +78,11 @@ public class HealthCheckService
         _logger.Info($"Health Status - Uptime: {status.Uptime:hh\\:mm\\:ss}, " +
             $"Active: {status.ActiveConnections}, " +
             $"Total Connections: {status.TotalConnections}, " +
-            $"Total Messages: {status.TotalMessages}");
+            $"Total Messages: {status.TotalMessages}, " +
+            $"Protocol Cleanup Runs: {status.TotalProtocolCleanupRuns}, " +
+            $"Replay Deleted: {status.TotalReplayEntriesDeleted}, " +
+            $"Salt Deleted: {status.TotalSaltStatesDeleted}, " +
+            $"Redis Scanned/Deleted: {status.TotalRedisKeysScanned}/{status.TotalRedisKeysDeleted}");
     }
 }
 
@@ -69,6 +96,11 @@ public class HealthStatus
     public int ActiveConnections { get; set; }
     public long TotalConnections { get; set; }
     public long TotalMessages { get; set; }
+    public long TotalProtocolCleanupRuns { get; set; }
+    public long TotalReplayEntriesDeleted { get; set; }
+    public long TotalSaltStatesDeleted { get; set; }
+    public long TotalRedisKeysScanned { get; set; }
+    public long TotalRedisKeysDeleted { get; set; }
     public DateTime Timestamp { get; set; }
 }
 

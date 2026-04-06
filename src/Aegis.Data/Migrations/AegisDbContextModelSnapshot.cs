@@ -587,6 +587,40 @@ namespace Aegis.Data.Migrations
                     b.ToTable("GroupMessages");
                 });
 
+            modelBuilder.Entity("Aegis.Data.Entities.HandshakeReplayEntry", b =>
+                {
+                    b.Property<decimal>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(20,0)");
+
+                    b.Property<int>("AppId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("FirstSeenAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("NonceHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceIp")
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NonceHash")
+                        .IsUnique();
+
+                    b.HasIndex("AppId", "ExpiresAt");
+
+                    b.ToTable("HandshakeReplayEntries");
+                });
+
             modelBuilder.Entity("Aegis.Data.Entities.Message", b =>
                 {
                     b.Property<decimal>("Id")
@@ -825,6 +859,59 @@ namespace Aegis.Data.Migrations
                     b.ToTable("PrivateChats");
                 });
 
+            modelBuilder.Entity("Aegis.Data.Entities.SignalChainState", b =>
+                {
+                    b.Property<decimal>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(20,0)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("LastMessageKeyHash")
+                        .HasColumnType("text");
+
+                    b.Property<uint>("NextReceivingMessageNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<uint>("NextSendingMessageNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("OwnerUserId")
+                        .HasColumnType("numeric(20,0)");
+
+                    b.Property<decimal>("PeerUserId")
+                        .HasColumnType("numeric(20,0)");
+
+                    b.Property<string>("ReceivingChainKeyBase64")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("RootKeyBase64")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SendingChainKeyBase64")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerUserId", "PeerUserId")
+                        .IsUnique();
+
+                    b.HasIndex("UpdatedAt");
+
+                    b.ToTable("SignalChainStates");
+                });
+
             modelBuilder.Entity("Aegis.Data.Entities.Session", b =>
                 {
                     b.Property<decimal>("Id")
@@ -880,6 +967,41 @@ namespace Aegis.Data.Migrations
                     b.ToTable("Sessions");
                 });
 
+            modelBuilder.Entity("Aegis.Data.Entities.SessionSaltState", b =>
+                {
+                    b.Property<decimal>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(20,0)");
+
+                    b.Property<long>("CurrentSalt")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<long?>("PreviousSalt")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("PreviousSaltValidUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("RotatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<decimal>("SessionId")
+                        .HasColumnType("numeric(20,0)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RotatedAt");
+
+                    b.HasIndex("SessionId", "IsActive");
+
+                    b.ToTable("SessionSaltStates");
+                });
+
             modelBuilder.Entity("Aegis.Data.Entities.User", b =>
                 {
                     b.Property<decimal>("Id")
@@ -907,11 +1029,19 @@ namespace Aegis.Data.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<DateTime?>("EmailVerifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("IdentityKeyFingerprint")
                         .HasColumnType("text");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
+
+                    b.Property<bool>("IsEmailVerified")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
 
                     b.Property<DateTime?>("LastSeenAt")
                         .HasColumnType("timestamp with time zone");
@@ -926,6 +1056,19 @@ namespace Aegis.Data.Migrations
                     b.Property<string>("PublicKey")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<string>("RecoveryPhraseHash")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("TotpSecret")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<bool>("TwoFactorEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<DateTime>("UpdatedAt")
                         .ValueGeneratedOnAdd()
@@ -1211,11 +1354,6 @@ namespace Aegis.Data.Migrations
 
             modelBuilder.Entity("Aegis.Data.Entities.PrivateChat", b =>
                 {
-                    b.HasOne("Aegis.Data.Entities.Message", "LastMessage")
-                        .WithMany()
-                        .HasForeignKey("LastMessageId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("Aegis.Data.Entities.User", "User1")
                         .WithMany("PrivateChats1")
                         .HasForeignKey("User1Id")
@@ -1227,8 +1365,6 @@ namespace Aegis.Data.Migrations
                         .HasForeignKey("User2Id")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.Navigation("LastMessage");
 
                     b.Navigation("User1");
 

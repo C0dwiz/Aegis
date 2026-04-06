@@ -49,6 +49,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    profiles:
+      - full
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.17.3
@@ -67,6 +69,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 20
+    profiles:
+      - full
 
   aegis-server:
     build:
@@ -80,10 +84,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_healthy
-      elasticsearch:
-        condition: service_healthy
     environment:
       AEGIS_Database__Provider: PostgreSQL
       AEGIS_Database__ConnectionString: ${AEGIS_DB_CONNECTION_STRING}
@@ -95,16 +95,17 @@ services:
       AEGIS_AvatarStorage__MaxUploadBytes: "5242880"
       AEGIS_AvatarStorage__MaxWidth: "512"
       AEGIS_AvatarStorage__MaxHeight: "512"
-      AEGIS_Minio__Enabled: "true"
+      AEGIS_Minio__Enabled: ${AEGIS_MINIO_ENABLED:-true}
       AEGIS_Minio__Endpoint: ${AEGIS_MINIO_ENDPOINT:-minio:9000}
       AEGIS_Minio__UseSsl: "false"
       AEGIS_Minio__AccessKey: ${MINIO_ROOT_USER:-minioadmin}
       AEGIS_Minio__SecretKey: ${MINIO_ROOT_PASSWORD:-minioadmin}
       AEGIS_Minio__Bucket: ${AEGIS_MINIO_BUCKET:-aegis-media}
       AEGIS_Minio__PublicBaseUrl: ${AEGIS_MINIO_PUBLIC_BASE_URL:-http://localhost:9000}
-      AEGIS_Elasticsearch__Enabled: "true"
+      AEGIS_Elasticsearch__Enabled: ${AEGIS_ELASTICSEARCH_ENABLED:-true}
       AEGIS_Elasticsearch__Endpoint: ${AEGIS_ELASTICSEARCH_ENDPOINT:-http://elasticsearch:9200}
       AEGIS_Elasticsearch__IndexName: ${AEGIS_ELASTICSEARCH_INDEX:-aegis-users}
+      AEGIS_Security__TotpEncryptionKey: ${AEGIS_Security__TotpEncryptionKey:-}
       AEGIS_Logging__Console: "true"
       AEGIS_Logging__File: "false"
       AEGIS_ProtocolSecurity__RequireEncryptedPayloadAfterHandshake: ${AEGIS_REQUIRE_ENCRYPTED_PAYLOAD_AFTER_HANDSHAKE:-true}
@@ -125,6 +126,28 @@ services:
       retries: 12
       start_period: 15s
 
+  aegis-reencrypt-totp:
+    build:
+      context: .
+      dockerfile: Dockerfile.build
+    container_name: aegis-reencrypt-totp
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["dotnet", "run", "--project", "src/Aegis.Server/Aegis.Server.csproj", "--", "--reencrypt-totp-secrets"]
+    environment:
+      AEGIS_Database__Provider: PostgreSQL
+      AEGIS_Database__ConnectionString: ${AEGIS_DB_CONNECTION_STRING}
+      AEGIS_Redis__ConnectionString: ${AEGIS_REDIS_CONNECTION_STRING:-redis:6379}
+      AEGIS_Minio__Enabled: "false"
+      AEGIS_Elasticsearch__Enabled: "false"
+      AEGIS_Security__TotpEncryptionKey: ${AEGIS_Security__TotpEncryptionKey}
+    profiles:
+      - migration
+
   aegis-botapi:
     build:
       context: .
@@ -136,10 +159,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_healthy
-      elasticsearch:
-        condition: service_healthy
       aegis-server:
         condition: service_healthy
     environment:
@@ -148,16 +167,17 @@ services:
       Database__ConnectionString: ${AEGIS_DB_CONNECTION_STRING}
       Redis__ConnectionString: ${AEGIS_REDIS_CONNECTION_STRING:-redis:6379}
       AvatarStorage__BaseDirectory: /data/media/avatars
-      Elasticsearch__Enabled: "true"
+      Elasticsearch__Enabled: ${AEGIS_ELASTICSEARCH_ENABLED:-true}
       Elasticsearch__Endpoint: ${AEGIS_ELASTICSEARCH_ENDPOINT:-http://elasticsearch:9200}
       Elasticsearch__IndexName: ${AEGIS_ELASTICSEARCH_INDEX:-aegis-users}
-      Minio__Enabled: "true"
+      Minio__Enabled: ${AEGIS_MINIO_ENABLED:-true}
       Minio__Endpoint: ${AEGIS_MINIO_ENDPOINT:-minio:9000}
       Minio__UseSsl: "false"
       Minio__AccessKey: ${MINIO_ROOT_USER:-minioadmin}
       Minio__SecretKey: ${MINIO_ROOT_PASSWORD:-minioadmin}
       Minio__Bucket: ${AEGIS_MINIO_BUCKET:-aegis-media}
       Minio__PublicBaseUrl: ${AEGIS_MINIO_PUBLIC_BASE_URL:-http://localhost:9000}
+      Security__TotpEncryptionKey: ${AEGIS_Security__TotpEncryptionKey:-}
       ConnectionStrings__Default: ${AEGIS_DB_CONNECTION_STRING}
     ports:
       - "5000:5000"

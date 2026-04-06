@@ -1,0 +1,41 @@
+name: SonarCloud Analysis
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 3 * * 1'
+
+jobs:
+  analyze:
+    name: Analyze with SonarCloud
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore AegisMessenger.Server.sln
+
+    - name: Build
+      run: dotnet build AegisMessenger.Server.sln --configuration Release --no-restore
+
+    - name: Run SonarCloud analysis
+      uses: SonarSource/sonarcloud-github-action@v2
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      with:
+        args: >
+          -Dsonar.organization=c0dwiz
+          -Dsonar.projectKey=C0dwiz_Aegis
+          -Dsonar.sources=.
+          -Dsonar.cs.opencover.reportsPaths=**/coverage.opencover.xml

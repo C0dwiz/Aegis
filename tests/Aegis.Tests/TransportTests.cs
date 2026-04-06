@@ -43,6 +43,43 @@ public class TransportTests
     }
 
     [Fact]
+    public async Task TcpServer_AdmissionCallback_ShouldRejectConnections()
+    {
+        using var cts = new CancellationTokenSource(TestTimeoutMs);
+        var port = GetFreeTcpPort();
+
+        var server = new TcpServer(
+            port,
+            100,
+            1024,
+            false,
+            300,
+            rateLimiter: null,
+            connectionAdmission: _ => false,
+            logger: _logger);
+
+        var connected = false;
+        server.OnClientConnected += _ => connected = true;
+
+        _ = Task.Run(() => server.StartAsync(port), cts.Token);
+        await Task.Delay(100, cts.Token);
+
+        try
+        {
+            using var client = new TcpClient();
+            await ConnectWithRetryAsync(client, IPAddress.Loopback, port, cts.Token);
+            await Task.Delay(200, cts.Token);
+
+            Assert.False(connected);
+        }
+        finally
+        {
+            await server.StopAsync();
+            cts.Cancel();
+        }
+    }
+
+    [Fact]
     public async Task TcpServer_ClientConnection_ShouldTriggerEvents()
     {
         using var cts = new CancellationTokenSource(TestTimeoutMs);

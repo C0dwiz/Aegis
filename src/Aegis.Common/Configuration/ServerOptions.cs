@@ -48,6 +48,21 @@ public class ProtocolSecurityOptions
     /// without credentials to still connect.
     /// </summary>
     public bool RequireAppCredentials { get; set; } = false;
+
+    // Enables staged V2 runtime handshake (client_hello_v2/server_hello_v2/client_finish_v2).
+    public bool EnableV2Handshake { get; set; } = true;
+
+    // Allow fallback to legacy handshake format if V2 envelope is not present.
+    public bool AllowLegacyHandshakeFallback { get; set; } = true;
+
+    // Allowed client clock skew for V2 handshake freshness validation.
+    public long V2HandshakeClockSkewMs { get; set; } = 90_000;
+
+    // Cookie lifetime for V2 anti-DoS handshake stage.
+    public long V2HandshakeCookieTtlMs { get; set; } = 60_000;
+
+    // Replay cache window for V2 client nonce deduplication.
+    public int V2ReplayWindowSeconds { get; set; } = 120;
 }
 
 public class RateLimitOptions
@@ -88,7 +103,7 @@ public class DatabaseOptions
 
 public class LoggingOptions
 {
-    public const string SectionName = "Logging";
+    public const string SectionName = "AegisLogging";
 
     public string MinimumLevel { get; set; } = "Information";
     public bool Console { get; set; } = true;

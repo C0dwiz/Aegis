@@ -3,7 +3,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Options;
+using System.Diagnostics;
 using System.Net.Security;
 using System.Security.Authentication;
 using System.Security.Cryptography;
@@ -31,6 +33,13 @@ public static class Program
         try
         {
             var host = CreateHostBuilder(args).Build();
+
+            if (args.Any(a => string.Equals(a, "--reencrypt-totp-secrets", StringComparison.OrdinalIgnoreCase)))
+            {
+                await ReencryptLegacyTotpSecretsAsync(host);
+                return;
+            }
+
             await InitializeDatabaseAsync(host);
             await host.RunAsync();
         }
@@ -44,6 +53,19 @@ public static class Program
         {
             await Log.CloseAndFlushAsync();
         }
+    }
+
+    private static async Task ReencryptLegacyTotpSecretsAsync(IHost host)
+    {
+        using var scope = host.Services.CreateScope();
+        var logger = scope.ServiceProvider
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger("Aegis.Server.TotpReencryption");
+
+        var twoFactorService = scope.ServiceProvider.GetRequiredService<IUserTwoFactorService>();
+        var reencrypted = await twoFactorService.ReencryptLegacySecretsAsync();
+
+        logger.LogInformation("Legacy TOTP secret re-encryption completed. Updated users: {Count}", reencrypted);
     }
 
     private static async Task InitializeDatabaseAsync(IHost host)
@@ -114,6 +136,14 @@ public static class Program
                     context.Configuration.GetSection(CryptoOptions.SectionName));
                 services.Configure<ProtocolSecurityOptions>(
                     context.Configuration.GetSection(ProtocolSecurityOptions.SectionName));
+                services.PostConfigure<ProtocolSecurityOptions>(options =>
+                {
+                    if (context.HostingEnvironment.IsProduction() || context.HostingEnvironment.IsStaging())
+                    {
+                        options.EnableV2Handshake = true;
+                        options.AllowLegacyHandshakeFallback = false;
+                    }
+                });
                 services.Configure<RateLimitOptions>(
                     context.Configuration.GetSection(RateLimitOptions.SectionName));
                 services.Configure<DatabaseOptions>(
@@ -128,6 +158,8 @@ public static class Program
                     context.Configuration.GetSection(ElasticsearchOptions.SectionName));
                 services.Configure<IdGeneratorOptions>(
                     context.Configuration.GetSection(IdGeneratorOptions.SectionName));
+                services.Configure<ChannelService.ChannelLinkOptions>(
+                    context.Configuration.GetSection(ChannelService.ChannelLinkOptions.SectionName));
 
                 // Register distributed ID generator as Scoped to ensure proper initialization
                 // with node ID from configuration
@@ -171,6 +203,8 @@ public static class Program
                         : databaseOptions.ConnectionString;
 
                     options.UseNpgsql(connectionString);
+                    options.ConfigureWarnings(warnings =>
+                        warnings.Log(RelationalEventId.PendingModelChangesWarning));
                 });
 
                 // Register repositories
@@ -199,10 +233,12 @@ public static class Program
                 services.AddScoped<IBotConversationStateRepository, BotConversationStateRepository>();
                 services.AddScoped<IAppCredentialRepository, AppCredentialRepository>();
                 services.AddScoped<IReactionRepository, ReactionRepository>();
+                services.AddScoped<ISignalChainStateRepository, SignalChainStateRepository>();
 
                 // Register services
                 services.AddScoped<IUserRegistrationService, UserRegistrationService>();
                 services.AddScoped<IUserAuthenticationService, UserAuthenticationService>();
+                services.AddScoped<IUserTwoFactorService, UserTwoFactorService>();
                 services.AddScoped<IUserSearchService, UserSearchService>();
                 services.AddScoped<IUserProfileService, UserProfileService>();
                 services.AddScoped<IAppCredentialService, AppCredentialService>();
@@ -257,6 +293,10 @@ public static class Program
                 services.AddSingleton<HealthCheckService>();
                 services.AddSingleton<GracefulShutdownManager>();
                 services.AddSingleton<IMessageSender, ServerMessageSender>();
+                services.AddSingleton<TypingIndicatorStore>();
+                services.AddSingleton<FileTransferStore>();
+                services.AddSingleton<IFileDownloadRateLimiter, FileDownloadRateLimiter>();
+                services.AddSingleton<ConnectionBalancer>();
 
                 // Register transport with explicit options binding for ctor params
                 services.AddSingleton<TcpServer>(sp =>
@@ -296,8 +336,9 @@ public static class Program
                         options.MaxIncompleteFrameDrops,
                         options.EnableTransportMasking ? options.TransportMaskingKey : null,
                         sp.GetRequiredService<IRateLimiter>(),
-                        sslOptions,
-                        sp.GetRequiredService<Aegis.Common.Logging.ILogger>());
+                        connectionAdmission: _ => sp.GetRequiredService<ConnectionBalancer>().ShouldAcceptLocalConnection(),
+                        tlsOptions: sslOptions,
+                        logger: sp.GetRequiredService<Aegis.Common.Logging.ILogger>());
                 });
 
                 // Register handlers as scoped concrete types to resolve only the needed one per message
@@ -353,10 +394,15 @@ public static class Program
                 // SERVER-006
                 services.AddScoped<RoomSettingsGetHandler>();
                 services.AddScoped<RoomSettingsUpdateHandler>();
+                // TODO-012/017/018
+                services.AddScoped<UserTypingHandler>();
+                services.AddScoped<FileTransferHandler>();
                 services.AddScoped<MessageRouter>();
 
                 // Register background services
                 services.AddHostedService<Aegis.Server.Services.SessionCleanupBackgroundService>();
+                services.AddHostedService<Aegis.Server.Services.ProtocolSecurityCleanupBackgroundService>();
+                services.AddHostedService<Aegis.Server.Services.OfflineMessageService>();
                 services.AddHostedService<AegisMessengerService>();
             })
             .UseSerilog((context, loggerConfig) =>
@@ -397,6 +443,7 @@ public class AegisMessengerService : BackgroundService
     private readonly SessionManager _sessionManager;
     private readonly MessageDeduplicator _messageDeduplicator;
     private readonly HealthCheckService _healthCheckService;
+    private readonly ConnectionBalancer _connectionBalancer;
     private readonly ProtocolSecurityOptions _protocolSecurityOptions;
     private readonly ILogger<AegisMessengerService> _logger;
     private readonly ServerOptions _serverOptions;
@@ -409,6 +456,7 @@ public class AegisMessengerService : BackgroundService
         SessionManager sessionManager,
         MessageDeduplicator messageDeduplicator,
         HealthCheckService healthCheckService,
+        ConnectionBalancer connectionBalancer,
         Microsoft.Extensions.Options.IOptions<ProtocolSecurityOptions> protocolSecurityOptions,
         ILogger<AegisMessengerService> logger,
         Microsoft.Extensions.Options.IOptions<ServerOptions> serverOptions)
@@ -420,6 +468,7 @@ public class AegisMessengerService : BackgroundService
         _sessionManager = sessionManager;
         _messageDeduplicator = messageDeduplicator;
         _healthCheckService = healthCheckService;
+        _connectionBalancer = connectionBalancer;
         _protocolSecurityOptions = protocolSecurityOptions.Value;
         _logger = logger;
         _serverOptions = serverOptions.Value;
@@ -428,6 +477,9 @@ public class AegisMessengerService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Starting Aegis Messenger Server on port {Port}", _serverOptions.Port);
+
+        var localNodeId = $"{Environment.MachineName}:{_serverOptions.Port}";
+        _connectionBalancer.ConfigureLocalNode(localNodeId);
 
         _server.OnClientConnected += OnClientConnected;
         _server.OnClientDisconnected += OnClientDisconnected;
@@ -461,6 +513,7 @@ public class AegisMessengerService : BackgroundService
         {
             _rateLimiter.RegisterConnection(context.ConnectionId, ipAddress);
         }
+        _connectionBalancer.RecordLocalConnectionAccepted();
         _healthCheckService.RecordConnectionAccepted();
     }
 
@@ -473,6 +526,7 @@ public class AegisMessengerService : BackgroundService
         }
 
         _rateLimiter.RemoveConnection(context.ConnectionId);
+        _connectionBalancer.ReleaseLocalConnection();
         _messageDeduplicator.ClearConnection(context.ConnectionId);
         _sessionManager.RemoveSession(context.ConnectionId);
         _healthCheckService.RecordConnectionClosed();
@@ -486,6 +540,10 @@ public class AegisMessengerService : BackgroundService
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
                 _healthCheckService.LogStatus();
+                _connectionBalancer.UpdateLocalHealth(
+                    isHealthy: true,
+                    cpuLoadPercent: GetCpuLoadPercent(),
+                    memoryLoadPercent: GetMemoryLoadPercent());
             }
         }
         catch (OperationCanceledException)
@@ -679,5 +737,24 @@ public class AegisMessengerService : BackgroundService
         {
             return false;
         }
+    }
+
+    private static double GetMemoryLoadPercent()
+    {
+        var gcInfo = GC.GetGCMemoryInfo();
+        var totalAvailable = gcInfo.TotalAvailableMemoryBytes;
+        if (totalAvailable <= 0)
+        {
+            return 0;
+        }
+
+        var used = Process.GetCurrentProcess().WorkingSet64;
+        return Math.Clamp(used / (double)totalAvailable * 100.0, 0, 100);
+    }
+
+    private static double GetCpuLoadPercent()
+    {
+        // Keep a stable baseline value for admission heuristics without introducing expensive samplers.
+        return 0;
     }
 }

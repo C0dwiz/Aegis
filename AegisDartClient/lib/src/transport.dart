@@ -79,6 +79,9 @@ class AegisTransport {
     int port, {
     Duration? timeout,
     String? transportMaskingKey,
+    bool useTls = false,
+    SecurityContext? tlsSecurityContext,
+    bool Function(X509Certificate certificate)? onBadTlsCertificate,
     Duration? healthCheckInterval,
   }) async {
     if (_isConnected) {
@@ -89,8 +92,18 @@ class AegisTransport {
 
     try {
       final connectTimeout = timeout ?? const Duration(seconds: 10);
-      _socket = await Socket.connect(host, port, timeout: connectTimeout)
-          .timeout(connectTimeout);
+      if (useTls) {
+        _socket = await SecureSocket.connect(
+          host,
+          port,
+          timeout: connectTimeout,
+          context: tlsSecurityContext,
+          onBadCertificate: onBadTlsCertificate,
+        ).timeout(connectTimeout);
+      } else {
+        _socket = await Socket.connect(host, port, timeout: connectTimeout)
+            .timeout(connectTimeout);
+      }
 
       _isConnected = true;
       _nextSequenceId = 1;
@@ -101,7 +114,8 @@ class AegisTransport {
       _sessionCrypto?.dispose();
       _sessionCrypto = null;
 
-      if (transportMaskingKey != null && transportMaskingKey.trim().isNotEmpty) {
+      if (transportMaskingKey != null &&
+          transportMaskingKey.trim().isNotEmpty) {
         _transportMaskingKey =
             Uint8List.fromList(utf8.encode(transportMaskingKey));
       } else {
@@ -196,7 +210,8 @@ class AegisTransport {
   void _listenForMessages() {
     _socketSubscription = _socket.listen(
       (Uint8List data) {
-        _receivePipeline = _receivePipeline.then((_) => _handleIncomingData(data));
+        _receivePipeline =
+            _receivePipeline.then((_) => _handleIncomingData(data));
       },
       onError: (error) {
         AegisLogger.error('Socket error', error);
@@ -321,7 +336,8 @@ class AegisTransport {
     final masked = Uint8List(data.length);
     final keyLen = _transportMaskingKey.length;
     for (var i = 0; i < data.length; i++) {
-      masked[i] = data[i] ^ _transportMaskingKey[(_inboundMaskOffset + i) % keyLen];
+      masked[i] =
+          data[i] ^ _transportMaskingKey[(_inboundMaskOffset + i) % keyLen];
     }
     _inboundMaskOffset += data.length;
     return masked;
@@ -333,7 +349,8 @@ class AegisTransport {
     final masked = Uint8List(data.length);
     final keyLen = _transportMaskingKey.length;
     for (var i = 0; i < data.length; i++) {
-      masked[i] = data[i] ^ _transportMaskingKey[(_outboundMaskOffset + i) % keyLen];
+      masked[i] =
+          data[i] ^ _transportMaskingKey[(_outboundMaskOffset + i) % keyLen];
     }
     _outboundMaskOffset += data.length;
     return masked;
@@ -358,7 +375,30 @@ class AegisTransport {
       return message;
     }
 
-    return sessionCrypto.encryptMessage(message);
+    var preparedMessage = message;
+    final alreadyCompressed =
+        (preparedMessage.flags & ProtocolConstants.flagCompressed) != 0;
+    if (!alreadyCompressed &&
+        preparedMessage.payload.length >
+            ProtocolConstants.compressionThreshold) {
+      final compressed = _brotli.encode(preparedMessage.payload);
+      final compressedBytes =
+          compressed is Uint8List ? compressed : Uint8List.fromList(compressed);
+
+      if (compressedBytes.length < preparedMessage.payload.length) {
+        preparedMessage = Message()
+          ..magic = preparedMessage.magic
+          ..versionMajor = preparedMessage.versionMajor
+          ..versionMinor = preparedMessage.versionMinor
+          ..flags = preparedMessage.flags | ProtocolConstants.flagCompressed
+          ..type = preparedMessage.type
+          ..sequenceId = preparedMessage.sequenceId
+          ..payload = compressedBytes
+          ..payloadLength = compressedBytes.length;
+      }
+    }
+
+    return sessionCrypto.encryptMessage(preparedMessage);
   }
 
   Future<void> _unwrapInboundMessage(Uint8List frame, Message message) async {
@@ -368,7 +408,8 @@ class AegisTransport {
         throw StateError('Encrypted message received before session key setup');
       }
 
-      final headerBytes = Uint8List.sublistView(frame, 0, ProtocolConstants.headerSize);
+      final headerBytes =
+          Uint8List.sublistView(frame, 0, ProtocolConstants.headerSize);
       await sessionCrypto.decryptMessage(message, headerBytes);
     }
 

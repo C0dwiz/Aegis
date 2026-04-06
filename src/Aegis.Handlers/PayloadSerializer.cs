@@ -7,7 +7,7 @@ namespace Aegis.Handlers;
 /// Binary payload serializer based on MessagePack.
 /// Uses ContractlessStandardResolver so no [MessagePackObject] attributes are required.
 /// </summary>
-internal static class PayloadSerializer
+public static class PayloadSerializer
 {
     private static readonly MessagePackSerializerOptions Options =
         MessagePackSerializerOptions.Standard

@@ -137,6 +137,11 @@
                 <span class="cred-value" id="reveal-app-hash" style="font-size:.76rem">—</span>
                 <button class="copy-btn" onclick="copy('reveal-app-hash')" title="Copy">⧉</button>
             </div>
+            <div class="cred-row">
+                <span class="cred-label">server_signing_public_key</span>
+                <span class="cred-value" id="reveal-server-signing-public-key" style="font-size:.72rem">—</span>
+                <button class="copy-btn" onclick="copy('reveal-server-signing-public-key')" title="Copy">⧉</button>
+            </div>
             <div class="modal-actions" style="margin-top:20px">
                 <button class="btn btn-primary" style="width:auto;min-width:140px" onclick="closeRevealModal()">
                     Done — I saved it
@@ -151,10 +156,15 @@
         // ── Guards ────────────────────────────────────────────────────────────
 
         const token = localStorage.getItem('aegis_session_token');
+        const csrfToken = localStorage.getItem('aegis_csrf_token') || '';
         if (!token) window.location.replace('index.html');
 
         function authHeaders() {
-            return { 'Content-Type': 'application/json', 'X-Session-Token': token };
+            return {
+                'Content-Type': 'application/json',
+                'X-Session-Token': token,
+                'X-CSRF-Token': csrfToken,
+            };
         }
 
         // ── Init ────────────────────────────────────────────────────────────
@@ -238,6 +248,7 @@
           <div class="cred-row">
             <span class="cred-label">api_hash</span>
             <span class="cred-value">${escHtml(maskedHash)}</span>
+                        ${a.isActive ? `<button class="copy-btn" onclick="revealAppHash(${a.appId})" title="Reveal api_hash">👁</button>` : ''}
           </div>
 
           ${a.description ? `<p style="font-size:.82rem;color:var(--text-dim);margin:10px 0 0">${escHtml(a.description)}</p>` : ''}
@@ -247,6 +258,29 @@
             ${a.isActive ? `<button class="btn btn-danger" onclick="revokeApp(${a.appId})">Revoke</button>` : ''}
           </div>
         </div>`;
+        }
+
+        async function revealAppHash(appId) {
+            try {
+                const res = await fetch(`${API}/api/apps/${appId}/reveal`, {
+                    method: 'POST',
+                    headers: authHeaders(),
+                });
+
+                if (!res.ok) {
+                    showGlobalAlert('Failed to reveal api_hash.', 'error');
+                    return;
+                }
+
+                const data = await res.json();
+                document.getElementById('reveal-app-id').textContent = data.appId;
+                document.getElementById('reveal-app-hash').textContent = data.appHash;
+                document.getElementById('reveal-server-signing-public-key').textContent =
+                    data.serverHandshakeSigningPublicKeyBase64 || 'not configured';
+                document.getElementById('reveal-modal').classList.add('show');
+            } catch {
+                showGlobalAlert('Network error.', 'error');
+            }
         }
 
         // ── Revoke ────────────────────────────────────────────────────────────
@@ -309,6 +343,8 @@
                     // Show credentials reveal modal
                     document.getElementById('reveal-app-id').textContent = data.appId;
                     document.getElementById('reveal-app-hash').textContent = data.appHash;
+                    document.getElementById('reveal-server-signing-public-key').textContent =
+                        data.serverHandshakeSigningPublicKeyBase64 || 'not configured';
                     document.getElementById('reveal-modal').classList.add('show');
                     await loadApps();
                 } else {
@@ -335,6 +371,7 @@
         function logout() {
             fetch(`${API}/api/auth/logout`, { method: 'POST', headers: authHeaders() }).catch(() => { });
             localStorage.removeItem('aegis_session_token');
+            localStorage.removeItem('aegis_csrf_token');
             localStorage.removeItem('aegis_user_id');
             localStorage.removeItem('aegis_username');
             window.location.replace('index.html');

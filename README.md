@@ -24,6 +24,79 @@
 - **Обязательные app credentials** (`api_id` / `api_hash`) для first-party клиентов на этапе handshake
 - **Подписанный server handshake response** через отдельный ECDSA signing key; это не замена `api_id` / `api_hash`, а дополнительная проверка подлинности сервера
 
+### TOTP Key Management
+
+Для 2FA `TotpSecret` хранится в зашифрованном виде при заданном ключе `Security:TotpEncryptionKey`.
+
+- Формат ключа: Base64, ровно 32 байта после декодирования.
+- `Aegis.Server` читает ключ через префикс окружения `AEGIS_`: `AEGIS_Security__TotpEncryptionKey`.
+- `Aegis.BotApi` читает ключ как `Security__TotpEncryptionKey`.
+
+Быстрая генерация ключа:
+
+```bash
+./tools/generate_totp_key.sh
+```
+
+Быстрый старт через `.env`:
+
+```bash
+cp .env.example .env
+# заполните в .env минимум: POSTGRES_PASSWORD и AEGIS_Security__TotpEncryptionKey
+```
+
+One-off ре-шифрование старых plaintext `TotpSecret`:
+
+```bash
+export AEGIS_Security__TotpEncryptionKey="<BASE64_32_BYTE_KEY>"
+./tools/reencrypt_totp_secrets.sh
+```
+
+Альтернатива через Docker Compose (one-off контейнер):
+
+```bash
+export AEGIS_Security__TotpEncryptionKey="<BASE64_32_BYTE_KEY>"
+docker compose --profile migration up --build aegis-reencrypt-totp
+```
+
+Запуск стеков через compose:
+
+```bash
+# full (с MinIO и Elasticsearch)
+docker compose --profile full up -d --build
+
+# core (без MinIO и Elasticsearch)
+AEGIS_MINIO_ENABLED=false AEGIS_ELASTICSEARCH_ENABLED=false docker compose up -d --build postgres redis aegis-server aegis-botapi
+```
+
+Скрипт выполняет preflight:
+
+- валидирует, что ключ корректный Base64 и декодируется в 32 байта;
+- проверяет доступность PostgreSQL и Redis по TCP;
+- для one-off по умолчанию отключает проверки MinIO/Elasticsearch (`AEGIS_Minio__Enabled=false`, `AEGIS_Elasticsearch__Enabled=false`), если вы явно не переопределили их через env.
+
+Примечание: в production startup validation требует корректный `Security:TotpEncryptionKey`.
+
+### Операционный чеклист (prod/stage)
+
+1. Подготовить ключ и переменные окружения.
+  - `AEGIS_Security__TotpEncryptionKey` должен быть Base64 и декодироваться ровно в 32 байта.
+  - Убедиться, что заданы `AEGIS_DB_CONNECTION_STRING` и `AEGIS_REDIS_CONNECTION_STRING`.
+2. Сделать бэкап перед миграцией.
+  - Снять snapshot БД и, при необходимости, backup Redis.
+3. Проверить доступность зависимостей.
+  - PostgreSQL и Redis должны быть доступны из runtime окружения.
+4. Выполнить one-off миграцию.
+  - Локально/на VM: `./tools/reencrypt_totp_secrets.sh`
+  - Через compose: `docker compose --profile migration up --build aegis-reencrypt-totp`
+5. Проверить лог результата.
+  - Ожидается сообщение о количестве пере-шифрованных записей `TotpSecret`.
+6. Запустить штатные сервисы.
+  - Full stack (с MinIO/Elasticsearch): `docker compose --profile full up -d --build`
+  - Core stack (без MinIO/Elasticsearch): `AEGIS_MINIO_ENABLED=false AEGIS_ELASTICSEARCH_ENABLED=false docker compose up -d --build postgres redis aegis-server aegis-botapi`
+7. Выполнить пост-проверки.
+  - Проверить логин пользователей с 2FA, код восстановления, и startup без validation ошибок по ключу.
+
 ## Smoke Test
 
 Для быстрой проверки TCP/TLS handshake, регистрации, аутентификации и базовых сообщений можно использовать `smoke_test.py`.
