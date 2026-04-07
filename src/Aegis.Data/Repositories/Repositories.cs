@@ -210,9 +210,9 @@ public class UserRepository : Repository<User>, IUserRepository
 
     public async Task<User?> GetByUsernameAsync(string username)
     {
-        var normalized = (username ?? string.Empty).Trim();
+        var normalized = (username ?? string.Empty).Trim().ToLowerInvariant();
         return await _context.Users
-            .FirstOrDefaultAsync(u => u.Username == normalized);
+            .FirstOrDefaultAsync(u => u.Username.ToLower() == normalized);
     }
 
     public async Task<User?> GetByEmailAsync(string email)
@@ -1149,7 +1149,6 @@ public class PrivateChatRepository : Repository<PrivateChat>, IPrivateChatReposi
         return await _context.PrivateChats
             .Include(pc => pc.User1)
             .Include(pc => pc.User2)
-            .Include(pc => pc.LastMessage)
             .FirstOrDefaultAsync(pc =>
                 (pc.User1Id == userId1 && pc.User2Id == userId2) ||
                 (pc.User1Id == userId2 && pc.User2Id == userId1));
@@ -1161,7 +1160,6 @@ public class PrivateChatRepository : Repository<PrivateChat>, IPrivateChatReposi
             .AsNoTracking()
             .Include(pc => pc.User1)
             .Include(pc => pc.User2)
-            .Include(pc => pc.LastMessage)
             .Where(pc => (pc.User1Id == userId || pc.User2Id == userId) && pc.IsActive)
             .OrderByDescending(pc => pc.LastActivityAt)
             .ToListAsync();

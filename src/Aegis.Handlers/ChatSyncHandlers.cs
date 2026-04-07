@@ -188,6 +188,11 @@ public class ChatListHandler : IMessageHandler
             {
                 var peer = chat.User1Id == session.UserId ? chat.User2 : chat.User1;
                 var peerId = chat.User1Id == session.UserId ? chat.User2Id : chat.User1Id;
+                var latestMessage = (await _messageRepository.GetConversationBeforeAsync(
+                    session.UserId,
+                    peerId,
+                    beforeMessageId: null,
+                    limit: 1)).FirstOrDefault();
 
                 chatItems.Add(new ChatListItem(
                     ChatId: chat.Id,
@@ -195,8 +200,8 @@ public class ChatListHandler : IMessageHandler
                     Title: peer?.Username ?? $"user-{peerId}",
                     AvatarUrl: peer?.AvatarUrl,
                     PresenceStatus: _presenceResolver.Resolve(peerId, peer?.LastSeenAt),
-                    LastMessage: chat.LastMessage?.Content,
-                    LastMessageAt: chat.LastMessage?.CreatedAt ?? chat.LastActivityAt,
+                    LastMessage: latestMessage?.Content,
+                    LastMessageAt: latestMessage?.CreatedAt ?? chat.LastActivityAt,
                     UnreadCount: unreadBySender.TryGetValue(peerId, out var unread) ? unread : 0,
                     PeerUserId: peerId,
                     ChannelId: null));

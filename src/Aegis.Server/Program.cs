@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
 using System.Net.Security;
@@ -202,6 +203,8 @@ public static class Program
                         : databaseOptions.ConnectionString;
 
                     options.UseNpgsql(connectionString);
+                    options.ConfigureWarnings(warnings =>
+                        warnings.Log(RelationalEventId.PendingModelChangesWarning));
                 });
 
                 // Register repositories

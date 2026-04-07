@@ -172,10 +172,6 @@ public class AuthHandler : IMessageHandler
 
             if (!result.Success || result.User == null || result.Session == null)
             {
-<<<<<<< HEAD
-                _logger.LogWarning("Authentication failed for user {Username} from connection {ConnectionId}",
-                    authRequest.Username, context.ConnectionId);
-=======
                 _logger.LogWarning(
                     "Authentication failed for user {Username} from connection {ConnectionId}; reason={FailureReason}; userResolved={UserResolved}; emailVerified={IsEmailVerified}; twoFactorEnabled={TwoFactorEnabled}",
                     authRequest.Username,
@@ -184,7 +180,6 @@ public class AuthHandler : IMessageHandler
                     result.User != null,
                     result.User?.IsEmailVerified,
                     result.User?.TwoFactorEnabled);
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
                 var error = result.FailureReason switch
                 {
                     AuthFailureReason.EmailNotVerified => "Email is not verified",

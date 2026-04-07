@@ -486,7 +486,6 @@ public class PrivateChat
     // Navigation properties
     public User? User1 { get; set; }
     public User? User2 { get; set; }
-    public Message? LastMessage { get; set; }
 }
 
 /// <summary>

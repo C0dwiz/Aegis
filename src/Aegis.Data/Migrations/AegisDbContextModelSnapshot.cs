@@ -859,6 +859,59 @@ namespace Aegis.Data.Migrations
                     b.ToTable("PrivateChats");
                 });
 
+            modelBuilder.Entity("Aegis.Data.Entities.SignalChainState", b =>
+                {
+                    b.Property<decimal>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(20,0)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("LastMessageKeyHash")
+                        .HasColumnType("text");
+
+                    b.Property<uint>("NextReceivingMessageNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<uint>("NextSendingMessageNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("OwnerUserId")
+                        .HasColumnType("numeric(20,0)");
+
+                    b.Property<decimal>("PeerUserId")
+                        .HasColumnType("numeric(20,0)");
+
+                    b.Property<string>("ReceivingChainKeyBase64")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("RootKeyBase64")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SendingChainKeyBase64")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerUserId", "PeerUserId")
+                        .IsUnique();
+
+                    b.HasIndex("UpdatedAt");
+
+                    b.ToTable("SignalChainStates");
+                });
+
             modelBuilder.Entity("Aegis.Data.Entities.Session", b =>
                 {
                     b.Property<decimal>("Id")
@@ -1301,11 +1354,6 @@ namespace Aegis.Data.Migrations
 
             modelBuilder.Entity("Aegis.Data.Entities.PrivateChat", b =>
                 {
-                    b.HasOne("Aegis.Data.Entities.Message", "LastMessage")
-                        .WithMany()
-                        .HasForeignKey("LastMessageId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("Aegis.Data.Entities.User", "User1")
                         .WithMany("PrivateChats1")
                         .HasForeignKey("User1Id")
@@ -1317,8 +1365,6 @@ namespace Aegis.Data.Migrations
                         .HasForeignKey("User2Id")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.Navigation("LastMessage");
 
                     b.Navigation("User1");
 

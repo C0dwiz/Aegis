@@ -169,30 +169,20 @@ public class UserAuthenticationService : IUserAuthenticationService
     private readonly ISessionRepository _sessionRepository;
     private readonly ICryptoProvider _cryptoProvider;
     private readonly IUserTwoFactorService _twoFactorService;
-<<<<<<< HEAD
-=======
     private readonly ILogger<UserAuthenticationService> _logger;
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
 
     public UserAuthenticationService(
         IUserRepository userRepository,
         ISessionRepository sessionRepository,
         ICryptoProvider cryptoProvider,
-<<<<<<< HEAD
-        IUserTwoFactorService twoFactorService)
-=======
         IUserTwoFactorService twoFactorService,
         ILogger<UserAuthenticationService> logger)
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
     {
         _userRepository = userRepository;
         _sessionRepository = sessionRepository;
         _cryptoProvider = cryptoProvider;
         _twoFactorService = twoFactorService;
-<<<<<<< HEAD
-=======
         _logger = logger;
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
     }
 
     public async Task<(User User, Session Session)?> AuthenticateUserAsync(string username, string password, string clientInfo, string? ipAddress = null)
@@ -220,41 +210,32 @@ public class UserAuthenticationService : IUserAuthenticationService
         {
             // Constant-time: prevent username enumeration via timing side-channel
             await _cryptoProvider.VerifyPasswordAsync(password, "$2a$12$C6UzMDM.H6dfI/f/IKcEe.OY4R2k1h5ywQJ7M4U6v0RvrRZtGJPDK");
-<<<<<<< HEAD
-=======
             _logger.LogWarning(
                 "Authentication rejected: username '{Username}' not found or inactive (ip={IpAddress}, client={ClientInfo})",
                 normalized,
                 ipAddress,
                 clientInfo);
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
             return new AuthAttemptResult(false, AuthFailureReason.InvalidCredentials, null, null);
         }
 
         var isValidPassword = await _cryptoProvider.VerifyPasswordAsync(password, user.PasswordHash);
         if (!isValidPassword)
         {
-<<<<<<< HEAD
-=======
             _logger.LogWarning(
                 "Authentication rejected: invalid password for user {UserId} ({Username}) (ip={IpAddress}, client={ClientInfo})",
                 user.Id,
                 user.Username,
                 ipAddress,
                 clientInfo);
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
             return new AuthAttemptResult(false, AuthFailureReason.InvalidCredentials, null, null);
         }
 
         if (!user.IsEmailVerified)
         {
-<<<<<<< HEAD
-=======
             _logger.LogWarning(
                 "Authentication rejected: email not verified for user {UserId} ({Username})",
                 user.Id,
                 user.Username);
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
             return new AuthAttemptResult(false, AuthFailureReason.EmailNotVerified, user, null);
         }
 
@@ -263,34 +244,26 @@ public class UserAuthenticationService : IUserAuthenticationService
             var hasSecondFactorInput = !string.IsNullOrWhiteSpace(twoFactorCode) || !string.IsNullOrWhiteSpace(recoveryPhrase);
             if (!hasSecondFactorInput)
             {
-<<<<<<< HEAD
-=======
                 _logger.LogWarning(
                     "Authentication rejected: second factor required for user {UserId} ({Username})",
                     user.Id,
                     user.Username);
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
                 return new AuthAttemptResult(false, AuthFailureReason.TwoFactorRequired, user, null);
             }
 
             var secondFactorOk = await _twoFactorService.ValidateAsync(user, twoFactorCode, recoveryPhrase);
             if (!secondFactorOk)
             {
-<<<<<<< HEAD
-=======
                 _logger.LogWarning(
                     "Authentication rejected: invalid second factor for user {UserId} ({Username})",
                     user.Id,
                     user.Username);
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
                 return new AuthAttemptResult(false, AuthFailureReason.TwoFactorInvalid, user, null);
             }
         }
 
         var (_, session) = await CreateSessionAsync(user, clientInfo, ipAddress);
 
-<<<<<<< HEAD
-=======
         _logger.LogInformation(
             "Authentication succeeded for user {UserId} ({Username}) (ip={IpAddress}, client={ClientInfo})",
             user.Id,
@@ -298,7 +271,6 @@ public class UserAuthenticationService : IUserAuthenticationService
             ipAddress,
             clientInfo);
 
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
         return new AuthAttemptResult(true, AuthFailureReason.None, user, session);
     }
 

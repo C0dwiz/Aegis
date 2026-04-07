@@ -6,6 +6,7 @@ WORKDIR /src
 COPY ["src/Aegis.Common/Aegis.Common.csproj", "src/Aegis.Common/"]
 COPY ["src/Aegis.Crypto/Aegis.Crypto.csproj", "src/Aegis.Crypto/"]
 COPY ["src/Aegis.Data/Aegis.Data.csproj", "src/Aegis.Data/"]
+COPY ["src/Aegis.DomainRules/Aegis.DomainRules.fsproj", "src/Aegis.DomainRules/"]
 COPY ["src/Aegis.Handlers/Aegis.Handlers.csproj", "src/Aegis.Handlers/"]
 COPY ["src/Aegis.Protocol/Aegis.Protocol.csproj", "src/Aegis.Protocol/"]
 COPY ["src/Aegis.Transport/Aegis.Transport.csproj", "src/Aegis.Transport/"]
