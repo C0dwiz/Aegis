@@ -3,6 +3,7 @@ using System;
 using Aegis.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Aegis.Data.Migrations
 {
     [DbContext(typeof(AegisDbContext))]
-    partial class AegisDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260407083215_MakeSessionExpiresAtNullable")]
+    partial class MakeSessionExpiresAtNullable
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -910,9 +913,6 @@ namespace Aegis.Data.Migrations
                     b.HasIndex("ConnectionId", "IsActive");
 
                     b.HasIndex("UserId", "IsActive");
-
-                    b.HasIndex("UserId", "IsActive", "LastActivityAt")
-                        .HasDatabaseName("IX_Sessions_UserId_IsActive_LastActivityAt");
 
                     b.ToTable("Sessions");
                 });

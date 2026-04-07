@@ -6,7 +6,7 @@ namespace Aegis.Common;
 /// <summary>
 /// Manages acknowledgments and retransmissions for reliable message delivery
 /// </summary>
-public class AcknowledgmentManager
+public class AcknowledgmentManager : IDisposable
 {
     private readonly ConcurrentDictionary<ulong, ConcurrentDictionary<ulong, PendingMessage>> _pendingByConnection;
     private readonly ConcurrentDictionary<ulong, DateTime> _lastAckTime;
@@ -131,6 +131,7 @@ public class AcknowledgmentManager
             return;
         }
 
+        _lastAckTime.TryRemove(connectionId, out _);
         _logger.Debug($"Removed {removed.Count} pending messages for connection {connectionId}");
     }
 

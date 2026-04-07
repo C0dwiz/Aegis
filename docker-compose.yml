@@ -116,6 +116,7 @@ services:
       AEGIS_ProtocolSecurity__HandshakeSigningPrivateKeyBase64: ${AEGIS_HANDSHAKE_SIGNING_PRIVATE_KEY_BASE64:-}
     ports:
       - "8888:8888"
+      - "9091:9091"
     volumes:
       - aegis_media_data:/data/media
       - aegis_zonetree_data:/data/zonetree
@@ -190,6 +191,46 @@ services:
       retries: 12
       start_period: 15s
 
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: aegis-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - aegis_prometheus_data:/prometheus
+    depends_on:
+      aegis-server:
+        condition: service_healthy
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: aegis-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-aegis_grafana}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - aegis_grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring
+
 volumes:
   aegis_pg_data:
   aegis_redis_data:
@@ -197,3 +238,5 @@ volumes:
   aegis_zonetree_data:
   aegis_minio_data:
   aegis_es_data:
+  aegis_prometheus_data:
+  aegis_grafana_data:

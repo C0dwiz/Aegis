@@ -11,6 +11,7 @@ using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Serilog;
+using Prometheus;
 using Aegis.Common;
 using Aegis.Common.Configuration;
 using Aegis.Common.Logging;
@@ -160,6 +161,10 @@ public static class Program
                     context.Configuration.GetSection(IdGeneratorOptions.SectionName));
                 services.Configure<ChannelService.ChannelLinkOptions>(
                     context.Configuration.GetSection(ChannelService.ChannelLinkOptions.SectionName));
+                services.Configure<OfflineMessageOptions>(
+                    context.Configuration.GetSection(OfflineMessageOptions.SectionName));
+                services.Configure<SessionOptions>(
+                    context.Configuration.GetSection(SessionOptions.SectionName));
 
                 // Register distributed ID generator as Scoped to ensure proper initialization
                 // with node ID from configuration
@@ -342,7 +347,6 @@ public static class Program
                 });
 
                 // Register handlers as scoped concrete types to resolve only the needed one per message
-                                services.AddScoped<MessageReadReceiptHandler>();
                 services.AddScoped<HandshakeHandler>();
                 services.AddScoped<AuthHandler>();
                 services.AddScoped<PingHandler>();
@@ -397,12 +401,16 @@ public static class Program
                 // TODO-012/017/018
                 services.AddScoped<UserTypingHandler>();
                 services.AddScoped<FileTransferHandler>();
+                // Session management (multi-device)
+                services.AddScoped<SessionListHandler>();
+                services.AddScoped<SessionRevokeHandler>();
                 services.AddScoped<MessageRouter>();
 
                 // Register background services
                 services.AddHostedService<Aegis.Server.Services.SessionCleanupBackgroundService>();
                 services.AddHostedService<Aegis.Server.Services.ProtocolSecurityCleanupBackgroundService>();
                 services.AddHostedService<Aegis.Server.Services.OfflineMessageService>();
+                services.AddHostedService<Aegis.Server.Services.SessionActivityUpdaterService>();
                 services.AddHostedService<AegisMessengerService>();
             })
             .UseSerilog((context, loggerConfig) =>
@@ -478,6 +486,19 @@ public class AegisMessengerService : BackgroundService
     {
         _logger.LogInformation("Starting Aegis Messenger Server on port {Port}", _serverOptions.Port);
 
+        // Start standalone Prometheus /metrics HTTP endpoint
+        var metricsPort = _serverOptions.MetricsPort > 0 ? _serverOptions.MetricsPort : 9091;
+        var metricsServer = new MetricServer(port: metricsPort);
+        try
+        {
+            metricsServer.Start();
+            _logger.LogInformation("Prometheus metrics available at http://+:{MetricsPort}/metrics", metricsPort);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to start Prometheus metrics server on port {MetricsPort}", metricsPort);
+        }
+
         var localNodeId = $"{Environment.MachineName}:{_serverOptions.Port}";
         _connectionBalancer.ConfigureLocalNode(localNodeId);
 
@@ -497,6 +518,10 @@ public class AegisMessengerService : BackgroundService
             _logger.LogError(ex, "Fatal error starting server");
             throw;
         }
+        finally
+        {
+            await metricsServer.StopAsync();
+        }
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
@@ -515,6 +540,8 @@ public class AegisMessengerService : BackgroundService
         }
         _connectionBalancer.RecordLocalConnectionAccepted();
         _healthCheckService.RecordConnectionAccepted();
+        AegisMetrics.ConnectionsTotal.Inc();
+        AegisMetrics.ActiveConnections.Inc();
     }
 
     private void OnClientDisconnected(ConnectionContext context)
@@ -522,6 +549,7 @@ public class AegisMessengerService : BackgroundService
         var authenticated = _sessionManager.GetAuthenticatedSession(context.ConnectionId);
         if (authenticated != null)
         {
+            AegisMetrics.AuthenticatedSessions.Dec();
             _ = PersistOfflinePresenceAsync(authenticated.UserId, context.ConnectionId);
         }
 
@@ -530,6 +558,7 @@ public class AegisMessengerService : BackgroundService
         _messageDeduplicator.ClearConnection(context.ConnectionId);
         _sessionManager.RemoveSession(context.ConnectionId);
         _healthCheckService.RecordConnectionClosed();
+        AegisMetrics.ActiveConnections.Dec();
     }
 
     private async Task HealthLoggingLoopAsync(CancellationToken cancellationToken)
@@ -540,10 +569,14 @@ public class AegisMessengerService : BackgroundService
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
                 _healthCheckService.LogStatus();
+                var cpu = GetCpuLoadPercent();
+                var mem = GetMemoryLoadPercent();
                 _connectionBalancer.UpdateLocalHealth(
                     isHealthy: true,
-                    cpuLoadPercent: GetCpuLoadPercent(),
-                    memoryLoadPercent: GetMemoryLoadPercent());
+                    cpuLoadPercent: cpu,
+                    memoryLoadPercent: mem);
+                AegisMetrics.CpuLoadPercent.Set(cpu);
+                AegisMetrics.MemoryLoadPercent.Set(mem);
             }
         }
         catch (OperationCanceledException)
@@ -610,6 +643,8 @@ public class AegisMessengerService : BackgroundService
             if (!isHandshake && !_rateLimiter.CanSendMessage(context.ConnectionId))
             {
                 _logger.LogWarning("Rate limit exceeded for connection {ConnectionId} on {MessageType}", context.ConnectionId, message.Type);
+                AegisMetrics.RateLimitHitsTotal.WithLabels("message").Inc();
+                AegisMetrics.MessagesDroppedTotal.WithLabels("rate_limit").Inc();
                 return;
             }
 
@@ -672,21 +707,29 @@ public class AegisMessengerService : BackgroundService
                     message.SequenceId,
                     context.ConnectionId,
                     replayReason);
+                AegisMetrics.MessagesDroppedTotal.WithLabels("replay").Inc();
                 return;
             }
 
             _sessionManager.UpdateActivity(context.ConnectionId);
             _healthCheckService.RecordMessageProcessed();
 
+            var msgTypeName = message.Type.ToString();
+            AegisMetrics.MessagesReceivedTotal.WithLabels(msgTypeName).Inc();
+
             // Create a scope per message so scoped services (DB, repos, handlers) are properly managed
             using var scope = _scopeFactory.CreateScope();
             var router = scope.ServiceProvider.GetRequiredService<MessageRouter>();
-            await router.RouteAsync(context, message);
+            using (AegisMetrics.MessageProcessingDuration.WithLabels(msgTypeName).NewTimer())
+            {
+                await router.RouteAsync(context, message);
+            }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing message from connection {ConnectionId}",
                 context.ConnectionId);
+            AegisMetrics.MessagesDroppedTotal.WithLabels("exception").Inc();
         }
     }
 

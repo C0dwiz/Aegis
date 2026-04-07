@@ -372,10 +372,8 @@ public class PrivateChatHistoryHandler : IMessageHandler
 
     private async Task SendReadReceiptEventToPeerAsync(ulong peerUserId, ulong readerUserId, IReadOnlyList<ulong> messageIds)
     {
-        if (!_sessionManager.TryGetConnectionIdByUserId(peerUserId, out var peerConnectionId))
-        {
-            return;
-        }
+        var peerConnectionIds = _sessionManager.GetConnectionIdsByUserId(peerUserId);
+        if (peerConnectionIds.Count == 0) return;
 
         var payload = PayloadSerializer.Serialize(new MessageStatusEventPayload(
             Success: true,
@@ -384,11 +382,14 @@ public class PrivateChatHistoryHandler : IMessageHandler
             ReadBy: readerUserId,
             ProcessedAt: DateTime.UtcNow));
 
-        await _messageSender.SendProtocolMessageAsync(
-            peerConnectionId,
-            (ushort)MessageType.MessageStatusEvent,
-            0,
-            payload);
+        foreach (var peerConnectionId in peerConnectionIds)
+        {
+            await _messageSender.SendProtocolMessageAsync(
+                peerConnectionId,
+                (ushort)MessageType.MessageStatusEvent,
+                0,
+                payload);
+        }
     }
 }
 

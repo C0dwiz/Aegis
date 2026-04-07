@@ -4,6 +4,7 @@ using MessagePack.Resolvers;
 using Aegis.Data.Entities;
 using Aegis.Data.Repositories;
 using Aegis.Common;
+using Aegis.Common.Configuration;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -169,30 +170,29 @@ public class UserAuthenticationService : IUserAuthenticationService
     private readonly ISessionRepository _sessionRepository;
     private readonly ICryptoProvider _cryptoProvider;
     private readonly IUserTwoFactorService _twoFactorService;
-<<<<<<< HEAD
-=======
     private readonly ILogger<UserAuthenticationService> _logger;
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
+    private readonly SessionOptions _sessionOptions;
+    private readonly SessionManager? _sessionManager;
+    private readonly IMessageSender? _messageSender;
 
     public UserAuthenticationService(
         IUserRepository userRepository,
         ISessionRepository sessionRepository,
         ICryptoProvider cryptoProvider,
-<<<<<<< HEAD
-        IUserTwoFactorService twoFactorService)
-=======
         IUserTwoFactorService twoFactorService,
-        ILogger<UserAuthenticationService> logger)
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
+        ILogger<UserAuthenticationService> logger,
+        IOptions<SessionOptions>? sessionOptions = null,
+        SessionManager? sessionManager = null,
+        IMessageSender? messageSender = null)
     {
         _userRepository = userRepository;
         _sessionRepository = sessionRepository;
         _cryptoProvider = cryptoProvider;
         _twoFactorService = twoFactorService;
-<<<<<<< HEAD
-=======
         _logger = logger;
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
+        _sessionOptions = sessionOptions?.Value ?? new SessionOptions();
+        _sessionManager = sessionManager;
+        _messageSender = messageSender;
     }
 
     public async Task<(User User, Session Session)?> AuthenticateUserAsync(string username, string password, string clientInfo, string? ipAddress = null)
@@ -220,41 +220,32 @@ public class UserAuthenticationService : IUserAuthenticationService
         {
             // Constant-time: prevent username enumeration via timing side-channel
             await _cryptoProvider.VerifyPasswordAsync(password, "$2a$12$C6UzMDM.H6dfI/f/IKcEe.OY4R2k1h5ywQJ7M4U6v0RvrRZtGJPDK");
-<<<<<<< HEAD
-=======
             _logger.LogWarning(
                 "Authentication rejected: username '{Username}' not found or inactive (ip={IpAddress}, client={ClientInfo})",
                 normalized,
                 ipAddress,
                 clientInfo);
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
             return new AuthAttemptResult(false, AuthFailureReason.InvalidCredentials, null, null);
         }
 
         var isValidPassword = await _cryptoProvider.VerifyPasswordAsync(password, user.PasswordHash);
         if (!isValidPassword)
         {
-<<<<<<< HEAD
-=======
             _logger.LogWarning(
                 "Authentication rejected: invalid password for user {UserId} ({Username}) (ip={IpAddress}, client={ClientInfo})",
                 user.Id,
                 user.Username,
                 ipAddress,
                 clientInfo);
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
             return new AuthAttemptResult(false, AuthFailureReason.InvalidCredentials, null, null);
         }
 
         if (!user.IsEmailVerified)
         {
-<<<<<<< HEAD
-=======
             _logger.LogWarning(
                 "Authentication rejected: email not verified for user {UserId} ({Username})",
                 user.Id,
                 user.Username);
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
             return new AuthAttemptResult(false, AuthFailureReason.EmailNotVerified, user, null);
         }
 
@@ -263,34 +254,26 @@ public class UserAuthenticationService : IUserAuthenticationService
             var hasSecondFactorInput = !string.IsNullOrWhiteSpace(twoFactorCode) || !string.IsNullOrWhiteSpace(recoveryPhrase);
             if (!hasSecondFactorInput)
             {
-<<<<<<< HEAD
-=======
                 _logger.LogWarning(
                     "Authentication rejected: second factor required for user {UserId} ({Username})",
                     user.Id,
                     user.Username);
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
                 return new AuthAttemptResult(false, AuthFailureReason.TwoFactorRequired, user, null);
             }
 
             var secondFactorOk = await _twoFactorService.ValidateAsync(user, twoFactorCode, recoveryPhrase);
             if (!secondFactorOk)
             {
-<<<<<<< HEAD
-=======
                 _logger.LogWarning(
                     "Authentication rejected: invalid second factor for user {UserId} ({Username})",
                     user.Id,
                     user.Username);
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
                 return new AuthAttemptResult(false, AuthFailureReason.TwoFactorInvalid, user, null);
             }
         }
 
         var (_, session) = await CreateSessionAsync(user, clientInfo, ipAddress);
 
-<<<<<<< HEAD
-=======
         _logger.LogInformation(
             "Authentication succeeded for user {UserId} ({Username}) (ip={IpAddress}, client={ClientInfo})",
             user.Id,
@@ -298,7 +281,6 @@ public class UserAuthenticationService : IUserAuthenticationService
             ipAddress,
             clientInfo);
 
->>>>>>> 8976f145f60e9361597af04914c739a8aaae0e38
         return new AuthAttemptResult(true, AuthFailureReason.None, user, session);
     }
 
@@ -307,6 +289,50 @@ public class UserAuthenticationService : IUserAuthenticationService
         if (user == null)
         {
             throw new ArgumentNullException(nameof(user));
+        }
+
+        // Enforce per-user session limit: evict the oldest sessions when over the cap.
+        var maxSessions = _sessionOptions.MaxSessionsPerUser;
+        if (maxSessions > 0)
+        {
+            var toEvict = (await _sessionRepository.GetOldestExcessSessionsAsync(user.Id, maxSessions - 1)).ToList();
+            foreach (var old in toEvict)
+            {
+                old.IsActive = false;
+                await _sessionRepository.UpdateAsync(old);
+                _logger.LogInformation(
+                    "Evicted oldest session {SessionId} (client={ClientInfo}) for user {UserId} to stay within {Max}-session limit",
+                    old.Id, old.ClientInfo, user.Id, maxSessions);
+
+                // Notify the evicted device if it is currently online.
+                if (_sessionManager != null && _messageSender != null && old.ConnectionId != null)
+                {
+                    var allConns = _sessionManager.GetConnectionIdsByUserId(user.Id);
+                    foreach (var connId in allConns)
+                    {
+                        var s = _sessionManager.GetSession(connId);
+                        if (s != null && s.ConnectionId.ToString() == old.ConnectionId)
+                        {
+                            var evictedPayload = MessagePack.MessagePackSerializer.Serialize(
+                                new { Reason = "evicted_session_limit", MaxSessions = maxSessions },
+                                MessagePack.MessagePackSerializerOptions.Standard
+                                    .WithResolver(MessagePack.Resolvers.ContractlessStandardResolver.Instance));
+                            try
+                            {
+                                await _messageSender.SendProtocolMessageAsync(
+                                    connId,
+                                    (ushort)Aegis.Protocol.MessageType.SessionTerminatedEvent,
+                                    0,
+                                    evictedPayload,
+                                    allowUnsigned: false);
+                            }
+                            catch { /* best-effort */ }
+                            _sessionManager.RemoveSession(connId);
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
         var sessionToken = GenerateSessionToken();
@@ -321,7 +347,7 @@ public class UserAuthenticationService : IUserAuthenticationService
             ClientInfo = clientInfo,
             IpAddress = ipAddress,
             CreatedAt = DateTime.UtcNow,
-            ExpiresAt = DateTime.UtcNow.AddDays(30),
+            ExpiresAt = null,  // permanent — never expires
             LastActivityAt = DateTime.UtcNow,
             IsActive = true
         };
@@ -336,7 +362,10 @@ public class UserAuthenticationService : IUserAuthenticationService
     public async Task<Session?> AuthenticateUserByTokenAsync(string token)
     {
         var session = await _sessionRepository.GetByTokenAsync(token);
-        if (session == null || !session.IsActive || session.ExpiresAt < DateTime.UtcNow)
+        // ExpiresAt == null means permanent; otherwise check it hasn't passed.
+        if (session == null || !session.IsActive)
+            return null;
+        if (session.ExpiresAt.HasValue && session.ExpiresAt.Value < DateTime.UtcNow)
             return null;
 
         session.LastActivityAt = DateTime.UtcNow;
@@ -348,7 +377,10 @@ public class UserAuthenticationService : IUserAuthenticationService
     public async Task<bool> ValidateSessionAsync(string token)
     {
         var session = await _sessionRepository.GetByTokenAsync(token);
-        return session != null && session.IsActive && session.ExpiresAt >= DateTime.UtcNow;
+        if (session == null || !session.IsActive)
+            return false;
+        // null ExpiresAt = never expires
+        return !session.ExpiresAt.HasValue || session.ExpiresAt.Value >= DateTime.UtcNow;
     }
 
     public async Task<bool> LogoutAsync(string token)

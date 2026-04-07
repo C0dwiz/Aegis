@@ -80,12 +80,15 @@ public class ServerMessageSender : IMessageSender
             (MessageType)messageType != MessageType.Handshake;
 
         // Compress raw payload before encryption if it exceeds the threshold.
+        // Track the compressed buffer separately so we can zero it after encryption.
         byte flags = (byte)MessageFlags.None;
+        byte[]? compressedBuffer = null;
         if (payload.Length > ProtocolConstants.CompressionThreshold)
         {
             var compressed = CompressBrotli(payload);
             if (compressed.Length < payload.Length)
             {
+                compressedBuffer = compressed;
                 payload = compressed;
                 flags = (byte)(flags | (byte)MessageFlags.Compressed);
             }
@@ -118,8 +121,12 @@ public class ServerMessageSender : IMessageSender
             Buffer.BlockCopy(nonce, 0, encryptedPayload, 0, nonce.Length);
             Buffer.BlockCopy(ciphertextWithTag, 0, encryptedPayload, nonce.Length, ciphertextWithTag.Length);
 
+            CryptographicOperations.ZeroMemory(nonce);
             CryptographicOperations.ZeroMemory(ciphertextWithTag);
             CryptographicOperations.ZeroMemory(aadHeader);
+            // Zero the compressed plaintext copy we allocated; cannot zero the caller's original buffer.
+            if (compressedBuffer != null)
+                CryptographicOperations.ZeroMemory(compressedBuffer);
 
             payload = encryptedPayload;
             flags = (byte)(flags | (byte)MessageFlags.Encrypted);

@@ -129,7 +129,17 @@ public enum MessageType : ushort
     // File transfer (TODO-017/018)
     FileTransfer = 89,
     FileTransferResponse = 90,
-    FileTransferChunk = 91
+    FileTransferChunk = 91,
+
+    // Multi-device session management
+    SessionListRequest = 92,
+    SessionListResponse = 93,
+    SessionRevokeRequest = 94,
+    SessionRevokeResponse = 95,
+
+    // Server-side session lifecycle events (server → client)
+    SessionTerminatedEvent = 96,
+    ReadSyncEvent = 97
 }
 
 /// <summary>

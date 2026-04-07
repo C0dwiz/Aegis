@@ -17,6 +17,7 @@ public class MessageHandler : IMessageHandler
     private readonly IMessageService _messageService;
     private readonly IMessageSender _messageSender;
     private readonly SessionManager _sessionManager;
+    private readonly IRateLimiter? _rateLimiter;
     private readonly ISignalChainStateRepository? _signalChainStateRepository;
     private readonly ILogger _logger;
     private bool _ackSent = false;
@@ -31,13 +32,15 @@ public class MessageHandler : IMessageHandler
         IMessageSender messageSender,
         SessionManager sessionManager,
         ILogger? logger = null,
-        ISignalChainStateRepository? signalChainStateRepository = null)
+        ISignalChainStateRepository? signalChainStateRepository = null,
+        IRateLimiter? rateLimiter = null)
     {
         _antiSpam = antiSpam;
         _messageService = messageService;
         _messageSender = messageSender;
         _sessionManager = sessionManager;
         _signalChainStateRepository = signalChainStateRepository;
+        _rateLimiter = rateLimiter;
         _logger = logger ?? new Aegis.Transport.NullLogger();
     }
 
@@ -47,6 +50,13 @@ public class MessageHandler : IMessageHandler
         if (session == null)
         {
             await SendErrorAsync(context, message.SequenceId, "Not authenticated");
+            return;
+        }
+
+        // Per-user aggregate rate limit: prevents N-device amplification.
+        if (_rateLimiter != null && !_rateLimiter.CanSendMessageByUser(session.UserId))
+        {
+            await SendErrorAsync(context, message.SequenceId, "Rate limit exceeded");
             return;
         }
 
@@ -94,7 +104,8 @@ public class MessageHandler : IMessageHandler
                 normalizedContent,
                 Aegis.Data.Entities.MessageContentType.Text);
 
-            if (_sessionManager.TryGetConnectionIdByUserId(request.RecipientId, out var recipientConnectionId))
+            var recipientConnectionIds = _sessionManager.GetConnectionIdsByUserId(request.RecipientId);
+            if (recipientConnectionIds.Count > 0)
             {
                 var pushPayload = PayloadSerializer.Serialize(new IncomingDirectMessage(
                     saved.Id,
@@ -104,13 +115,17 @@ public class MessageHandler : IMessageHandler
                     saved.CreatedAt,
                     signalInfo));
 
-                await _messageSender.SendProtocolMessageAsync(
-                    recipientConnectionId,
-                    (ushort)Aegis.Protocol.MessageType.PrivateChatMessage,
-                    message.SequenceId,
-                    pushPayload);
+                // Deliver to all active devices of the recipient
+                foreach (var recipientConnectionId in recipientConnectionIds)
+                {
+                    await _messageSender.SendProtocolMessageAsync(
+                        recipientConnectionId,
+                        (ushort)Aegis.Protocol.MessageType.PrivateChatMessage,
+                        message.SequenceId,
+                        pushPayload);
+                }
 
-                _logger.Info($"Message {saved.Id} delivered from user {senderSession.UserId} to user {request.RecipientId}");
+                _logger.Info($"Message {saved.Id} delivered from user {senderSession.UserId} to user {request.RecipientId} ({recipientConnectionIds.Count} device(s))");
             }
             else
             {

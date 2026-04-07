@@ -118,7 +118,8 @@ public class Session
     public string ClientInfo { get; set; } = string.Empty;
     public string? IpAddress { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    public DateTime ExpiresAt { get; set; }
+    /// <summary>Null = session never expires (permanent device session).</summary>
+    public DateTime? ExpiresAt { get; set; }
     public DateTime? LastActivityAt { get; set; }
     public bool IsActive { get; set; } = true;
 

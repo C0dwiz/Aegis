@@ -68,6 +68,9 @@ public class MessageRouter
         // TODO-012/017/018
         [Aegis.Protocol.MessageType.UserTyping] = sp => sp.GetRequiredService<UserTypingHandler>(),
         [Aegis.Protocol.MessageType.FileTransfer] = sp => sp.GetRequiredService<FileTransferHandler>(),
+        // Session management (multi-device)
+        [Aegis.Protocol.MessageType.SessionListRequest] = sp => sp.GetRequiredService<SessionListHandler>(),
+        [Aegis.Protocol.MessageType.SessionRevokeRequest] = sp => sp.GetRequiredService<SessionRevokeHandler>(),
     };
 
     private readonly IServiceProvider? _serviceProvider;

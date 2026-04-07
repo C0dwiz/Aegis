@@ -464,15 +464,25 @@ public interface ISessionRepository : IRepository<Session>
 {
     Task<Session?> GetByTokenAsync(string token);
     Task<IEnumerable<Session>> GetUserActiveSessions(ulong userId);
+    Task<int> GetActiveSessionCountAsync(ulong userId);
     Task<bool> DeleteExpiredSessionsAsync();
     Task<Session?> GetByConnectionIdAsync(string connectionId);
     /// <summary>
-    /// Gets expired sessions in batches for cleanup. Used by SessionCleanupBackgroundService.
+    /// Returns the oldest active sessions for a user beyond <paramref name="keepCount"/>,
+    /// ordered oldest-first. Used to evict excess sessions when the per-user limit is hit.
     /// </summary>
-    /// <param name="cutoffTime">Sessions with ExpiresAt &lt; cutoffTime are considered expired</param>
-    /// <param name="maxResults">Maximum number of results to return per batch (default 1000)</param>
-    /// <param name="cancellationToken">Cancellation token</param>
+    Task<IEnumerable<Session>> GetOldestExcessSessionsAsync(ulong userId, int keepCount);
+    /// <summary>
+    /// Gets sessions with a non-null ExpiresAt that have already expired, in batches.
+    /// Sessions with ExpiresAt = null are permanent and never returned here.
+    /// </summary>
     Task<IEnumerable<Session>> GetExpiredSessionsAsync(DateTime cutoffTime, int maxResults = 1000, CancellationToken cancellationToken = default);
+
+    /// <summary>Marks a single session as inactive. Returns false if the session was not found.</summary>
+    Task<bool> DeactivateSessionAsync(ulong sessionId, ulong ownerUserId);
+
+    /// <summary>Bulk-updates LastActivityAt for a set of sessions to the current UTC time.</summary>
+    Task UpdateLastActivityAsync(IEnumerable<ulong> sessionIds);
 }
 
 public class SessionRepository : Repository<Session>, ISessionRepository
@@ -496,13 +506,32 @@ public class SessionRepository : Repository<Session>, ISessionRepository
         return await _context.Sessions
             .AsNoTracking()
             .Where(s => s.UserId == userId && s.IsActive)
+            .OrderByDescending(s => s.LastActivityAt ?? s.CreatedAt)
+            .ToListAsync();
+    }
+
+    public async Task<int> GetActiveSessionCountAsync(ulong userId)
+    {
+        return await _context.Sessions
+            .CountAsync(s => s.UserId == userId && s.IsActive);
+    }
+
+    public async Task<IEnumerable<Session>> GetOldestExcessSessionsAsync(ulong userId, int keepCount)
+    {
+        // Returns sessions that should be evicted: all active sessions sorted oldest-first,
+        // skipping the newest `keepCount` ones.
+        return await _context.Sessions
+            .Where(s => s.UserId == userId && s.IsActive)
+            .OrderByDescending(s => s.LastActivityAt ?? s.CreatedAt) // newest first
+            .Skip(keepCount)                                          // skip the ones we want to keep
             .ToListAsync();
     }
 
     public async Task<bool> DeleteExpiredSessionsAsync()
     {
+        var now = DateTime.UtcNow;
         var expiredSessions = _context.Sessions
-            .Where(s => s.ExpiresAt < DateTime.UtcNow)
+            .Where(s => s.ExpiresAt != null && s.ExpiresAt < now)
             .ToList();
 
         if (expiredSessions.Count == 0) return false;
@@ -522,12 +551,36 @@ public class SessionRepository : Repository<Session>, ISessionRepository
     public async Task<IEnumerable<Session>> GetExpiredSessionsAsync(
         DateTime cutoffTime, int maxResults = 1000, CancellationToken cancellationToken = default)
     {
+        // Only returns sessions that have an explicit expiry that has passed.
+        // Sessions with ExpiresAt = null are permanent – never included.
         return await _context.Sessions
-            .Where(s => s.ExpiresAt < cutoffTime)
-            .OrderBy(s => s.ExpiresAt)  // Process oldest first
+            .Where(s => s.ExpiresAt != null && s.ExpiresAt < cutoffTime)
+            .OrderBy(s => s.ExpiresAt)
             .Take(maxResults)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
+    }
+
+    public async Task<bool> DeactivateSessionAsync(ulong sessionId, ulong ownerUserId)
+    {
+        var session = await _context.Sessions
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == ownerUserId && s.IsActive);
+        if (session == null) return false;
+
+        session.IsActive = false;
+        await _context.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task UpdateLastActivityAsync(IEnumerable<ulong> sessionIds)
+    {
+        var ids = sessionIds.ToList();
+        if (ids.Count == 0) return;
+
+        var now = DateTime.UtcNow;
+        await _context.Sessions
+            .Where(s => ids.Contains(s.Id))
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.LastActivityAt, now));
     }
 }
 

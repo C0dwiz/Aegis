@@ -89,6 +89,8 @@ public class AegisDbContext : DbContext
             entity.HasIndex(e => new { e.UserId, e.IsActive });
             entity.HasIndex(e => new { e.ConnectionId, e.IsActive });
             entity.HasIndex(e => e.ExpiresAt);
+            entity.HasIndex(e => new { e.UserId, e.IsActive, e.LastActivityAt })
+                .HasDatabaseName("IX_Sessions_UserId_IsActive_LastActivityAt");
             entity.HasOne(e => e.User).WithMany(u => u.Sessions).HasForeignKey(e => e.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql(DefaultTimestampSql);

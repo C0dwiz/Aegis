@@ -182,10 +182,12 @@ public class HandshakeHandler : IMessageHandler
                 signature: signature);
 
             _logger.LogInformation("Handshake completed for connection {ConnectionId}", context.ConnectionId);
+            HandlerMetrics.HandshakesTotal.WithLabels("success").Inc();
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Handshake failed for connection {ConnectionId}", context.ConnectionId);
+            HandlerMetrics.HandshakesTotal.WithLabels("failure").Inc();
             await SendHandshakeResponseAsync(context, message.SequenceId, false, null, "Handshake failed", allowUnsigned: true);
         }
     }

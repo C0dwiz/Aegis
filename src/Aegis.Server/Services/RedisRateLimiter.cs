@@ -116,6 +116,19 @@ internal sealed class RedisRateLimiter : IRateLimiter, IDisposable
         return TryIncrementWithinLimit($"rl:msg:{scope}", TimeSpan.FromSeconds(1), _options.MaxMessagesPerSecond);
     }
 
+    public bool CanSendMessageByUser(ulong userId)
+    {
+        // Always enforce the local per-user gate first.
+        if (!_localLimiter.CanSendMessageByUser(userId))
+            return false;
+
+        if (_db == null)
+            return true;
+
+        // Use a Redis key shared across all server instances for this userId.
+        return TryIncrementWithinLimit($"rl:usermsg:{userId}", TimeSpan.FromSeconds(1), _options.MaxMessagesPerSecond);
+    }
+
     public void RemoveConnection(ulong connectionId)
     {
         _localLimiter.RemoveConnection(connectionId);

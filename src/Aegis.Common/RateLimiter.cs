@@ -8,10 +8,12 @@ namespace Aegis.Common;
 /// <summary>
 /// Rate limiter for protecting against spam and DoS attacks
 /// </summary>
-public class RateLimiter : IRateLimiter
+public class RateLimiter : IRateLimiter, IDisposable
 {
     private readonly ConcurrentDictionary<string, ConnectionRateLimit> _ipRateLimits;
     private readonly ConcurrentDictionary<ulong, MessageRateLimit> _connectionRateLimits;
+    // Per-user combined message rate limit (keyed by userId, not connectionId).
+    private readonly ConcurrentDictionary<ulong, MessageRateLimit> _userRateLimits;
     private readonly ConcurrentDictionary<ulong, string> _connectionIpMap;
     private readonly RateLimitOptions _options;
     private readonly ILogger _logger;
@@ -21,6 +23,7 @@ public class RateLimiter : IRateLimiter
     {
         _ipRateLimits = new ConcurrentDictionary<string, ConnectionRateLimit>();
         _connectionRateLimits = new ConcurrentDictionary<ulong, MessageRateLimit>();
+        _userRateLimits = new ConcurrentDictionary<ulong, MessageRateLimit>();
         _connectionIpMap = new ConcurrentDictionary<ulong, string>();
         _options = options;
         _logger = logger ?? new NullLogger();
@@ -52,7 +55,6 @@ public class RateLimiter : IRateLimiter
             }
 
             limit.ConnectionCount++;
-            limit.LastReset = now;
             return true;
         }
     }
@@ -77,7 +79,6 @@ public class RateLimiter : IRateLimiter
             lock (limit.Sync)
             {
                 limit.ConnectionCount = Math.Max(0, limit.ConnectionCount - 1);
-                limit.LastReset = DateTime.UtcNow;
             }
         }
     }
@@ -145,6 +146,34 @@ public class RateLimiter : IRateLimiter
         _connectionIpMap.TryRemove(connectionId, out _);
     }
 
+    /// <summary>
+    /// Shared per-user message rate limit.  Uses the same MaxMessagesPerSecond threshold
+    /// as the per-connection limit but applied to the combined traffic from all devices.
+    /// </summary>
+    public bool CanSendMessageByUser(ulong userId)
+    {
+        var now = DateTime.UtcNow;
+        var limit = _userRateLimits.GetOrAdd(userId, _ => new MessageRateLimit { LastReset = now, LastMessageReset = now });
+
+        lock (limit.Sync)
+        {
+            if (now - limit.LastMessageReset > TimeSpan.FromSeconds(1))
+            {
+                limit.MessageCount = 0;
+                limit.LastMessageReset = now;
+            }
+
+            if (limit.MessageCount >= _options.MaxMessagesPerSecond)
+            {
+                _logger.Warning($"User {userId} rate-limited at aggregate device level ({_options.MaxMessagesPerSecond} msg/s)");
+                return false;
+            }
+
+            limit.MessageCount++;
+            return true;
+        }
+    }
+
     private void CleanupExpiredEntries(object? state)
     {
         var now = DateTime.UtcNow;
@@ -157,9 +186,16 @@ public class RateLimiter : IRateLimiter
             .ToList();
 
         foreach (var connId in toRemoveConnections)
-        {
             _connectionRateLimits.TryRemove(connId, out _);
-        }
+
+        // Cleanup per-user rate limits
+        var toRemoveUsers = _userRateLimits
+            .Where(kvp => now - kvp.Value.LastMessageReset > maxAge)
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var uid in toRemoveUsers)
+            _userRateLimits.TryRemove(uid, out _);
 
         // Cleanup IP rate limits (older than 1 hour with no activity)
         var toRemoveIps = _ipRateLimits
@@ -168,13 +204,11 @@ public class RateLimiter : IRateLimiter
             .ToList();
 
         foreach (var ip in toRemoveIps)
-        {
             _ipRateLimits.TryRemove(ip, out _);
-        }
 
-        if (toRemoveConnections.Count > 0 || toRemoveIps.Count > 0)
+        if (toRemoveConnections.Count > 0 || toRemoveIps.Count > 0 || toRemoveUsers.Count > 0)
         {
-            _logger.Info($"Cleaned up {toRemoveConnections.Count} connection limits and {toRemoveIps.Count} IP limits");
+            _logger.Info($"Cleaned up {toRemoveConnections.Count} connection limits, {toRemoveUsers.Count} user limits and {toRemoveIps.Count} IP limits");
         }
     }
 
@@ -194,9 +228,6 @@ internal class ConnectionRateLimit
     public DateTime LastReset { get; set; } = DateTime.UtcNow;
 }
 
-/// <summary>
-/// Tracks rate limit info per connection
-/// </summary>
 internal class MessageRateLimit
 {
     public object Sync { get; } = new();

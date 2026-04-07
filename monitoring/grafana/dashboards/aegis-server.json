@@ -1,0 +1,107 @@
+{
+  "title": "Aegis Messenger Server",
+  "uid": "aegis-server",
+  "version": 1,
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat",
+      "title": "Active Connections",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "targets": [{ "expr": "aegis_active_connections", "legendFormat": "connections" }],
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 2, "type": "stat",
+      "title": "Authenticated Sessions",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "targets": [{ "expr": "aegis_authenticated_sessions", "legendFormat": "sessions" }],
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3, "type": "stat",
+      "title": "Messages/sec",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "targets": [{ "expr": "sum(rate(aegis_messages_received_total[1m]))", "legendFormat": "msg/s" }],
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4, "type": "stat",
+      "title": "Auth Success Rate",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "targets": [{
+        "expr": "rate(aegis_auth_attempts_total{result='success'}[5m]) / (rate(aegis_auth_attempts_total[5m]) + 0.0001)",
+        "legendFormat": "success rate"
+      }],
+      "options": {
+        "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] },
+        "mappings": [], "thresholds": { "steps": [{"color":"red","value":0},{"color":"yellow","value":0.5},{"color":"green","value":0.9}] }
+      },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } }
+    },
+    {
+      "id": 5, "type": "stat",
+      "title": "CPU Load",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "targets": [{ "expr": "aegis_cpu_load_percent", "legendFormat": "cpu%" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "thresholds": { "steps": [{"color":"green","value":0},{"color":"yellow","value":60},{"color":"red","value":85}] } } },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 6, "type": "stat",
+      "title": "Memory Load",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "targets": [{ "expr": "aegis_memory_load_percent", "legendFormat": "mem%" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "thresholds": { "steps": [{"color":"green","value":0},{"color":"yellow","value":70},{"color":"red","value":90}] } } },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 10, "type": "timeseries",
+      "title": "Message Throughput by Type",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [{ "expr": "sum by(message_type) (rate(aegis_messages_received_total[1m]))", "legendFormat": "{{message_type}}" }],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "id": 11, "type": "timeseries",
+      "title": "Connections Over Time",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "expr": "aegis_active_connections", "legendFormat": "active" },
+        { "expr": "rate(aegis_connections_total[1m]) * 60", "legendFormat": "accepted/min" }
+      ]
+    },
+    {
+      "id": 20, "type": "timeseries",
+      "title": "Message Processing Latency (p50/p90/p99)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by(le) (rate(aegis_message_processing_duration_seconds_bucket[2m])))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.90, sum by(le) (rate(aegis_message_processing_duration_seconds_bucket[2m])))", "legendFormat": "p90" },
+        { "expr": "histogram_quantile(0.99, sum by(le) (rate(aegis_message_processing_duration_seconds_bucket[2m])))", "legendFormat": "p99" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 21, "type": "timeseries",
+      "title": "Auth Attempts by Result",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [{ "expr": "sum by(result) (rate(aegis_auth_attempts_total[1m]))", "legendFormat": "{{result}}" }],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "id": 30, "type": "timeseries",
+      "title": "Dropped Messages by Reason",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 20 },
+      "targets": [{ "expr": "sum by(reason) (rate(aegis_messages_dropped_total[1m]))", "legendFormat": "{{reason}}" }]
+    },
+    {
+      "id": 31, "type": "timeseries",
+      "title": "Rate Limit Hits by Scope",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 20 },
+      "targets": [{ "expr": "sum by(scope) (rate(aegis_rate_limit_hits_total[1m]))", "legendFormat": "{{scope}}" }]
+    }
+  ]
+}

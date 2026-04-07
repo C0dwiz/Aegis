@@ -174,17 +174,16 @@ public class UserTypingHandler : IMessageHandler
 
     private async Task SendToUserAsync(ulong userId, byte[] payload)
     {
-        if (!_sessionManager.TryGetConnectionIdByUserId(userId, out var connectionId))
+        var connectionIds = _sessionManager.GetConnectionIdsByUserId(userId);
+        foreach (var connectionId in connectionIds)
         {
-            return;
+            await _messageSender.SendProtocolMessageAsync(
+                connectionId,
+                (ushort)MessageType.UserTypingEvent,
+                0,
+                payload,
+                allowUnsigned: false);
         }
-
-        await _messageSender.SendProtocolMessageAsync(
-            connectionId,
-            (ushort)MessageType.UserTypingEvent,
-            0,
-            payload,
-            allowUnsigned: false);
     }
 }
 

@@ -14,6 +14,9 @@ public class ServerOptions
     public bool EnableTransportMasking { get; set; } = false;
     public string TransportMaskingKey { get; set; } = string.Empty;
     public int GracefulShutdownTimeoutSeconds { get; set; } = 30;
+
+    /// <summary>Port for the Prometheus /metrics HTTP endpoint (0 = use default 9091).</summary>
+    public int MetricsPort { get; set; } = 9091;
 }
 
 public class CryptoOptions
@@ -109,4 +112,33 @@ public class LoggingOptions
     public bool Console { get; set; } = true;
     public bool File { get; set; } = true;
     public string FilePath { get; set; } = "logs/aegis-{Date}.log";
+}
+
+public class OfflineMessageOptions
+{
+    public const string SectionName = "OfflineMessage";
+
+    /// <summary>
+    /// How long an undelivered message is kept before being silently dropped.
+    /// Default: 7 days. Set to 0 to disable TTL (keep forever).
+    /// </summary>
+    public int MessageTtlSeconds { get; set; } = 604_800; // 7 days
+
+    /// <summary>Maximum undelivered messages queued per user before old ones are dropped.</summary>
+    public int MaxQueuedPerUser { get; set; } = 1000;
+
+    /// <summary>How often (in seconds) the delivery loop wakes up to push pending messages.</summary>
+    public int DeliveryIntervalSeconds { get; set; } = 5;
+}
+
+public class SessionOptions
+{
+    public const string SectionName = "Sessions";
+
+    /// <summary>
+    /// Maximum number of concurrent active sessions (devices) per user.
+    /// When exceeded, the oldest session is revoked automatically.
+    /// 0 = unlimited. Default: 50.
+    /// </summary>
+    public int MaxSessionsPerUser { get; set; } = 50;
 }

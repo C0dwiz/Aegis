@@ -225,6 +225,20 @@ master.key
 server.pfx
 client.*
 
+# Dev SQLite databases and ZoneTree data dirs
+*.db
+*.db-shm
+*.db-wal
+zonetree-messages-db/
+/data/zonetree/
+
+# Timestamped .env backups (may contain secrets)
+.env.bak.*
+
+# Dev/Docker runtime log files at repo root
+debug.log
+output.log
+
 .fake
 
 # Environment variables file

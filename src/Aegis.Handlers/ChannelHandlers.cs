@@ -209,21 +209,17 @@ public class ChannelMessageHandler : IMessageHandler
 
             foreach (var member in channelMembers)
             {
-                if (member.UserId == session.UserId)
-                {
-                    continue;
-                }
+                if (member.UserId == session.UserId) continue;
 
-                if (!_sessionManager.TryGetConnectionIdByUserId(member.UserId, out var recipientConnectionId))
+                var connIds = _sessionManager.GetConnectionIdsByUserId(member.UserId);
+                foreach (var recipientConnectionId in connIds)
                 {
-                    continue;
+                    await _messageSender.SendProtocolMessageAsync(
+                        recipientConnectionId,
+                        (ushort)MessageType.ChannelMessageEvent,
+                        0,
+                        eventPayload);
                 }
-
-                await _messageSender.SendProtocolMessageAsync(
-                    recipientConnectionId,
-                    (ushort)MessageType.ChannelMessageEvent,
-                    0,
-                    eventPayload);
             }
 
             await SendResponseAsync(context, message.SequenceId,
@@ -437,8 +433,9 @@ public class PrivateChatMessageHandler : IMessageHandler
             var privateMsg = await _messageService.SendPrivateMessageAsync(
                 session.UserId, payload.ToUserId, normalizedContent, contentType);
 
-            // Push the message to the recipient if they are online
-            if (_sessionManager.TryGetConnectionIdByUserId(payload.ToUserId, out var recipientConnId))
+            // Push the message to all active devices of the recipient
+            var recipientConnIds = _sessionManager.GetConnectionIdsByUserId(payload.ToUserId);
+            if (recipientConnIds.Count > 0)
             {
                 var pushPayload = PayloadSerializer.Serialize(new PrivateChatMessageEventPayload(
                     Id: privateMsg.Id,
@@ -452,11 +449,14 @@ public class PrivateChatMessageHandler : IMessageHandler
                     FromUsername: session.Username,
                     Username: session.Username));
 
-                await _messageSender.SendProtocolMessageAsync(
-                    recipientConnId,
-                    (ushort)MessageType.PrivateChatMessageEvent,
-                    0,
-                    pushPayload);
+                foreach (var recipientConnId in recipientConnIds)
+                {
+                    await _messageSender.SendProtocolMessageAsync(
+                        recipientConnId,
+                        (ushort)MessageType.PrivateChatMessageEvent,
+                        0,
+                        pushPayload);
+                }
             }
 
             await SendResponseAsync(context, message.SequenceId,

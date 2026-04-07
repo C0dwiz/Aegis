@@ -84,10 +84,8 @@ public class MessageReadReceiptHandler : IMessageHandler
 
             foreach (var (senderUserId, ids) in bySender)
             {
-                if (!sessionManager.TryGetConnectionIdByUserId(senderUserId, out var senderConnectionId))
-                {
-                    continue;
-                }
+                var senderConnectionIds = sessionManager.GetConnectionIdsByUserId(senderUserId);
+                if (senderConnectionIds.Count == 0) continue;
 
                 var eventPayload = PayloadSerializer.Serialize(new
                 {
@@ -98,15 +96,46 @@ public class MessageReadReceiptHandler : IMessageHandler
                     ProcessedAt = DateTime.UtcNow
                 });
 
-                await messageSender.SendProtocolMessageAsync(
-                    senderConnectionId,
-                    (ushort)MessageType.MessageStatusEvent,
-                    0,
-                    eventPayload);
+                foreach (var senderConnectionId in senderConnectionIds)
+                {
+                    await messageSender.SendProtocolMessageAsync(
+                        senderConnectionId,
+                        (ushort)MessageType.MessageStatusEvent,
+                        0,
+                        eventPayload);
+                }
             }
 
             // Send confirmation back to sender
             await SendReadReceiptConfirmationAsync(context, messageSender, payload.MessageIds);
+
+            // Cross-device read sync: push ReadSyncEvent to all other devices of the same user.
+            var ownOtherConnections = sessionManager.GetConnectionIdsByUserId(session.UserId)
+                .Where(c => c != context.ConnectionId)
+                .ToList();
+
+            if (ownOtherConnections.Count > 0)
+            {
+                var syncPayload = PayloadSerializer.Serialize(new
+                {
+                    MessageIds = payload.MessageIds,
+                    ReadAt = DateTime.UtcNow
+                });
+
+                foreach (var otherConnId in ownOtherConnections)
+                {
+                    try
+                    {
+                        await messageSender.SendProtocolMessageAsync(
+                            otherConnId,
+                            (ushort)MessageType.ReadSyncEvent,
+                            0,
+                            syncPayload,
+                            allowUnsigned: false);
+                    }
+                    catch { /* best-effort — the other device may be disconnecting */ }
+                }
+            }
 
             _logger.LogDebug("Processed read receipt for {Count} messages from user {UserId}",
                 payload.MessageIds.Length, session.UserId);
@@ -207,10 +236,8 @@ public class MessageDeliveryReceiptHandler : IMessageHandler
 
             foreach (var (senderUserId, ids) in bySender)
             {
-                if (!sessionManager.TryGetConnectionIdByUserId(senderUserId, out var senderConnectionId))
-                {
-                    continue;
-                }
+                var senderConnectionIds = sessionManager.GetConnectionIdsByUserId(senderUserId);
+                if (senderConnectionIds.Count == 0) continue;
 
                 var eventPayload = PayloadSerializer.Serialize(new
                 {
@@ -221,11 +248,14 @@ public class MessageDeliveryReceiptHandler : IMessageHandler
                     ProcessedAt = DateTime.UtcNow
                 });
 
-                await messageSender.SendProtocolMessageAsync(
-                    senderConnectionId,
-                    (ushort)MessageType.MessageStatusEvent,
-                    0,
-                    eventPayload);
+                foreach (var senderConnectionId in senderConnectionIds)
+                {
+                    await messageSender.SendProtocolMessageAsync(
+                        senderConnectionId,
+                        (ushort)MessageType.MessageStatusEvent,
+                        0,
+                        eventPayload);
+                }
             }
 
             // Send confirmation back to sender

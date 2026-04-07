@@ -509,12 +509,15 @@ public class GroupMessageSendHandler : IMessageHandler
             foreach (var member in groupMembers)
             {
                 if (member.UserId == session.UserId) continue;
-                if (!_sessionManager.TryGetConnectionIdByUserId(member.UserId, out var recipientConnId)) continue;
-                await _messageSender.SendProtocolMessageAsync(
-                    recipientConnId,
-                    (ushort)MessageType.GroupMessageEvent,
-                    0,
-                    eventPayload);
+                var connIds = _sessionManager.GetConnectionIdsByUserId(member.UserId);
+                foreach (var recipientConnId in connIds)
+                {
+                    await _messageSender.SendProtocolMessageAsync(
+                        recipientConnId,
+                        (ushort)MessageType.GroupMessageEvent,
+                        0,
+                        eventPayload);
+                }
             }
 
             await SendResponseAsync(context, message.SequenceId,
@@ -1047,17 +1050,16 @@ public class GroupLeaveHandler : IMessageHandler
             var activeMembers = await _groupRepository.GetGroupMembersAsync(request.GroupId);
             foreach (var member in activeMembers.Where(m => m.IsActive && m.UserId != session.UserId))
             {
-                if (!_sessionManager.TryGetConnectionIdByUserId(member.UserId, out var targetConnectionId))
+                var connIds = _sessionManager.GetConnectionIdsByUserId(member.UserId);
+                foreach (var targetConnectionId in connIds)
                 {
-                    continue;
+                    await _messageSender.SendProtocolMessageAsync(
+                        targetConnectionId,
+                        (ushort)MessageType.GroupLeave,
+                        0,
+                        eventPayload,
+                        allowUnsigned: false);
                 }
-
-                await _messageSender.SendProtocolMessageAsync(
-                    targetConnectionId,
-                    (ushort)MessageType.GroupLeave,
-                    0,
-                    eventPayload,
-                    allowUnsigned: false);
             }
 
             _logger.LogInformation("User {UserId} left group {GroupId}", session.UserId, request.GroupId);
@@ -1196,7 +1198,7 @@ public class MessageReactHandler : IMessageHandler
 
         foreach (var uid in memberUserIds)
         {
-            if (_sessionManager.TryGetConnectionIdByUserId(uid, out var connId))
+            foreach (var connId in _sessionManager.GetConnectionIdsByUserId(uid))
                 await _messageSender.SendProtocolMessageAsync(connId, (ushort)MessageType.MessageReactionEvent, 0, eventPayload);
         }
     }
@@ -1326,7 +1328,7 @@ public class MessagePinHandler : IMessageHandler
 
         foreach (var uid in await getMemberIds())
         {
-            if (_sessionManager.TryGetConnectionIdByUserId(uid, out var connId))
+            foreach (var connId in _sessionManager.GetConnectionIdsByUserId(uid))
                 await _messageSender.SendProtocolMessageAsync(connId, (ushort)MessageType.MessagePinEvent, 0, eventPayload);
         }
     }

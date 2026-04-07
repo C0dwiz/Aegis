@@ -1,7 +1,21 @@
 # Серверный протокол Aegis
 
 Высокопроизводительный TCP-протокол для мессенджера TwoSpace с собственным бинарным шифрованием, поддержкой локальной базы данных, регистрацией пользователей, каналами и приватными чатами.
-
+Сервис	URL	Описание
+aegis-server	localhost:8888	TCP-сервер (бинарный протокол, клиенты подключаются сюда)
+aegis-server	localhost:9091	Prometheus-метрики (/metrics)
+aegis-botapi	http://localhost:5000	HTTP REST API для ботов
+PostgreSQL	localhost:5432	БД (aegis / aegis)
+Redis	localhost:6379	Кэш, rate limiting, pub/sub
+Профиль full (docker compose --profile full up)
+Сервис	URL	Описание
+MinIO API	http://localhost:9000	S3-совместимое хранилище (аватары, файлы)
+MinIO Console	http://localhost:9001	Веб-интерфейс MinIO
+Elasticsearch	http://localhost:9200	Поиск пользователей
+Профиль monitoring (docker compose --profile monitoring up)
+Сервис	URL	Описание
+Prometheus	http://localhost:9090	Сбор метрик
+Grafana	http://localhost:3000	Дашборды (логин: admin / aegis_grafana)
 ## Новые возможности
 
 ### 🚀 База данных и пользователи
